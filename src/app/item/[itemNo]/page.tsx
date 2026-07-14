@@ -38,6 +38,9 @@ export default async function ItemPage({ params }: ItemPageProps) {
           <Link href={`/print/${itemNo}`} className="text-blue-600 underline">
             QR印刷
           </Link>
+          <Link href="/docs/memo" className="text-blue-600 underline">
+            メモ記法
+          </Link>
         </div>
       </div>
 
