@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { BOX_CLASS } from "@/components/ui";
 import { searchItems } from "@/lib/items";
+import { memoSummary } from "@/lib/memoSummary";
 import { parseSort, type Sort } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +33,7 @@ export default async function Home({ searchParams }: HomeProps) {
           name="q"
           defaultValue={query}
           placeholder="部品番号・メモ・URL で検索"
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2"
+          className={`w-full ${BOX_CLASS}`}
         />
         <button
           type="submit"
@@ -75,7 +77,7 @@ export default async function Home({ searchParams }: HomeProps) {
                 #{item.itemNo}
               </span>
               <span className="truncate text-sm text-gray-600">
-                {item.mode === "url" ? item.url : item.memo.split(/\r?\n/)[0]}
+                {item.mode === "url" ? item.url : memoSummary(item.memo)}
               </span>
             </Link>
           </li>

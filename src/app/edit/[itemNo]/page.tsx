@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateItemAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
+import { MemoTextarea } from "@/components/MemoTextarea";
+import { MEMO_INPUT_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
 import { isValidItemNo } from "@/lib/validation";
 
@@ -50,22 +52,14 @@ export default async function EditPage({ params }: EditPageProps) {
           </label>
         </fieldset>
 
-        <textarea
-          name="memo"
-          rows={10}
-          maxLength={10000}
-          defaultValue={item?.memo ?? ""}
-          placeholder="メモを入力して下さい。"
-          autoFocus
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
-        />
+        <MemoTextarea defaultValue={item?.memo ?? ""} autoFocus />
         <textarea
           name="url"
           rows={3}
           maxLength={10000}
           defaultValue={item?.url ?? ""}
           placeholder="URLを入力して下さい。"
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
+          className={MEMO_INPUT_CLASS}
         />
         <button
           type="submit"

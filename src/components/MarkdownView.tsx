@@ -9,6 +9,7 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { BOX_CLASS } from "./ui";
 
 interface MarkdownViewProps {
   markdown: string;
@@ -43,7 +44,7 @@ function preOrMermaid({
 // 生 HTML はデフォルトで無視されるが、保険として rehype-sanitize も通す
 export function MarkdownView({ markdown }: MarkdownViewProps) {
   return (
-    <div className="prose prose-sm max-w-none break-words rounded border border-gray-300 bg-white px-3 py-2">
+    <div className={`prose prose-sm max-w-none break-words ${BOX_CLASS}`}>
       <Markdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeSanitize]}

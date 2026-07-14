@@ -4,6 +4,8 @@ import { updateMemoAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MarkdownView } from "@/components/MarkdownView";
 import { MemoPanel } from "@/components/MemoPanel";
+import { MemoTextarea } from "@/components/MemoTextarea";
+import { BOX_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
 import { isValidItemNo } from "@/lib/validation";
 
@@ -64,22 +66,16 @@ export default async function ItemPage({ params }: ItemPageProps) {
         defaultMode={memo ? "markdown" : "edit"}
         markdownView={<MarkdownView markdown={memo} />}
         textView={
-          <pre className="whitespace-pre-wrap break-words rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base">
+          <pre
+            className={`whitespace-pre-wrap break-words ${BOX_CLASS} font-mono text-base`}
+          >
             {memo}
           </pre>
         }
         editForm={
           <form action={updateMemoAction} className="space-y-3">
             <input type="hidden" name="itemNo" value={itemNo} />
-            <textarea
-              name="memo"
-              rows={12}
-              maxLength={10000}
-              defaultValue={memo}
-              placeholder="メモを入力して下さい。"
-              autoFocus={memo === ""}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
-            />
+            <MemoTextarea defaultValue={memo} rows={12} autoFocus={memo === ""} />
             <button
               type="submit"
               className="rounded bg-blue-600 px-6 py-2 font-medium text-white"
