@@ -17,10 +17,13 @@ model Item {
   memo      String   @default("")
   url       String   @default("")
   mode      Mode     @default(memo)
+  // memo から抽出したタグ (正規化済み) の派生キャッシュ。検索・補完に使う。
+  tags      String[] @default([])
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([itemNoNum])
+  @@index([tags], type: Gin)
   @@map("items")
 }
 

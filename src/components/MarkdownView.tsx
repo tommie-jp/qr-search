@@ -10,6 +10,7 @@ import rehypeSanitize, { defaultSchema, type Options } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { remarkTagLinks } from "./remarkTagLinks";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { ZoomableImage } from "./ZoomableImage";
 import { BOX_CLASS } from "./ui";
@@ -81,7 +82,7 @@ export function MarkdownView({ markdown }: MarkdownViewProps) {
   return (
     <div className={`prose prose-sm max-w-none break-words ${BOX_CLASS}`}>
       <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath, remarkTagLinks]}
         rehypePlugins={[
           [rehypeSanitize, sanitizeSchema],
           [rehypeKatex, { maxSize: KATEX_MAX_SIZE_EM }],

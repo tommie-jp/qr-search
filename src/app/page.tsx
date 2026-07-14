@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { BOX_CLASS } from "@/components/ui";
-import { searchItems } from "@/lib/items";
+import { SearchForm } from "@/components/SearchForm";
+import { listTags, searchItems } from "@/lib/items";
 import { memoSummary } from "@/lib/memoSummary";
 import { parseSort, type Sort } from "@/lib/validation";
 
@@ -23,30 +23,24 @@ export default async function Home({ searchParams }: HomeProps) {
   const { q = "", page = "1", sort: sortParam } = await searchParams;
   const query = q.trim();
   const sort = parseSort(sortParam);
-  const result = await searchItems(query, Number(page) || 1, sort);
+  const [result, tags] = await Promise.all([
+    searchItems(query, Number(page) || 1, sort),
+    listTags(),
+  ]);
 
   return (
     <div className="space-y-4">
-      <form method="GET" action="/" className="flex gap-2">
-        <input
-          type="search"
-          name="q"
-          defaultValue={query}
-          placeholder="部品番号・メモ・URL を全文検索（スペースで AND）"
-          className={`w-full ${BOX_CLASS}`}
-        />
-        <button
-          type="submit"
-          className="whitespace-nowrap rounded bg-blue-600 px-4 py-2 font-medium text-white"
-        >
-          検索
-        </button>
-      </form>
+      <SearchForm initialQuery={query} tags={tags.map((t) => t.tag)} />
 
       <div className="flex items-center justify-between text-sm">
-        <p className="text-gray-600">
-          {query ? `「${query}」の検索結果: ` : "すべて: "}
-          {result.total} 件
+        <p className="flex items-baseline gap-2 text-gray-600">
+          <span>
+            {query ? `「${query}」の検索結果: ` : "すべて: "}
+            {result.total} 件
+          </span>
+          <Link href="/docs/search" className="text-xs text-blue-600 underline">
+            検索ヘルプ
+          </Link>
         </p>
         <p className="flex gap-2">
           {sort === "itemNo" ? (

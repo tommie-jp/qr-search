@@ -63,6 +63,21 @@ export default async function ItemPage({ params }: ItemPageProps) {
         </p>
       )}
 
+      {item && item.tags.length > 0 && (
+        <ul className="flex flex-wrap gap-2">
+          {item.tags.map((tag) => (
+            <li key={tag}>
+              <Link
+                href={`/?q=${encodeURIComponent(`#${tag}`)}`}
+                className="inline-block rounded-full bg-gray-100 px-3 py-0.5 text-sm text-blue-700 hover:bg-gray-200"
+              >
+                #{tag}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {/* key: item 間のソフトナビゲーションでタブ選択状態を持ち越さない */}
       <MemoPanel
         key={itemNo}

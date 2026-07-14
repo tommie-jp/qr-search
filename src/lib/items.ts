@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db'
 import { Prisma } from '@/generated/prisma/client'
 import type { Item } from '@/generated/prisma/client'
-import { parseSearchQuery } from '@/lib/search'
+import { parseSearchQuery, type SearchTerm } from '@/lib/search'
+import { extractTags } from '@/lib/tags'
 import {
   escapeLike,
   itemNoToNum,
@@ -15,12 +16,14 @@ export async function getItem(itemNo: string): Promise<Item | null> {
   return prisma.item.findUnique({ where: { itemNo } })
 }
 
-// Ver1 の /item/:itemNo と同じく、未登録なら新規作成する (upsert)
+// Ver1 の /item/:itemNo と同じく、未登録なら新規作成する (upsert)。
+// tags は memo から抽出した派生キャッシュ (保存のたびに再計算する)。
 export async function upsertMemo(itemNo: string, memo: string): Promise<Item> {
+  const tags = extractTags(memo)
   return prisma.item.upsert({
     where: { itemNo },
-    update: { memo },
-    create: { itemNo, itemNoNum: itemNoToNum(itemNo), memo },
+    update: { memo, tags },
+    create: { itemNo, itemNoNum: itemNoToNum(itemNo), memo, tags },
   })
 }
 
@@ -28,11 +31,28 @@ export async function upsertItem(
   itemNo: string,
   data: { memo: string; url: string; mode: Mode },
 ): Promise<Item> {
+  const tags = extractTags(data.memo)
   return prisma.item.upsert({
     where: { itemNo },
-    update: data,
-    create: { itemNo, itemNoNum: itemNoToNum(itemNo), ...data },
+    update: { ...data, tags },
+    create: { itemNo, itemNoNum: itemNoToNum(itemNo), ...data, tags },
   })
+}
+
+export interface TagCount {
+  tag: string
+  count: number
+}
+
+// 全ノートのタグを件数つきで集計する (件数降順・同数はタグ名昇順)。
+// 検索窓のタグ補完・タグ一覧に使う。個人利用でタグ総数は小さい前提。
+export async function listTags(): Promise<TagCount[]> {
+  return prisma.$queryRaw<TagCount[]>`
+    SELECT tag, count(*)::int AS count
+    FROM (SELECT unnest(tags) AS tag FROM items) AS t
+    GROUP BY tag
+    ORDER BY count DESC, tag ASC
+  `
 }
 
 export interface ItemSearchResult {
@@ -43,11 +63,16 @@ export interface ItemSearchResult {
 }
 
 // 検索語 1 語ぶんの WHERE 条件を組み立てる。
-// memo / url は PGroonga の全文一致 (&@, 日本語バイグラム・全半角/大小の正規化つき)、
-// itemNo は現行どおり前方一致 (ILIKE, 旧データの英字入り itemNo に備え大小無視)。
-function termCondition(term: string): Prisma.Sql {
-  const likePrefix = `${escapeLike(term)}%`
-  return Prisma.sql`(memo &@ ${term} OR url &@ ${term} OR item_no ILIKE ${likePrefix})`
+// text: memo / url は PGroonga の全文一致 (&@, 日本語バイグラム・全半角/大小の
+//   正規化つき)、itemNo は前方一致 (ILIKE, 旧データの英字入り itemNo に備え大小無視)。
+// tag: items.tags 配列の完全一致 (@>, GIN インデックスが効く)。
+//   タグ名は search.ts が正規化済み (NFKC + 小文字化)。
+function termCondition(term: SearchTerm): Prisma.Sql {
+  if (term.kind === 'tag') {
+    return Prisma.sql`tags @> ARRAY[${term.value}]::text[]`
+  }
+  const likePrefix = `${escapeLike(term.value)}%`
+  return Prisma.sql`(memo &@ ${term.value} OR url &@ ${term.value} OR item_no ILIKE ${likePrefix})`
 }
 
 // 検索クエリを DNF (AND グループの OR) に解析して WHERE 句を組み立てる。
@@ -99,6 +124,7 @@ export async function searchItems(
            memo,
            url,
            mode,
+           tags,
            created_at AS "createdAt",
            updated_at AS "updatedAt"
     FROM items

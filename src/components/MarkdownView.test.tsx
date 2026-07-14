@@ -100,3 +100,26 @@ test("末尾が数字でない | は幅指定として扱わない", () => {
   expect(html).toContain('alt="a|b"');
   expect(html).not.toContain("width=");
 });
+
+test("本文中の #タグ を検索リンクにする", () => {
+  const html = render("これは #抵抗 のメモ");
+  expect(html).toContain(`href="/?q=${encodeURIComponent("#抵抗")}"`);
+  expect(html).toContain(">#抵抗</a>");
+});
+
+test("#タグ のリンク先は正規化名だが表示は元の綴り", () => {
+  const html = render("#ＮＰＮ トランジスタ");
+  expect(html).toContain(`href="/?q=${encodeURIComponent("#npn")}"`);
+  expect(html).toContain(">#ＮＰＮ</a>");
+});
+
+test("コードブロック内の #tag はリンクにしない", () => {
+  const html = render("```bash\ngrep '#tag'\n```");
+  expect(html).not.toContain("/?q=");
+});
+
+test("見出しの # はタグリンクにしない", () => {
+  const html = render("# 見出し");
+  expect(html).toContain("<h1>見出し</h1>");
+  expect(html).not.toContain("/?q=");
+});

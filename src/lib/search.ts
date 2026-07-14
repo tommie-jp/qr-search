@@ -9,8 +9,18 @@
 //     → (抵抗 AND 1608) OR コンデンサ という DNF (AND グループの OR)
 //   - ダブルクォートで囲むと演算子解釈を抑止したリテラル語になる。
 //     例: `"or"` は OR 演算子ではなく語 "or"、`"A|B"` は語 "A|B"
+//   - 引用されていない `#○○` はタグ検索 (items.tags の完全一致)。
+//     引用した `"#tag"` は従来どおりの全文検索リテラル。`#` 単独は無視。
 // 生の演算子構文は &@ に渡さず、ここで素の語に分解してから
 // items.ts がパラメータとして渡す (構文エラー/エスケープ漏れを避ける)。
+
+import { parseTagToken } from '@/lib/tags'
+
+// 検索語 1 つ。text は全文検索 (memo/url) + itemNo 前方一致、
+// tag は items.tags の完全一致。
+export type SearchTerm =
+  | { kind: 'text'; value: string }
+  | { kind: 'tag'; value: string }
 
 // 1 クエリあたりの語数の上限 (全 OR グループ合計)。
 // 語数分だけ WHERE 条件が増えるため、極端に長い入力を防ぐ安全弁。
@@ -36,23 +46,41 @@ function isSpace(ch: string): boolean {
   return /[\s　]/.test(ch)
 }
 
-type Token = { type: 'term'; value: string } | { type: 'or' }
+type Token = { type: 'term'; term: SearchTerm } | { type: 'or' }
 
 // 1 パスの状態機械で入力をトークン列へ分解する。
 // 引用内は空白・"|"・"OR" をすべて文字として扱い、引用を含む語は
 // OR 演算子に昇格させない (これが `"or"` をリテラルにする仕組み)。
+// 引用されていない `#○○` はタグ、`#` 単独 (タグ名なし) は破棄する。
 function tokenize(query: string): Token[] {
   const tokens: Token[] = []
   let buf = ''
   let hasChars = false // 現トークンに文字が入ったか (空引用 "" の検出用)
-  let quotedHere = false // 現トークンが引用を含むか (OR 昇格の抑止用)
+  let quotedHere = false // 現トークンが引用を含むか (OR/タグ昇格の抑止用)
 
   const flush = () => {
     if (!hasChars) return
     if (!quotedHere && buf.toLowerCase() === OR_KEYWORD) {
       tokens.push({ type: 'or' })
     } else if (buf.length > 0) {
-      tokens.push({ type: 'term', value: buf })
+      if (!quotedHere) {
+        const tag = parseTagToken(buf)
+        if (tag !== null) {
+          tokens.push({ type: 'term', term: { kind: 'tag', value: tag } })
+          buf = ''
+          hasChars = false
+          quotedHere = false
+          return
+        }
+        // `#`/`＃` 単独 (タグ名が空) は無視する。文字どおり検索したいときは "#"。
+        if (buf === '#' || buf === '＃') {
+          buf = ''
+          hasChars = false
+          quotedHere = false
+          return
+        }
+      }
+      tokens.push({ type: 'term', term: { kind: 'text', value: buf } })
     }
     buf = ''
     hasChars = false
@@ -87,41 +115,58 @@ function tokenize(query: string): Token[] {
   return tokens
 }
 
+// 検索語の同一判定・畳み込み用キー (kind と value で一意)。
+function termKey(term: SearchTerm): string {
+  return `${term.kind}:${term.value}`
+}
+
 // 検索クエリを DNF (AND グループの OR) に解析する。
-// 返り値 string[][] は「グループ間 OR・グループ内 AND」を表す。
-// 例: `抵抗 1608 OR コンデンサ` → [['抵抗','1608'], ['コンデンサ']]
+// 返り値 SearchTerm[][] は「グループ間 OR・グループ内 AND」を表す。
+// 例: `抵抗 1608 OR コンデンサ`
+//   → [[text 抵抗, text 1608], [text コンデンサ]]
 // 各グループ内で空語・重複語を除去し、空グループ・重複グループを畳み、
 // 語の総数を MAX_SEARCH_TERMS で全体キャップする。
-export function parseSearchQuery(query: string): string[][] {
+export function parseSearchQuery(query: string): SearchTerm[][] {
   const tokens = tokenize(query)
 
   // OR トークンでグループを区切る。
-  const groups: string[][] = [[]]
+  const groups: SearchTerm[][] = [[]]
   for (const token of tokens) {
     if (token.type === 'or') {
       groups.push([])
     } else {
-      groups[groups.length - 1].push(token.value)
+      groups[groups.length - 1].push(token.term)
     }
   }
 
   // グループ内で空語・重複語を除去し、空グループを落とす。
   const cleaned = groups
-    .map((group) => [...new Set(group.filter((term) => term.length > 0))])
+    .map((group) => {
+      const seen = new Set<string>()
+      const out: SearchTerm[] = []
+      for (const term of group) {
+        if (term.value.length === 0) continue
+        const key = termKey(term)
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(term)
+      }
+      return out
+    })
     .filter((group) => group.length > 0)
 
   // 同一内容のグループを畳む (順序は維持)。
   const seen = new Set<string>()
-  const unique: string[][] = []
+  const unique: SearchTerm[][] = []
   for (const group of cleaned) {
-    const key = JSON.stringify(group)
+    const key = group.map(termKey).join('&')
     if (seen.has(key)) continue
     seen.add(key)
     unique.push(group)
   }
 
   // 語の総数を上限で丸める (WHERE 肥大の安全弁)。
-  const capped: string[][] = []
+  const capped: SearchTerm[][] = []
   let budget = MAX_SEARCH_TERMS
   for (const group of unique) {
     if (budget <= 0) break

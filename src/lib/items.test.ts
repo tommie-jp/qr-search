@@ -29,6 +29,20 @@ describe.skipIf(!runDbTests)(
         url: 'https://example.com/zzfturltoken',
         mode: 'url' as const,
       },
+      {
+        itemNo: 'zzftt1',
+        memo: 'zzfttagmemo #zzfttag1 #zzftshared',
+        url: '',
+        mode: 'memo' as const,
+        tags: ['zzfttag1', 'zzftshared'],
+      },
+      {
+        itemNo: 'zzftt2',
+        memo: 'zzfttagmemo #zzfttag2 #zzftshared',
+        url: '',
+        mode: 'memo' as const,
+        tags: ['zzfttag2', 'zzftshared'],
+      },
     ]
 
     beforeAll(async () => {
@@ -36,7 +50,7 @@ describe.skipIf(!runDbTests)(
       ;({ prisma } = await import('./db'))
       await prisma.item.deleteMany({ where: { itemNo: { startsWith: TEST_PREFIX } } })
       for (const s of seed) {
-        await prisma.item.create({ data: { ...s, itemNoNum: null } })
+        await prisma.item.create({ data: { itemNoNum: null, ...s } })
       }
     })
 
@@ -112,6 +126,39 @@ describe.skipIf(!runDbTests)(
     test('empty query browses all items (WHERE 無し)', async () => {
       const r = await searchItems('', 1)
       expect(r.total).toBeGreaterThanOrEqual(seed.length)
+    })
+
+    describe('tag search', () => {
+      test('#tag matches items carrying that tag', async () => {
+        const r = await searchItems('#zzfttag1', 1)
+        expect(itemNos(r)).toEqual(['zzftt1'])
+      })
+
+      test('a shared tag matches every item that has it', async () => {
+        const r = await searchItems('#zzftshared', 1)
+        expect(itemNos(r)).toEqual(['zzftt1', 'zzftt2'])
+      })
+
+      test('AND of two tags matches only items with both', async () => {
+        const r = await searchItems('#zzftshared #zzfttag1', 1)
+        expect(itemNos(r)).toEqual(['zzftt1'])
+      })
+
+      test('OR of two tags matches either', async () => {
+        const r = await searchItems('#zzfttag1 OR #zzfttag2', 1)
+        expect(itemNos(r)).toEqual(['zzftt1', 'zzftt2'])
+      })
+
+      test('tag search is exact, not substring of memo text', async () => {
+        // zzfttagmemo は本文に含まれるがタグではないのでヒットしない
+        const r = await searchItems('#zzfttagmemo', 1)
+        expect(itemNos(r)).toEqual([])
+      })
+
+      test('a quoted "#tag" falls back to full-text (finds the literal in memo)', async () => {
+        const r = await searchItems('"#zzfttag1"', 1)
+        expect(itemNos(r)).toEqual(['zzftt1'])
+      })
     })
   },
 )
