@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateMemoAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
+import { MarkdownView } from "@/components/MarkdownView";
+import { MemoPanel } from "@/components/MemoPanel";
 import { getItem } from "@/lib/items";
 import { isValidItemNo } from "@/lib/validation";
 
@@ -19,6 +21,7 @@ export default async function ItemPage({ params }: ItemPageProps) {
     notFound();
   }
   const item = await getItem(itemNo);
+  const memo = item?.memo ?? "";
 
   return (
     <div className="space-y-4">
@@ -55,24 +58,37 @@ export default async function ItemPage({ params }: ItemPageProps) {
         </p>
       )}
 
-      <form action={updateMemoAction} className="space-y-3">
-        <input type="hidden" name="itemNo" value={itemNo} />
-        <textarea
-          name="memo"
-          rows={12}
-          maxLength={10000}
-          defaultValue={item?.memo ?? ""}
-          placeholder="メモを入力して下さい。"
-          autoFocus
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
-        />
-        <button
-          type="submit"
-          className="rounded bg-blue-600 px-6 py-2 font-medium text-white"
-        >
-          更新
-        </button>
-      </form>
+      {/* key: item 間のソフトナビゲーションでタブ選択状態を持ち越さない */}
+      <MemoPanel
+        key={itemNo}
+        defaultMode={memo ? "markdown" : "edit"}
+        markdownView={<MarkdownView markdown={memo} />}
+        textView={
+          <pre className="whitespace-pre-wrap break-words rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base">
+            {memo}
+          </pre>
+        }
+        editForm={
+          <form action={updateMemoAction} className="space-y-3">
+            <input type="hidden" name="itemNo" value={itemNo} />
+            <textarea
+              name="memo"
+              rows={12}
+              maxLength={10000}
+              defaultValue={memo}
+              placeholder="メモを入力して下さい。"
+              autoFocus={memo === ""}
+              className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
+            />
+            <button
+              type="submit"
+              className="rounded bg-blue-600 px-6 py-2 font-medium text-white"
+            >
+              更新
+            </button>
+          </form>
+        }
+      />
 
       <ItemTimestamps item={item} />
     </div>
