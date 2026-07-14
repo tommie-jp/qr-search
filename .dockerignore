@@ -1,0 +1,11 @@
+node_modules
+.next
+src/generated
+.env
+.env.*
+!.env.example
+.git
+Dockerfile
+compose.yaml
+Caddyfile
+README.md

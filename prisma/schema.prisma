@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Ver1 (MongoDB) の item コレクションを引き継ぐ。
+// itemNo は Ver1 の実データが文字列のため文字列主キー
+// (印刷済み QR シールの URL 互換を最優先)。
+// itemNoNum は数値ソート用 (非数字の itemNo は null)。
+model Item {
+  itemNo    String   @id @map("item_no")
+  itemNoNum Int?     @map("item_no_num")
+  memo      String   @default("")
+  url       String   @default("")
+  mode      Mode     @default(memo)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([itemNoNum])
+  @@map("items")
+}
+
+enum Mode {
+  memo
+  url
+}

@@ -1,0 +1,51 @@
+# qr-search
+
+部品に貼った QR コードシール(URL 埋め込み)を読み取り、
+部品 ID から情報を表示・管理する Web アプリ。
+
+## 構成
+
+- Next.js 16 (App Router) + TypeScript + Tailwind CSS
+- Prisma 7 + PostgreSQL 16
+- Docker Compose(db / app / proxy)
+
+## 開発
+
+```bash
+cp .env.example .env   # 値を設定
+npm install            # postinstall で prisma generate が走る
+docker compose up -d db
+npx prisma migrate dev
+npm run dev            # http://localhost:3000
+```
+
+## テスト
+
+```bash
+npm test
+```
+
+## 本番相当のローカル実行
+
+```bash
+docker compose build app
+docker compose run --rm migrate
+docker compose --profile proxy up -d   # Caddy (HTTPS + Basic 認証) 込み
+```
+
+## ルーティング
+
+| パス | 用途 |
+| --- | --- |
+| `/` | 一覧 + 検索(番号順 / 更新順) |
+| `/item/:itemNo` | 部品表示 + メモ更新(QR の飛び先。未登録なら新規作成) |
+| `/edit/:itemNo` | mode / memo / url の編集 |
+| `/print/:itemNo` | QR コード印刷 |
+
+## データ移行 (Ver1 → Ver2)
+
+Ver1 (MongoDB) の mongoexport 出力を取り込む(冪等):
+
+```bash
+npx tsx scripts/migrateFromVer1.ts <item.json のパス>
+```

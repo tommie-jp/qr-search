@@ -1,0 +1,9 @@
+# SITE_ADDRESS: ローカルテストは localhost、本番は qr.tommie.jp
+# Caddy が HTTPS 証明書の自動取得と http→https リダイレクトを行う
+# (localhost の場合は内部 CA の自己署名証明書)
+{$SITE_ADDRESS:localhost} {
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+	reverse_proxy app:3000
+}

@@ -1,0 +1,73 @@
+# ディレクトリ名に依存しないよう明示 (コンテナ/ボリューム名の接頭辞)
+name: qr-search
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: qr
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qr -d qr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    image: qr-search-app:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://qr:${POSTGRES_PASSWORD}@db:5432/qr
+      QR_BASE_URL: ${QR_BASE_URL:-https://qr.tommie.jp}
+    ports:
+      # ローカル: tailscale serve 用 / vps2: nginx のプロキシ先 (loopback のみ)
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # マイグレーション実行用 (docker compose run --rm migrate)
+  migrate:
+    build:
+      context: .
+      target: builder
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://qr:${POSTGRES_PASSWORD}@db:5432/qr
+    command: npx prisma migrate deploy
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ローカルテスト専用 (vps2 では既存 nginx が 80/443 を使うため起動しない)
+  # 起動: docker compose --profile proxy up -d
+  proxy:
+    profiles: ["proxy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # proxy プロファイル使用時は .env での設定が必須 (空だと Caddy が起動時に失敗する)
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
