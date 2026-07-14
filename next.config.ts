@@ -3,9 +3,10 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Docker 用の自己完結ビルド (.next/standalone)
   output: "standalone",
-  // /docs/memo が実行時に読む md を standalone に同梱する
+  // /docs/memo・/docs/search が実行時に読む md を standalone に同梱する
   outputFileTracingIncludes: {
     "/docs/memo": ["./docs/**/*"],
+    "/docs/search": ["./docs/**/*"],
   },
   // Ver1 の旧 URL 互換。/item/:itemNo は同一パスで実装済みのため不要
   async redirects() {
