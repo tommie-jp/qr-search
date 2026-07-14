@@ -28,9 +28,14 @@ npm test
 ## 本番相当のローカル実行
 
 ```bash
-docker compose build app
-docker compose run --rm migrate
-docker compose --profile proxy up -d   # Caddy (HTTPS + Basic 認証) 込み
+./doStart.sh           # db 起動 → migrate → app 起動 → ヘルスチェック
+./doStart.sh --build   # イメージを作り直してから起動
+```
+
+Caddy (HTTPS + Basic 認証) 込みで試す場合は:
+
+```bash
+docker compose --profile proxy up -d
 ```
 
 ## バージョンアップ
