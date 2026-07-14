@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { Prisma } from '@/generated/prisma/client'
 import type { Item } from '@/generated/prisma/client'
-import { splitSearchTerms } from '@/lib/search'
+import { parseSearchQuery } from '@/lib/search'
 import {
   escapeLike,
   itemNoToNum,
@@ -50,13 +50,21 @@ function termCondition(term: string): Prisma.Sql {
   return Prisma.sql`(memo &@ ${term} OR url &@ ${term} OR item_no ILIKE ${likePrefix})`
 }
 
-// 空白区切りの各語を AND で結合した WHERE 句。空クエリなら WHERE を付けない (一覧ブラウズ)。
+// 検索クエリを DNF (AND グループの OR) に解析して WHERE 句を組み立てる。
+// グループ内は各語を AND、グループ間は OR で結合する。
+//   `抵抗 1608 OR コンデンサ`
+//     → WHERE ((抵抗) AND (1608)) OR ((コンデンサ))
+// 空クエリなら WHERE を付けない (一覧ブラウズ)。
 function buildWhere(query: string): Prisma.Sql {
-  const terms = splitSearchTerms(query)
-  if (terms.length === 0) {
+  const groups = parseSearchQuery(query)
+  if (groups.length === 0) {
     return Prisma.empty
   }
-  return Prisma.sql`WHERE ${Prisma.join(terms.map(termCondition), ' AND ')}`
+  const groupSql = groups.map(
+    (terms) =>
+      Prisma.sql`(${Prisma.join(terms.map(termCondition), ' AND ')})`,
+  )
+  return Prisma.sql`WHERE ${Prisma.join(groupSql, ' OR ')}`
 }
 
 // ソート句。PGroonga のスコアは小テーブルで seq scan になり効かないため、
@@ -68,7 +76,7 @@ function buildOrderBy(sort: Sort): Prisma.Sql {
 }
 
 // q は memo / url の全文検索 (&@)、または itemNo の前方一致。
-// 複数語は空白 (半角/全角) で区切ると AND 検索になる。
+// 空白 (半角/全角) 区切りは AND、"OR"/"|" は OR (DNF)。文法は search.ts 参照。
 export async function searchItems(
   query: string,
   page: number,

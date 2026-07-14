@@ -20,7 +20,7 @@ describe.skipIf(!runDbTests)(
     let prisma: PrismaClient
 
     const seed = [
-      { itemNo: 'zzfta1', memo: 'zzfttoken ライト RITEX', url: '', mode: 'memo' as const },
+      { itemNo: 'zzfta1', memo: 'zzfttoken zzftonlya1 ライト RITEX', url: '', mode: 'memo' as const },
       { itemNo: 'zzfta2', memo: 'zzfttoken ライト', url: '', mode: 'memo' as const },
       { itemNo: 'zzfta3', memo: 'zzfttoken ２ＳＣ１８１５', url: '', mode: 'memo' as const },
       {
@@ -57,6 +57,23 @@ describe.skipIf(!runDbTests)(
     test('AND-searches space-separated terms (両方を含む行だけ)', async () => {
       const r = await searchItems('zzfttoken RITEX', 1)
       expect(itemNos(r)).toEqual(['zzfta1'])
+    })
+
+    // OR は seed 専用トークンだけで検証する (実データと衝突させない)。
+    test('OR-searches with the OR keyword (どちらかを含む行)', async () => {
+      const r = await searchItems('zzftonlya1 OR zzfturltoken', 1)
+      expect(itemNos(r)).toEqual(['zzfta1', 'zzfta4'])
+    })
+
+    test('OR-searches with the pipe operator', async () => {
+      const r = await searchItems('zzftonlya1|zzfturltoken', 1)
+      expect(itemNos(r)).toEqual(['zzfta1', 'zzfta4'])
+    })
+
+    test('space binds tighter than OR (AND-group OR term)', async () => {
+      // (zzfttoken AND zzftonlya1) OR zzfturltoken
+      const r = await searchItems('zzfttoken zzftonlya1 OR zzfturltoken', 1)
+      expect(itemNos(r)).toEqual(['zzfta1', 'zzfta4'])
     })
 
     test('AND-searches with a full-width space too', async () => {
