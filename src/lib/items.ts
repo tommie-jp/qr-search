@@ -44,7 +44,7 @@ export interface ItemSearchResult {
 export async function searchItems(
   query: string,
   page: number,
-  sort: Sort = 'itemNo',
+  sort: Sort = 'updated',
 ): Promise<ItemSearchResult> {
   const escaped = escapeLike(query)
   const where = query

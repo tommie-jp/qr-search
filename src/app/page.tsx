@@ -12,7 +12,7 @@ function pageHref(q: string, page: number, sort: Sort): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (page > 1) params.set("page", String(page));
-  if (sort !== "itemNo") params.set("sort", sort);
+  if (sort !== "updated") params.set("sort", sort);
   const qs = params.toString();
   return qs ? `/?${qs}` : "/";
 }
@@ -69,7 +69,7 @@ export default async function Home({ searchParams }: HomeProps) {
           <li key={item.itemNo}>
             <Link
               href={`/item/${item.itemNo}`}
-              className="flex items-baseline gap-3 px-4 py-3 hover:bg-gray-50"
+              className="flex items-baseline gap-3 px-4 py-1.5 hover:bg-gray-50"
             >
               <span className="shrink-0 font-mono font-bold">
                 #{item.itemNo}

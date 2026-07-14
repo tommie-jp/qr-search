@@ -97,14 +97,14 @@ describe('parseMode', () => {
 })
 
 describe('parseSort', () => {
-  test('returns "updated" for "updated"', () => {
-    expect(parseSort('updated')).toBe('updated')
+  test('returns "itemNo" for "itemNo"', () => {
+    expect(parseSort('itemNo')).toBe('itemNo')
   })
 
-  test('defaults to "itemNo" for undefined or unknown values', () => {
-    expect(parseSort(undefined)).toBe('itemNo')
-    expect(parseSort('other')).toBe('itemNo')
-    expect(parseSort(null)).toBe('itemNo')
+  test('defaults to "updated" for undefined or unknown values', () => {
+    expect(parseSort(undefined)).toBe('updated')
+    expect(parseSort('other')).toBe('updated')
+    expect(parseSort(null)).toBe('updated')
   })
 })
 

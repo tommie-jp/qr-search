@@ -33,9 +33,9 @@ export function parseMode(value: unknown): Mode {
 
 export type Sort = 'itemNo' | 'updated'
 
-// 一覧の並び順。Ver1 の /search は更新日降順だったため両方を提供する
+// 一覧の並び順。Ver1 の /search と同じく更新日降順を既定にする
 export function parseSort(value: unknown): Sort {
-  return value === 'updated' ? 'updated' : 'itemNo'
+  return value === 'itemNo' ? 'itemNo' : 'updated'
 }
 
 export function buildItemUrl(baseUrl: string, itemNo: string): string {
