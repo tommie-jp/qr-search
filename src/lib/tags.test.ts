@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { extractTags, normalizeTag, parseTagToken } from './tags'
+import {
+  extractTags,
+  normalizeTag,
+  parseTagToken,
+  tagSearchHref,
+} from './tags'
 
 describe('normalizeTag', () => {
   test('lowercases ASCII', () => {
@@ -108,5 +113,15 @@ describe('parseTagToken', () => {
   test('returns null when the token has trailing non-tag characters', () => {
     expect(parseTagToken('#tag#foo')).toBeNull()
     expect(parseTagToken('#tag.')).toBeNull()
+  })
+})
+
+describe('tagSearchHref', () => {
+  test('builds a tag search URL with the # prefix percent-encoded', () => {
+    expect(tagSearchHref('bjt')).toBe('/?q=%23bjt')
+  })
+
+  test('percent-encodes multibyte tag names', () => {
+    expect(tagSearchHref('抵抗')).toBe('/?q=%23%E6%8A%B5%E6%8A%97')
   })
 })

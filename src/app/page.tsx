@@ -1,7 +1,7 @@
 import Link from "next/link";
+import { ItemList } from "@/components/ItemList";
 import { SearchForm } from "@/components/SearchForm";
 import { listTags, searchItems } from "@/lib/items";
-import { memoSummary } from "@/lib/memoSummary";
 import { parseSort, type Sort } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -60,28 +60,7 @@ export default async function Home({ searchParams }: HomeProps) {
         </p>
       </div>
 
-      <ul className="divide-y divide-gray-200 rounded border border-gray-200 bg-white">
-        {result.items.map((item) => (
-          <li key={item.itemNo}>
-            <Link
-              href={`/item/${item.itemNo}`}
-              className="flex items-baseline gap-3 px-4 py-1.5 hover:bg-gray-50"
-            >
-              <span className="shrink-0 font-mono font-bold">
-                #{item.itemNo}
-              </span>
-              <span className="truncate text-sm text-gray-600">
-                {item.mode === "url" ? item.url : memoSummary(item.memo)}
-              </span>
-            </Link>
-          </li>
-        ))}
-        {result.items.length === 0 && (
-          <li className="px-4 py-6 text-center text-gray-500">
-            該当する部品がありません
-          </li>
-        )}
-      </ul>
+      <ItemList items={result.items} />
 
       <div className="flex items-center justify-between text-sm">
         {result.page > 1 ? (

@@ -1,5 +1,5 @@
 import type { Link, Parent, Root, RootContent, Text } from "mdast";
-import { findTags } from "@/lib/tags";
+import { findTags, tagSearchHref } from "@/lib/tags";
 
 // メモ本文中の #タグ を検索リンク (/?q=%23タグ名) に変換する remark プラグイン。
 // mdast の text ノードだけを対象にするため、コード (code / inlineCode) や
@@ -20,7 +20,7 @@ function splitTextNode(node: Text): RootContent[] {
     }
     const link: Link = {
       type: "link",
-      url: `/?q=${encodeURIComponent(`#${name}`)}`,
+      url: tagSearchHref(name),
       children: [{ type: "text", value: raw }],
     };
     out.push(link);

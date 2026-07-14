@@ -7,6 +7,7 @@ import { MemoPanel } from "@/components/MemoPanel";
 import { MemoEditor } from "@/components/MemoEditor";
 import { BOX_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
+import { tagSearchHref } from "@/lib/tags";
 import { isValidItemNo } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export default async function ItemPage({ params }: ItemPageProps) {
           {item.tags.map((tag) => (
             <li key={tag}>
               <Link
-                href={`/?q=${encodeURIComponent(`#${tag}`)}`}
+                href={tagSearchHref(tag)}
                 className="inline-block rounded-full bg-gray-100 px-3 py-0.5 text-sm text-blue-700 hover:bg-gray-200"
               >
                 #{tag}

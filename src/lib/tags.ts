@@ -78,3 +78,9 @@ export function parseTagToken(token: string): string | null {
   const match = new RegExp(WHOLE_TAG_PATTERN, 'u').exec(token)
   return match ? normalizeTag(match[1]) : null
 }
+
+// タグ名からタグ検索へのリンク先を作る (`#タグ` を検索窓に入れたのと同じ)。
+// 一覧・詳細ページ・メモ内リンクで同じ URL 形式を使うため 1 箇所に集約する。
+export function tagSearchHref(tag: string): string {
+  return `/?q=${encodeURIComponent(`#${tag}`)}`
+}
