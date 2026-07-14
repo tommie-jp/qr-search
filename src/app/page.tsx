@@ -45,7 +45,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
       <div className="flex items-center justify-between text-sm">
         <p className="text-gray-600">
-          {query ? `「${query}」の検索結果: ` : "全部品: "}
+          {query ? `「${query}」の検索結果: ` : "すべて: "}
           {result.total} 件
         </p>
         <p className="flex gap-2">
