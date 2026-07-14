@@ -32,7 +32,7 @@ export default async function Home({ searchParams }: HomeProps) {
           type="search"
           name="q"
           defaultValue={query}
-          placeholder="部品番号・メモ・URL で検索"
+          placeholder="部品番号・メモ・URL を全文検索（スペースで AND）"
           className={`w-full ${BOX_CLASS}`}
         />
         <button

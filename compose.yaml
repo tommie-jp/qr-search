@@ -3,7 +3,9 @@ name: qr-search
 
 services:
   db:
-    image: postgres:16-alpine
+    # 全文検索 (Ver2.1) 用に PGroonga 入り PostgreSQL 16 を使う。
+    # postgres:16-alpine と同じ PG16/alpine ベースのためデータ volume はそのまま流用できる。
+    image: groonga/pgroonga:4.0.6-alpine-16
     restart: unless-stopped
     environment:
       POSTGRES_USER: qr
