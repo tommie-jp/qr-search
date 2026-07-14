@@ -5,11 +5,31 @@ import {
   type ReactNode,
 } from "react";
 import Markdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
+import rehypeKatex from "rehype-katex";
+import rehypeSanitize, { defaultSchema, type Options } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { ZoomableImage } from "./ZoomableImage";
 import { BOX_CLASS } from "./ui";
+import "katex/dist/katex.min.css";
+
+// rehype-katex は code の math-inline / math-display クラスを目印にするため、
+// sanitize で落とされないよう許可する (language-* はデフォルトでも許可)。
+// sanitize → katex の順にすることで、ユーザー入力は sanitize 済み・
+// KaTeX が生成した HTML はそのまま残る (remark-math 公式レシピ)
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [["className", /^language-./, "math-inline", "math-display"]],
+  },
+} satisfies Options;
+
+// \rule{99999em}{...} のような巨大サイズ指定でページを潰せないよう上限を設ける
+// (KaTeX の maxSize デフォルトは Infinity)
+const KATEX_MAX_SIZE_EM = 50;
 
 interface MarkdownViewProps {
   markdown: string;
@@ -41,7 +61,8 @@ function preOrMermaid({
 }
 
 // alt 末尾の "|数字" を表示幅 (px) として解釈する (例: ![スクショ|200](/api/images/x.png))。
-// 生 HTML を無効にしたまま画像ごとに幅を指定できるようにするための独自記法
+// 生 HTML を無効にしたまま画像ごとに幅を指定できるようにするための独自記法。
+// 画像はクリックで拡大できるよう ZoomableImage で描画する
 function imgWithWidth({
   node: _node,
   alt,
@@ -49,11 +70,9 @@ function imgWithWidth({
 }: MarkdownComponentProps<"img">) {
   const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
   if (match) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img {...props} alt={match[1]} width={Number(match[2])} />;
+    return <ZoomableImage {...props} alt={match[1]} width={Number(match[2])} />;
   }
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img {...props} alt={alt} />;
+  return <ZoomableImage {...props} alt={alt} />;
 }
 
 // memo を Markdown としてレンダリングする Server Component。
@@ -62,8 +81,11 @@ export function MarkdownView({ markdown }: MarkdownViewProps) {
   return (
     <div className={`prose prose-sm max-w-none break-words ${BOX_CLASS}`}>
       <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeSanitize]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+        rehypePlugins={[
+          [rehypeSanitize, sanitizeSchema],
+          [rehypeKatex, { maxSize: KATEX_MAX_SIZE_EM }],
+        ]}
         components={{
           pre: preOrMermaid,
           img: imgWithWidth,

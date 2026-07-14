@@ -43,6 +43,40 @@ test("生の HTML (script) は出力しない", () => {
   expect(html).not.toContain("<script");
 });
 
+test("インライン数式 $...$ を KaTeX でレンダリングする", () => {
+  const html = render("質量エネルギーは $E = mc^2$ で表せる");
+  expect(html).toContain('class="katex"');
+  expect(html).not.toContain("$E = mc^2$");
+});
+
+test("ブロック数式 $$...$$ を display モードでレンダリングする", () => {
+  const html = render("$$\n\\int_0^1 x^2 dx\n$$");
+  expect(html).toContain("katex-display");
+});
+
+test("ブロック数式は <pre> に包まれない", () => {
+  const html = render("$$\nx + y\n$$");
+  expect(html).not.toContain("<pre");
+});
+
+test("数式の巨大サイズ指定は maxSize で頭打ちになる", () => {
+  const html = render("$\\rule{99999em}{99999em}$");
+  expect(html).toContain("height:50em");
+  expect(html).not.toContain("height:99999em");
+});
+
+test("閉じの $ がない単独の $ はそのまま表示する", () => {
+  const html = render("価格は $100 です");
+  expect(html).not.toContain("katex");
+  expect(html).toContain("$100");
+});
+
+test("\\$ でエスケープすると数式扱いしない", () => {
+  const html = render("価格は \\$100 と \\$200 です");
+  expect(html).not.toContain("katex");
+  expect(html).toContain("$100");
+});
+
 test("alt 末尾の |数字 を画像の幅として解釈する", () => {
   const html = render("![|200](/api/images/a.png)");
   expect(html).toContain('width="200"');
