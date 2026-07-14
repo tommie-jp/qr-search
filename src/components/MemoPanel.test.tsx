@@ -12,15 +12,19 @@ const render = (defaultMode: "markdown" | "text" | "edit") =>
     />,
   );
 
-test("デフォルトモードのパネルだけが表示される", () => {
+test("初期表示ではデフォルトモードのパネルだけをマウントする", () => {
+  // 開いていないタブの中身 (CodeMirror や mermaid) を読み込ませないため、
+  // 一度も選択されていないパネルは DOM に置かない
   const html = render("markdown");
-  // 3 パネルとも DOM には存在する (編集中の入力を保持するため hidden で切替)
   expect(html).toContain("MD_VIEW");
-  expect(html).toContain("TEXT_VIEW");
+  expect(html).not.toContain("TEXT_VIEW");
+  expect(html).not.toContain("EDIT_FORM");
+});
+
+test("デフォルトが編集モードなら編集フォームだけをマウントする", () => {
+  const html = render("edit");
   expect(html).toContain("EDIT_FORM");
-  // markdown 以外のパネルは hidden
-  const hiddenCount = (html.match(/hidden=""/g) ?? []).length;
-  expect(hiddenCount).toBe(2);
+  expect(html).not.toContain("MD_VIEW");
 });
 
 test("切替タブ (markdown / テキスト / 編集) を表示する", () => {

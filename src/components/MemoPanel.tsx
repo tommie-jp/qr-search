@@ -18,7 +18,10 @@ const MODES: { key: MemoMode; label: string }[] = [
 ];
 
 // memo の表示切替タブ。中身 (markdownView / textView / editForm) は
-// Server Component のまま slot として受け取る
+// Server Component のまま slot として受け取る。
+// パネルは「一度開いたら hidden で保持」: 開くまでマウントしないことで
+// 重い中身 (CodeMirror, mermaid) の読み込みを遅延し、開いた後は
+// unmount しないことで編集中の入力を保持する
 export function MemoPanel({
   defaultMode,
   markdownView,
@@ -26,6 +29,20 @@ export function MemoPanel({
   editForm,
 }: MemoPanelProps) {
   const [mode, setMode] = useState<MemoMode>(defaultMode);
+  const [visited, setVisited] = useState<ReadonlySet<MemoMode>>(
+    () => new Set([defaultMode]),
+  );
+
+  const selectMode = (key: MemoMode) => {
+    setMode(key);
+    setVisited((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  };
+
+  const panels: { key: MemoMode; content: ReactNode }[] = [
+    { key: "markdown", content: markdownView },
+    { key: "text", content: textView },
+    { key: "edit", content: editForm },
+  ];
 
   return (
     <div className="space-y-2">
@@ -36,7 +53,7 @@ export function MemoPanel({
             type="button"
             role="tab"
             aria-selected={mode === key}
-            onClick={() => setMode(key)}
+            onClick={() => selectMode(key)}
             className={`rounded-t border border-b-0 px-4 py-1 ${
               mode === key
                 ? "border-gray-300 bg-white font-medium text-blue-600"
@@ -47,10 +64,14 @@ export function MemoPanel({
           </button>
         ))}
       </div>
-      {/* 編集中の入力を失わないよう unmount せず hidden で切り替える */}
-      <div hidden={mode !== "markdown"}>{markdownView}</div>
-      <div hidden={mode !== "text"}>{textView}</div>
-      <div hidden={mode !== "edit"}>{editForm}</div>
+      {panels.map(
+        ({ key, content }) =>
+          visited.has(key) && (
+            <div key={key} hidden={mode !== key}>
+              {content}
+            </div>
+          ),
+      )}
     </div>
   );
 }

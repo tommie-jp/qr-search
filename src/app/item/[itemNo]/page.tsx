@@ -4,7 +4,7 @@ import { updateMemoAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MarkdownView } from "@/components/MarkdownView";
 import { MemoPanel } from "@/components/MemoPanel";
-import { MemoTextarea } from "@/components/MemoTextarea";
+import { MemoEditor } from "@/components/MemoEditor";
 import { BOX_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
 import { isValidItemNo } from "@/lib/validation";
@@ -75,7 +75,11 @@ export default async function ItemPage({ params }: ItemPageProps) {
         editForm={
           <form action={updateMemoAction} className="space-y-3">
             <input type="hidden" name="itemNo" value={itemNo} />
-            <MemoTextarea defaultValue={memo} rows={12} autoFocus={memo === ""} />
+            <MemoEditor
+              defaultValue={memo}
+              minHeight="18rem"
+              autoFocus={memo === ""}
+            />
             <button
               type="submit"
               className="rounded bg-blue-600 px-6 py-2 font-medium text-white"

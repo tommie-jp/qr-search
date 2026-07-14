@@ -5,5 +5,10 @@
 	basic_auth {
 		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 	}
+	# 画像アップロード (10MB) + multipart オーバーヘッドを許容しつつ、
+	# 巨大ボディによるメモリ枯渇をエッジで遮断する
+	request_body {
+		max_size 12MB
+	}
 	reverse_proxy app:3000
 }

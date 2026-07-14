@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateItemAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
-import { MemoTextarea } from "@/components/MemoTextarea";
+import { MemoEditor } from "@/components/MemoEditor";
 import { MEMO_INPUT_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
 import { isValidItemNo } from "@/lib/validation";
@@ -52,7 +52,7 @@ export default async function EditPage({ params }: EditPageProps) {
           </label>
         </fieldset>
 
-        <MemoTextarea defaultValue={item?.memo ?? ""} autoFocus />
+        <MemoEditor defaultValue={item?.memo ?? ""} autoFocus />
         <textarea
           name="url"
           rows={3}

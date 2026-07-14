@@ -45,3 +45,6 @@ next-env.d.ts
 
 # .env.example はコミットする
 !.env.example
+
+# uploaded images (dev)
+/data/
