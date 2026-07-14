@@ -42,3 +42,27 @@ test("生の HTML (script) は出力しない", () => {
   const html = render('<script>alert("x")</script>ほげ');
   expect(html).not.toContain("<script");
 });
+
+test("alt 末尾の |数字 を画像の幅として解釈する", () => {
+  const html = render("![|200](/api/images/a.png)");
+  expect(html).toContain('width="200"');
+  expect(html).not.toContain("|200");
+});
+
+test("alt 本文と |数字 を併用できる", () => {
+  const html = render("![スクショ|200](/api/images/a.png)");
+  expect(html).toContain('alt="スクショ"');
+  expect(html).toContain('width="200"');
+});
+
+test("幅指定なしの画像は alt をそのまま表示し width を付けない", () => {
+  const html = render("![スクショ](/api/images/a.png)");
+  expect(html).toContain('alt="スクショ"');
+  expect(html).not.toContain("width=");
+});
+
+test("末尾が数字でない | は幅指定として扱わない", () => {
+  const html = render("![a|b](/api/images/a.png)");
+  expect(html).toContain('alt="a|b"');
+  expect(html).not.toContain("width=");
+});
