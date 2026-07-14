@@ -1,20 +1,15 @@
-const TIME_FORMAT: Intl.DateTimeFormatOptions = { timeZone: "Asia/Tokyo" };
+import { formatJstDateTime } from "@/lib/datetime";
 
 interface ItemTimestampsProps {
   item: { createdAt: Date; updatedAt: Date } | null;
 }
 
-// 作成/更新のタイムスタンプ表示。サーバの TZ に依存しないよう JST 固定
+// 作成/更新のタイムスタンプ表示。サーバの TZ に依存しないよう JST 固定・ゼロ埋め
 export function ItemTimestamps({ item }: ItemTimestampsProps) {
   return (
     <div className="text-sm text-gray-500">
-      <div>
-        作成:{" "}
-        {item ? item.createdAt.toLocaleString("ja-JP", TIME_FORMAT) : "未作成"}
-      </div>
-      <div>
-        更新: {item ? item.updatedAt.toLocaleString("ja-JP", TIME_FORMAT) : ""}
-      </div>
+      <div>作成: {item ? formatJstDateTime(item.createdAt) : "未作成"}</div>
+      <div>更新: {item ? formatJstDateTime(item.updatedAt) : ""}</div>
     </div>
   );
 }
