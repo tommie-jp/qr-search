@@ -57,7 +57,7 @@ export default async function EditPage({ params }: EditPageProps) {
           defaultValue={item?.memo ?? ""}
           placeholder="メモを入力して下さい。"
           autoFocus
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-sm"
+          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
         />
         <textarea
           name="url"
@@ -65,7 +65,7 @@ export default async function EditPage({ params }: EditPageProps) {
           maxLength={10000}
           defaultValue={item?.url ?? ""}
           placeholder="URLを入力して下さい。"
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-sm"
+          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-base"
         />
         <button
           type="submit"

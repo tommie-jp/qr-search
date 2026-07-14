@@ -33,6 +33,27 @@ docker compose run --rm migrate
 docker compose --profile proxy up -d   # Caddy (HTTPS + Basic 認証) 込み
 ```
 
+## バージョンアップ
+
+```bash
+./doVersion.sh [patch|minor|major]   # 省略時: patch
+```
+
+package.json の version を上げる(作業ツリーがクリーンなら
+`chore: release vX.Y.Z` のコミットとタグまで作成)。
+version は画面フッターにビルド時に埋め込まれる。
+
+## デプロイ
+
+```bash
+./doDeploy.sh
+```
+
+lint/test → イメージビルド → docker save/load で転送 →
+SSH トンネル経由で DB マイグレーション → app 再作成 → ヘルスチェック、
+まで一括で行う。接続先などは `DEPLOY_REMOTE` 等の環境変数で上書きできる
+(詳細はスクリプト冒頭のコメント参照)。
+
 ## ルーティング
 
 | パス | 用途 |

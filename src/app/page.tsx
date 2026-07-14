@@ -35,7 +35,7 @@ export default async function Home({ searchParams }: HomeProps) {
         />
         <button
           type="submit"
-          className="rounded bg-blue-600 px-4 py-2 font-medium text-white"
+          className="whitespace-nowrap rounded bg-blue-600 px-4 py-2 font-medium text-white"
         >
           検索
         </button>

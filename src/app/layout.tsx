@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import pkg from "../../package.json";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,6 +24,9 @@ export default function RootLayout({
           </div>
         </header>
         <main className="mx-auto max-w-2xl px-4 py-6">{children}</main>
+        <footer className="mx-auto max-w-2xl px-4 py-6 text-center text-xs text-gray-400 print:hidden">
+          QR search v{pkg.version}
+        </footer>
       </body>
     </html>
   );
