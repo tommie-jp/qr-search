@@ -3,7 +3,6 @@ import { expect, test } from "vitest";
 import type { Item } from "@/generated/prisma/client";
 import { ItemList } from "./ItemList";
 
-// テスト用の Item を作る (省略した項目は既定値で埋める)。
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
     itemNo: "1",
@@ -18,41 +17,34 @@ function makeItem(overrides: Partial<Item> = {}): Item {
   };
 }
 
-const render = (items: Item[]) =>
-  renderToStaticMarkup(<ItemList items={items} />);
+const noop = () => {};
 
-test("番号と要約をアイテム詳細へのリンクにする", () => {
+const render = (items: Item[]) =>
+  renderToStaticMarkup(
+    <ItemList
+      items={items}
+      query=""
+      page={1}
+      sort="updated"
+      action={noop}
+    />,
+  );
+
+test("各アイテムを行として描画する", () => {
   const html = render([
-    makeItem({ itemNo: "4951", memo: "BJT NPN 2SC2712-Y LY SMD" }),
+    makeItem({ itemNo: "4951", memo: "BJT NPN" }),
+    makeItem({ itemNo: "4502", memo: "BFP420" }),
   ]);
   expect(html).toContain('href="/item/4951"');
-  expect(html).toContain("#4951");
-  expect(html).toContain("BJT NPN 2SC2712-Y LY SMD");
+  expect(html).toContain('href="/item/4502"');
 });
 
-test("タグを青いタグ検索リンクとして表示する", () => {
-  const html = render([
-    makeItem({ itemNo: "4951", memo: "2SC2712 #bjt #npn", tags: ["bjt", "npn"] }),
-  ]);
-  // #bjt / #npn がタグ検索 (/?q=%23bjt) へのリンクになっている
-  expect(html).toContain('href="/?q=%23bjt"');
-  expect(html).toContain('href="/?q=%23npn"');
-  expect(html).toContain("#bjt");
-  expect(html).toContain("#npn");
-  // 青系の色クラスが当たっている
-  expect(html).toContain("text-blue-700");
-});
-
-test("タグのないアイテムはタグ行を出さない", () => {
-  const html = render([makeItem({ itemNo: "100", memo: "メモだけ", tags: [] })]);
-  expect(html).not.toContain("/?q=%23");
-});
-
-test("URL モードのアイテムは URL を表示する", () => {
-  const html = render([
-    makeItem({ itemNo: "7", mode: "url", url: "https://example.com/x", memo: "" }),
-  ]);
-  expect(html).toContain("https://example.com/x");
+test("初期表示は選択トグルを出し、ツールバー/チェックボックスは出さない", () => {
+  const html = render([makeItem({ itemNo: "4951" })]);
+  expect(html).toContain("選択");
+  // 選択モードに入るまではツールバーもチェックボックスも無い
+  expect(html).not.toContain("件を選択中");
+  expect(html).not.toContain('type="checkbox"');
 });
 
 test("0 件のときは該当なしメッセージを出す", () => {

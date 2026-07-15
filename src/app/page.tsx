@@ -1,22 +1,15 @@
 import Link from "next/link";
+import { bulkTagAction } from "@/app/actions";
 import { ItemList } from "@/components/ItemList";
 import { SearchForm } from "@/components/SearchForm";
 import { listTags, searchItems } from "@/lib/items";
-import { parseSort, type Sort } from "@/lib/validation";
+import { buildSearchUrl } from "@/lib/searchUrl";
+import { parseSort } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
 interface HomeProps {
   searchParams: Promise<{ q?: string; page?: string; sort?: string }>;
-}
-
-function pageHref(q: string, page: number, sort: Sort): string {
-  const params = new URLSearchParams();
-  if (q) params.set("q", q);
-  if (page > 1) params.set("page", String(page));
-  if (sort !== "updated") params.set("sort", sort);
-  const qs = params.toString();
-  return qs ? `/?${qs}` : "/";
 }
 
 export default async function Home({ searchParams }: HomeProps) {
@@ -46,26 +39,32 @@ export default async function Home({ searchParams }: HomeProps) {
           {sort === "itemNo" ? (
             <span className="font-bold">番号順</span>
           ) : (
-            <Link href={pageHref(query, 1, "itemNo")} className="text-blue-600 underline">
+            <Link href={buildSearchUrl(query, 1, "itemNo")} className="text-blue-600 underline">
               番号順
             </Link>
           )}
           {sort === "updated" ? (
             <span className="font-bold">更新順</span>
           ) : (
-            <Link href={pageHref(query, 1, "updated")} className="text-blue-600 underline">
+            <Link href={buildSearchUrl(query, 1, "updated")} className="text-blue-600 underline">
               更新順
             </Link>
           )}
         </p>
       </div>
 
-      <ItemList items={result.items} />
+      <ItemList
+        items={result.items}
+        query={query}
+        page={result.page}
+        sort={sort}
+        action={bulkTagAction}
+      />
 
       <div className="flex items-center justify-between text-sm">
         {result.page > 1 ? (
           <Link
-            href={pageHref(query, result.page - 1, sort)}
+            href={buildSearchUrl(query, result.page - 1, sort)}
             className="text-blue-600 underline"
           >
             ← 前へ
@@ -78,7 +77,7 @@ export default async function Home({ searchParams }: HomeProps) {
         </span>
         {result.page < result.pageCount ? (
           <Link
-            href={pageHref(query, result.page + 1, sort)}
+            href={buildSearchUrl(query, result.page + 1, sort)}
             className="text-blue-600 underline"
           >
             次へ →

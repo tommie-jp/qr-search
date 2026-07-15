@@ -2,7 +2,9 @@
 
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
-import { upsertItem, upsertMemo } from '@/lib/items'
+import { parseBulkTagForm } from '@/lib/bulkTags'
+import { getItem, upsertItem, upsertMemo } from '@/lib/items'
+import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
 import { isValidItemNo, parseMode } from '@/lib/validation'
 
 const MAX_TEXT_LENGTH = 10000
@@ -44,4 +46,29 @@ export async function updateItemAction(formData: FormData): Promise<void> {
   await upsertItem(itemNo, { memo, url, mode })
   revalidatePath(`/item/${itemNo}`)
   redirect(`/item/${itemNo}`)
+}
+
+// 検索結果で選択した複数ノートへ、タグをまとめて追加/削除する。
+// タグの正本はメモ本文なので、本文を書き換えて upsertMemo で保存し
+// items.tags を再計算させる (tagEdit.ts 参照)。実際に本文が変わったノートだけ
+// 保存するので、文章中にしかないタグの削除など「効かない」操作では更新しない。
+export async function bulkTagAction(formData: FormData): Promise<void> {
+  const { mode, itemNos, tags, back } = parseBulkTagForm(formData)
+
+  if (itemNos.length > 0 && tags.length > 0) {
+    for (const itemNo of itemNos) {
+      const item = await getItem(itemNo)
+      const memo = item?.memo ?? ''
+      const next =
+        mode === 'add'
+          ? addTagsToMemo(memo, tags)
+          : removeTagsFromMemo(memo, tags)
+      if (next !== memo) {
+        await upsertMemo(itemNo, next)
+      }
+    }
+    revalidatePath('/')
+  }
+
+  redirect(back)
 }
