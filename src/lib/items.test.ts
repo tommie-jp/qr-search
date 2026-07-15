@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import type { searchItems as SearchItemsFn } from './items'
+import type {
+  searchItemProps as SearchItemPropsFn,
+  searchItems as SearchItemsFn,
+  upsertMemo as UpsertMemoFn,
+} from './items'
 import type { PrismaClient } from '@/generated/prisma/client'
 
 // DB を実際に叩く統合テスト。
@@ -17,6 +21,8 @@ describe.skipIf(!runDbTests)(
   'searchItems (integration; needs DATABASE_URL + RUN_DB_TESTS=1)',
   () => {
     let searchItems: typeof SearchItemsFn
+    let searchItemProps: typeof SearchItemPropsFn
+    let upsertMemo: typeof UpsertMemoFn
     let prisma: PrismaClient
 
     const seed = [
@@ -43,10 +49,41 @@ describe.skipIf(!runDbTests)(
         mode: 'memo' as const,
         tags: ['zzfttag2', 'zzftshared'],
       },
+      // 特性表用: 同じタグを共有し、片方だけ余分な列 (Vce) を持つ。
+      {
+        itemNo: 'zzftp1',
+        memo: '2SC1815\n#zzftbjt\nhFE=400 Vf=650mV',
+        url: '',
+        mode: 'memo' as const,
+        tags: ['zzftbjt'],
+        props: [
+          { key: 'hfe', label: 'hFE', value: '400' },
+          { key: 'vf', label: 'Vf', value: '650mV' },
+        ],
+      },
+      {
+        itemNo: 'zzftp2',
+        memo: '2SC2712-Y\n#zzftbjt\nhFE=208 Vce=50V',
+        url: '',
+        mode: 'memo' as const,
+        tags: ['zzftbjt'],
+        props: [
+          { key: 'hfe', label: 'hFE', value: '208' },
+          { key: 'vce', label: 'Vce', value: '50V' },
+        ],
+      },
+      // 同じタグだがプロパティ行なし → 表には出さない。
+      {
+        itemNo: 'zzftp3',
+        memo: 'プロパティのないノート\n#zzftbjt',
+        url: '',
+        mode: 'memo' as const,
+        tags: ['zzftbjt'],
+      },
     ]
 
     beforeAll(async () => {
-      ;({ searchItems } = await import('./items'))
+      ;({ searchItems, searchItemProps, upsertMemo } = await import('./items'))
       ;({ prisma } = await import('./db'))
       await prisma.item.deleteMany({ where: { itemNo: { startsWith: TEST_PREFIX } } })
       for (const s of seed) {
@@ -158,6 +195,51 @@ describe.skipIf(!runDbTests)(
       test('a quoted "#tag" falls back to full-text (finds the literal in memo)', async () => {
         const r = await searchItems('"#zzfttag1"', 1)
         expect(itemNos(r)).toEqual(['zzftt1'])
+      })
+    })
+
+    describe('props', () => {
+      test('searchItems projects the props column onto the item', async () => {
+        // 生 SQL の SELECT に props を足し忘れると undefined になる (型では気づけない)。
+        const r = await searchItems('#zzftbjt', 1)
+        const item = r.items.find((i) => i.itemNo === 'zzftp2')
+        expect(item?.props).toEqual([
+          { key: 'hfe', label: 'hFE', value: '208' },
+          { key: 'vce', label: 'Vce', value: '50V' },
+        ])
+      })
+
+      test('upsertMemo derives props from a property line', async () => {
+        // タグは付けない: #zzftbjt を足すと searchItemProps のテストと干渉する。
+        const item = await upsertMemo('zzftup1', '2SC9999\nhFE=123 Vf=700mV')
+        expect(item.props).toEqual([
+          { key: 'hfe', label: 'hFE', value: '123' },
+          { key: 'vf', label: 'Vf', value: '700mV' },
+        ])
+      })
+
+      test('upsertMemo clears props when the property line is removed', async () => {
+        await upsertMemo('zzftup2', 'hFE=123')
+        const item = await upsertMemo('zzftup2', 'ただの本文')
+        expect(item.props).toEqual([])
+      })
+
+      test('searchItemProps returns only hits that have props', async () => {
+        const { rows } = await searchItemProps('#zzftbjt')
+        expect(rows.map((r) => r.itemNo).sort()).toEqual(['zzftp1', 'zzftp2'])
+      })
+
+      test('searchItemProps summarizes the memo for the device column', async () => {
+        const { rows } = await searchItemProps('#zzftbjt')
+        expect(rows.find((r) => r.itemNo === 'zzftp1')?.summary).toBe('2SC1815')
+      })
+
+      test('searchItemProps returns an empty list when nothing has props', async () => {
+        expect(await searchItemProps('#zzfttag1')).toEqual({ rows: [], omitted: 0 })
+      })
+
+      test('searchItemProps reports nothing omitted when under the limit', async () => {
+        expect((await searchItemProps('#zzftbjt')).omitted).toBe(0)
       })
     })
   },

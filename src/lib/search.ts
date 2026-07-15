@@ -176,3 +176,12 @@ export function parseSearchQuery(query: string): SearchTerm[][] {
   }
   return capped
 }
+
+// クエリにタグ項が 1 つ以上含まれるか。
+// 特性表を出すかの判定に使う: 表は「同族の部品を並べて比べる」ビューであり、
+// タグ検索がまさにその族の指定だから (docs/08-プロパティ計画.md)。
+export function queryHasTagTerm(query: string): boolean {
+  return parseSearchQuery(query).some((group) =>
+    group.some((term) => term.kind === 'tag'),
+  )
+}

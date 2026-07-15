@@ -1,6 +1,12 @@
 import { prisma } from '@/lib/db'
 import { Prisma } from '@/generated/prisma/client'
 import type { Item } from '@/generated/prisma/client'
+import { memoSummary } from '@/lib/memoSummary'
+import {
+  extractProps,
+  parseStoredProps,
+  type ItemPropsRow,
+} from '@/lib/props'
 import { parseSearchQuery, type SearchTerm } from '@/lib/search'
 import { extractTags } from '@/lib/tags'
 import {
@@ -12,18 +18,23 @@ import {
 
 export const PAGE_SIZE = 20
 
+// 特性表に載せるノート数の上限。一覧のページ送り (PAGE_SIZE) とは独立で、
+// ページを開いても表は検索ヒット全体で一定になるようにする。
+// 個人利用で 1 タグに数百件も付かない前提の安全弁。
+export const PROPS_TABLE_LIMIT = 200
+
 export async function getItem(itemNo: string): Promise<Item | null> {
   return prisma.item.findUnique({ where: { itemNo } })
 }
 
 // Ver1 の /item/:itemNo と同じく、未登録なら新規作成する (upsert)。
-// tags は memo から抽出した派生キャッシュ (保存のたびに再計算する)。
+// tags / props は memo から抽出した派生キャッシュ (保存のたびに再計算する)。
 export async function upsertMemo(itemNo: string, memo: string): Promise<Item> {
-  const tags = extractTags(memo)
+  const derived = derivedFromMemo(memo)
   return prisma.item.upsert({
     where: { itemNo },
-    update: { memo, tags },
-    create: { itemNo, itemNoNum: itemNoToNum(itemNo), memo, tags },
+    update: { memo, ...derived },
+    create: { itemNo, itemNoNum: itemNoToNum(itemNo), memo, ...derived },
   })
 }
 
@@ -31,12 +42,21 @@ export async function upsertItem(
   itemNo: string,
   data: { memo: string; url: string; mode: Mode },
 ): Promise<Item> {
-  const tags = extractTags(data.memo)
+  const derived = derivedFromMemo(data.memo)
   return prisma.item.upsert({
     where: { itemNo },
-    update: { ...data, tags },
-    create: { itemNo, itemNoNum: itemNoToNum(itemNo), ...data, tags },
+    update: { ...data, ...derived },
+    create: { itemNo, itemNoNum: itemNoToNum(itemNo), ...data, ...derived },
   })
+}
+
+// memo 由来の派生キャッシュ列。正本は memo なので保存のたびに丸ごと作り直す。
+// 書き込み経路 (upsertMemo / upsertItem) を 1 箇所に集約して、再計算漏れを防ぐ。
+function derivedFromMemo(memo: string) {
+  return {
+    tags: extractTags(memo),
+    props: extractProps(memo),
+  }
 }
 
 export interface TagCount {
@@ -75,21 +95,35 @@ function termCondition(term: SearchTerm): Prisma.Sql {
   return Prisma.sql`(memo &@ ${term.value} OR url &@ ${term.value} OR item_no ILIKE ${likePrefix})`
 }
 
-// 検索クエリを DNF (AND グループの OR) に解析して WHERE 句を組み立てる。
+// 検索クエリを DNF (AND グループの OR) の条件式へ組み立てる (WHERE は付けない)。
 // グループ内は各語を AND、グループ間は OR で結合する。
-//   `抵抗 1608 OR コンデンサ`
-//     → WHERE ((抵抗) AND (1608)) OR ((コンデンサ))
-// 空クエリなら WHERE を付けない (一覧ブラウズ)。
-function buildWhere(query: string): Prisma.Sql {
+//   `抵抗 1608 OR コンデンサ` → ((抵抗) AND (1608)) OR ((コンデンサ))
+// 空クエリ (絞り込みなし) なら null。
+function buildQueryCondition(query: string): Prisma.Sql | null {
   const groups = parseSearchQuery(query)
   if (groups.length === 0) {
-    return Prisma.empty
+    return null
   }
   const groupSql = groups.map(
     (terms) =>
       Prisma.sql`(${Prisma.join(terms.map(termCondition), ' AND ')})`,
   )
-  return Prisma.sql`WHERE ${Prisma.join(groupSql, ' OR ')}`
+  return Prisma.join(groupSql, ' OR ')
+}
+
+// 検索の WHERE 句。空クエリなら WHERE を付けない (一覧ブラウズ)。
+function buildWhere(query: string): Prisma.Sql {
+  const condition = buildQueryCondition(query)
+  return condition === null ? Prisma.empty : Prisma.sql`WHERE ${condition}`
+}
+
+// 特性表の WHERE 句。検索条件に加えてプロパティを持つノートだけへ絞る。
+function buildPropsWhere(query: string): Prisma.Sql {
+  const condition = buildQueryCondition(query)
+  const hasProps = Prisma.sql`props <> '[]'::jsonb`
+  return condition === null
+    ? Prisma.sql`WHERE ${hasProps}`
+    : Prisma.sql`WHERE (${condition}) AND ${hasProps}`
 }
 
 // ソート句。PGroonga のスコアは小テーブルで seq scan になり効かないため、
@@ -125,6 +159,7 @@ export async function searchItems(
            url,
            mode,
            tags,
+           props,
            created_at AS "createdAt",
            updated_at AS "updatedAt"
     FROM items
@@ -134,4 +169,57 @@ export async function searchItems(
   `
 
   return { items, total, page: safePage, pageCount }
+}
+
+export interface ItemPropsResult {
+  rows: ItemPropsRow[]
+  // 上限を超えて表に載らなかった件数。黙って打ち切ると「これで全部」と
+  // 読めてしまうため、呼び出し側が知らせられるように数を返す。
+  omitted: number
+}
+
+// 特性表の元データ。検索ヒットのうちプロパティを持つノートを、一覧と同じ並びで返す。
+// 一覧のページ送りとは独立に全ヒットを対象にするため、LIMIT は PAGE_SIZE ではなく
+// PROPS_TABLE_LIMIT (ページを開いても表の中身が変わらないように)。
+// 要約はここで作り、memo 全文をクライアントへ送らない。
+export async function searchItemProps(
+  query: string,
+  sort: Sort = 'updated',
+): Promise<ItemPropsResult> {
+  const where = buildPropsWhere(query)
+  // 上限より 1 件だけ多く取り、溢れているかを 1 クエリで判定する
+  // (件数用に count を撃つより安い)。
+  const rows = await prisma.$queryRaw<
+    { itemNo: string; memo: string; props: unknown }[]
+  >`
+    SELECT item_no AS "itemNo",
+           memo,
+           props
+    FROM items
+    ${where}
+    ${buildOrderBy(sort)}
+    LIMIT ${PROPS_TABLE_LIMIT + 1}
+  `
+
+  const omitted =
+    rows.length > PROPS_TABLE_LIMIT
+      ? await countItemProps(where) - PROPS_TABLE_LIMIT
+      : 0
+
+  return {
+    rows: rows.slice(0, PROPS_TABLE_LIMIT).map((row) => ({
+      itemNo: row.itemNo,
+      summary: memoSummary(row.memo),
+      props: parseStoredProps(row.props),
+    })),
+    omitted,
+  }
+}
+
+// 溢れたときだけ本当の総数を数える (通常の検索では撃たない)。
+async function countItemProps(where: Prisma.Sql): Promise<number> {
+  const rows = await prisma.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM items ${where}
+  `
+  return rows[0]?.count ?? 0
 }

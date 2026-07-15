@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   MAX_SEARCH_TERMS,
   parseSearchQuery,
+  queryHasTagTerm,
   splitSearchTerms,
   type SearchTerm,
 } from './search'
@@ -194,5 +195,32 @@ describe('parseSearchQuery — DNF (OR of AND-groups)', () => {
       const total = groups.reduce((n, g) => n + g.length, 0)
       expect(total).toBe(MAX_SEARCH_TERMS)
     })
+  })
+})
+
+describe('queryHasTagTerm', () => {
+  test('is true for a tag query', () => {
+    expect(queryHasTagTerm('#bjt')).toBe(true)
+    expect(queryHasTagTerm('＃ＮＰＮ')).toBe(true)
+  })
+
+  test('is true when a tag appears in any OR group', () => {
+    expect(queryHasTagTerm('抵抗 OR #bjt')).toBe(true)
+    expect(queryHasTagTerm('#bjt 2sc')).toBe(true)
+  })
+
+  test('is false for a text-only query', () => {
+    expect(queryHasTagTerm('抵抗')).toBe(false)
+    expect(queryHasTagTerm('抵抗 1608 OR コンデンサ')).toBe(false)
+  })
+
+  test('is false for a quoted #tag (a full-text literal, not a tag)', () => {
+    expect(queryHasTagTerm('"#bjt"')).toBe(false)
+  })
+
+  test('is false for a bare # and for an empty query', () => {
+    expect(queryHasTagTerm('#')).toBe(false)
+    expect(queryHasTagTerm('')).toBe(false)
+    expect(queryHasTagTerm('   ')).toBe(false)
   })
 })

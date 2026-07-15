@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { bulkTagAction } from "@/app/actions";
 import { ItemList } from "@/components/ItemList";
+import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
-import { listTags, searchItems } from "@/lib/items";
+import { listTags, searchItemProps, searchItems } from "@/lib/items";
+import { queryHasTagTerm } from "@/lib/search";
 import { buildSearchUrl } from "@/lib/searchUrl";
 import { parseSort } from "@/lib/validation";
 
@@ -16,9 +18,15 @@ export default async function Home({ searchParams }: HomeProps) {
   const { q = "", page = "1", sort: sortParam } = await searchParams;
   const query = q.trim();
   const sort = parseSort(sortParam);
-  const [result, tags] = await Promise.all([
+  // 特性表はタグ検索のときだけ出す。表は「同族の部品を並べて比べる」ビューで、
+  // タグ検索がまさにその族の指定だから (docs/08-プロパティ計画.md §4)。
+  const showProps = queryHasTagTerm(query);
+  const [result, tags, props] = await Promise.all([
     searchItems(query, Number(page) || 1, sort),
     listTags(),
+    showProps
+      ? searchItemProps(query, sort)
+      : Promise.resolve({ rows: [], omitted: 0 }),
   ]);
 
   return (
@@ -52,6 +60,8 @@ export default async function Home({ searchParams }: HomeProps) {
           )}
         </p>
       </div>
+
+      <PropsTable rows={props.rows} omitted={props.omitted} />
 
       <ItemList
         items={result.items}
