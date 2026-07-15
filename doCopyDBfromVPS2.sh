@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# 本番 (vps2) の DB をローカル (WSL2) へ上書きコピーする。ローカルから実行する。
+#
+# ローカルの qr データベースを破棄し、vps2 の内容で丸ごと置き換える。
+# 画像は Ver2.x で uploads volume から DB (images テーブル) へ移したため、
+# このスクリプトだけでメモ・タグ・画像がすべて揃う (volume のコピーは不要)。
+#
+# 前提:
+#   - ローカル / vps2 とも docker compose の db サービスが起動している
+#   - 両者の db は同じイメージ (groonga/pgroonga:*-alpine-16) のため、
+#     pg_dump / pg_restore のバージョン差を考えなくてよい
+#   - DB 操作はコンテナ内の Unix ソケット (trust 認証) 経由で行うので、
+#     パスワードも SSH トンネルも要らない (doDeploy.sh のような .env 取得は不要)
+#
+# 使い方:
+#   ./doCopyDBfromVPS2.sh          # 確認プロンプトあり
+#   ./doCopyDBfromVPS2.sh --yes    # プロンプトを省略 (自動実行用)
+#
+# 環境変数で上書き可能:
+#   COPY_REMOTE      ssh 接続先 (default: vps2)
+#   COPY_REMOTE_DIR  リモートの compose ディレクトリ ($HOME 相対)
+#
+# ロールバック: 上書き前のローカル DB は backup/ に退避する。戻すには
+#   docker compose stop app
+#   docker compose exec -T db pg_restore --clean --if-exists --no-owner -U qr -d qr \
+#     < backup/qr-local-backup_<timestamp>.dump
+#   docker compose up -d app
+set -euo pipefail
+cd "$(dirname "$0")"
+
+REMOTE="${COPY_REMOTE:-vps2}"
+REMOTE_DIR="${COPY_REMOTE_DIR:-41-QR-search/qr-search}"
+readonly BACKUP_DIR="backup"
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+readonly LOCAL_BACKUP="${BACKUP_DIR}/qr-local-backup_${TIMESTAMP}.dump"
+readonly HEALTH_RETRIES=30
+
+log() { echo ""; echo "==> $*"; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+# ローカル / リモートの db コンテナ内でコマンドを実行する。
+# remote_db は引数を $* で連結するためクォートが保てない。SQL のような
+# クォートを含む文字列は引数で渡さず、psql の標準入力から流すこと (query_* を使う)
+local_db() { docker compose exec -T db "$@"; }
+remote_db() { ssh "$REMOTE" "cd '$REMOTE_DIR' && docker compose exec -T db $*"; }
+
+# SQL は stdin 経由で渡す (ssh・docker compose exec -T とも stdin を素通しする)
+query_local() { local_db psql -U qr -d "${2:-qr}" -tA -v ON_ERROR_STOP=1 <<< "$1"; }
+query_remote() { remote_db psql -U qr -d qr -tA -v ON_ERROR_STOP=1 <<< "$1"; }
+
+# 本番ダンプの一時ファイルは必ず消す (メモと画像の実データを含むため)
+DUMP=""
+cleanup() {
+  if [ -n "$DUMP" ]; then
+    rm -f "$DUMP"
+  fi
+}
+trap cleanup EXIT
+
+# items / images の件数と memo 全体のハッシュ。件数だけだと中身の欠損を見逃すため、
+# 内容そのものを突き合わせる
+readonly SIGNATURE_SQL="select (select count(*) from items)||' items / '\
+||(select count(*) from images)||' images / memo md5='\
+||(select coalesce(md5(string_agg(item_no||':'||memo, '|' order by item_no)), 'なし') from items)"
+
+log "0/7 事前チェック"
+[ -f .env ] || die ".env がない。cp .env.example .env して値を設定すること"
+local_db pg_isready -U qr -d qr >/dev/null 2>&1 ||
+  die "ローカルの db が起動していない。docker compose up -d db を先に実行すること"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE" true 2>/dev/null ||
+  die "$REMOTE に ssh 接続できない"
+remote_db pg_isready -U qr -d qr >/dev/null 2>&1 ||
+  die "$REMOTE の db が起動していない"
+echo "ローカル・$REMOTE とも db は応答している"
+
+echo ""
+echo "ローカルの qr データベースを $REMOTE の内容で上書きする (元に戻せない)。"
+echo "  上書き前のローカル DB → $LOCAL_BACKUP に退避してから破棄する"
+echo "  現在のローカル: $(query_local "$SIGNATURE_SQL")"
+echo "  コピー元の$REMOTE : $(query_remote "$SIGNATURE_SQL")"
+if [ "${1:-}" != "--yes" ]; then
+  read -r -p "続行するか? [y/N] " answer
+  case "$answer" in
+    [yY] | [yY][eE][sS]) ;;
+    *) echo "中止した"; exit 1 ;;
+  esac
+fi
+
+log "1/7 ローカル DB を退避 ($LOCAL_BACKUP)"
+mkdir -p "$BACKUP_DIR"
+local_db pg_dump -U qr -d qr -Fc > "$LOCAL_BACKUP"
+[ -s "$LOCAL_BACKUP" ] || die "退避ダンプが空。中止する (ロールバック手段が無い状態では進めない)"
+du -h "$LOCAL_BACKUP"
+
+log "2/7 $REMOTE の DB をダンプ取得"
+DUMP="$(mktemp "${TMPDIR:-/tmp}/qr-vps2-dump.XXXXXX")"
+remote_db pg_dump -U qr -d qr -Fc > "$DUMP"
+[ -s "$DUMP" ] || die "取得したダンプが空"
+du -h "$DUMP"
+
+log "3/7 app を停止 (DB 接続を切る)"
+docker compose stop app
+
+log "4/7 ローカルの qr データベースを作り直す"
+# app 以外の接続 (psql の開きっぱなし等) が残っていると DROP DATABASE が失敗する
+query_local "select pg_terminate_backend(pid) from pg_stat_activity
+   where datname = 'qr' and pid <> pg_backend_pid()" postgres >/dev/null
+# DROP DATABASE はトランザクション内で実行できないため psql を分けて呼ぶ
+local_db psql -U qr -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS qr" >/dev/null
+local_db psql -U qr -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE qr OWNER qr" >/dev/null
+
+log "5/7 リストア"
+# 空の DB へ入れるので --clean は不要。pgroonga 拡張とインデックスもダンプに含まれ、
+# 同じイメージのためそのまま復元される
+local_db pg_restore --no-owner -U qr -d qr < "$DUMP"
+
+log "6/7 マイグレーション追従"
+# ローカルのコードが本番より新しい (未デプロイの migration がある) 場合に適用する。
+# 本番と同じなら何も起きない。
+#
+# compose の migrate サービスは使わない: あれはビルド済みイメージの中の
+# prisma/migrations を見るため、イメージが古いと新しい migration が入っておらず
+# 「No pending migrations」と言って黙って何もしない。ここは doDeploy.sh と同様に
+# ホストの prisma CLI から作業ツリーの migration を直接当てる
+npx prisma migrate deploy
+
+log "7/7 検証"
+remote_signature="$(query_remote "$SIGNATURE_SQL")"
+local_signature="$(query_local "$SIGNATURE_SQL")"
+echo "  $REMOTE : $remote_signature"
+echo "  ローカル: $local_signature"
+if [ "$remote_signature" != "$local_signature" ]; then
+  # 6/7 で本番に無い migration を当てた場合、スキーマは変わるが memo の内容は
+  # 変わらないため、ここは一致するのが正常。不一致はコピー失敗か、コピー中に
+  # 本番が更新されたことを意味する
+  die "コピー元と内容が一致しない。$LOCAL_BACKUP から戻せる (手順はこのスクリプト冒頭)"
+fi
+echo "一致 OK"
+
+# 全文検索が使えることまで確認する。pgroonga インデックスはリストア漏れが
+# あっても件数照合では気付けないため、実際に検索して確かめる
+if ! query_local "select count(*) from items where memo &@ 'a'" >/dev/null 2>&1; then
+  die "PGroonga の全文検索が動かない。インデックスか拡張の復元に失敗している"
+fi
+if [ "$(query_local "select count(*) from pg_indexes
+     where tablename = 'items' and indexdef ilike '%pgroonga%'")" != "1" ]; then
+  die "PGroonga インデックスが復元されていない (全文検索が全件走査になる)"
+fi
+echo "PGroonga 全文検索・インデックス OK"
+
+log "app 起動"
+docker compose up -d app
+
+APP_PORT="$(grep -oP '^APP_PORT=\K.*' .env || true)"
+APP_URL="http://127.0.0.1:${APP_PORT:-3000}/"
+log "ヘルスチェック ($APP_URL)"
+for i in $(seq 1 "$HEALTH_RETRIES"); do
+  status="$(curl -fsS -o /dev/null -w '%{http_code}' "$APP_URL" || true)"
+  if [ "$status" = "200" ]; then
+    echo "OK: HTTP $status"
+    log "コピー完了: $APP_URL"
+    echo "上書き前のローカル DB は $LOCAL_BACKUP に残してある"
+    exit 0
+  fi
+  echo "  waiting... ($i/$HEALTH_RETRIES, status=${status:-none})"
+  sleep 2
+done
+die "ヘルスチェックが $HEALTH_RETRIES 回失敗した。docker compose logs app を確認すること"
