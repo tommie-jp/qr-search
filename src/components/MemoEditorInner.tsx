@@ -5,6 +5,8 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { fenceLanguageCompletion } from "./fenceCompletion";
+import { fenceLanguageLinter } from "./fenceLinter";
 
 export interface MemoEditorInnerProps {
   value: string;
@@ -121,9 +123,20 @@ export default function MemoEditorInner({
     }
   };
 
-  const extensions = useMemo(
-    () => [
-      markdown(),
+  const extensions = useMemo(() => {
+    // markdown() は内部で新しい言語インスタンスを作ってそこに組み込み補完を
+    // 登録する。export される markdownLanguage は別インスタンスのため、
+    // そちらに登録しても効かない (バンドル環境で languageDataAt に載らない)。
+    // markdown() が返した当のインスタンス (md.language) に登録する
+    const md = markdown();
+    return [
+      md,
+      // ```<言語> の補完 (basicSetup が autocompletion を既定で有効化済み)。
+      // override せず language data 経由で登録し、組み込み補完と共存させる
+      md.language.data.of({ autocomplete: fenceLanguageCompletion }),
+      // circuitikz / mermaid の打ち間違いに警告を出す (補完だけでは
+      // 入れ替わり誤字が無反応で確定してしまうため)
+      fenceLanguageLinter,
       EditorView.lineWrapping,
       // 旧 textarea の maxLength 相当: 上限を超える変更を受け付けない
       EditorState.changeFilter.of((tr) => tr.newDoc.length <= MAX_TEXT_LENGTH),
@@ -152,10 +165,9 @@ export default function MemoEditorInner({
           return true;
         },
       }),
-    ],
+    ];
     // insertImages は ref と state セッターのみ参照するため再生成不要
-    [],
-  );
+  }, []);
 
   const handleFilePick = (files: FileList | null) => {
     const view = editorRef.current?.view;

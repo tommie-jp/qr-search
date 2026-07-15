@@ -15,7 +15,7 @@ import { MermaidDiagram } from "./MermaidDiagram";
 import { CircuitDiagram } from "./CircuitDiagram";
 import { ZoomableImage } from "./ZoomableImage";
 import { BOX_CLASS } from "./ui";
-import { CIRCUIT_LANG } from "@/lib/circuitFences";
+import { CIRCUIT_LANG, MERMAID_LANG } from "@/lib/fenceLanguages";
 import type { CircuitMap } from "@/lib/circuitCache";
 import "katex/dist/katex.min.css";
 
@@ -77,7 +77,7 @@ function preOrDiagram(circuits: CircuitMap) {
   }: MarkdownComponentProps<"pre">) {
     const fence = readFence(children);
 
-    if (fence?.lang === "mermaid") {
+    if (fence?.lang === MERMAID_LANG) {
       return <MermaidDiagram code={fence.code} />;
     }
 

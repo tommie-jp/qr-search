@@ -2,9 +2,10 @@ import type { Code, Root } from 'mdast'
 import remarkParse from 'remark-parse'
 import { unified } from 'unified'
 import { visit } from 'unist-util-visit'
+import { CIRCUIT_LANG } from './fenceLanguages'
 
-// memo 本文で回路図を書くときのフェンス言語
-export const CIRCUIT_LANG = 'circuitikz'
+// memo 本文で回路図を書くときのフェンス言語 (定義は fenceLanguages に集約)
+export { CIRCUIT_LANG }
 
 // 本文から ```circuitikz フェンスの中身を重複なしで取り出す。
 // 正規表現ではなく remark でパースするのは、フェンスの入れ子や
