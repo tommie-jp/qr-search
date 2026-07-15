@@ -17,7 +17,8 @@
 	# PWA: ブラウザは manifest とアイコンを Authorization ヘッダなしで取得するため、
 	# ここを認証下に置くと 401 になり「インストール可能」と判定されない。
 	# どちらも秘密情報を含まないので公開してよい
-	@pwa_public path /manifest.webmanifest /icon-*.png /apple-icon.png
+	# icon-*.png は PWA 用、icon.svg はブラウザタブ用 (favicon)
+	@pwa_public path /manifest.webmanifest /icon-*.png /icon.svg /apple-icon.png
 	handle @pwa_public {
 		reverse_proxy app:3000
 	}
