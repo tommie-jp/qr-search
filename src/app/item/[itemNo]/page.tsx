@@ -7,6 +7,7 @@ import { MemoPanel } from "@/components/MemoPanel";
 import { MemoEditor } from "@/components/MemoEditor";
 import { BOX_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
+import { renderCircuits } from "@/lib/circuitCache";
 import { tagSearchHref } from "@/lib/tags";
 import { isValidItemNo } from "@/lib/validation";
 
@@ -25,6 +26,9 @@ export default async function ItemPage({ params }: ItemPageProps) {
   }
   const item = await getItem(itemNo);
   const memo = item?.memo ?? "";
+  // ```circuitikz は TeX (WASM) で描くため非同期。MarkdownView は同期に描くので
+  // ここで済ませて結果を渡す (2 回目以降は DB キャッシュを引くだけ)
+  const circuits = await renderCircuits(memo);
 
   return (
     <div className="space-y-4">
@@ -83,7 +87,7 @@ export default async function ItemPage({ params }: ItemPageProps) {
       <MemoPanel
         key={itemNo}
         defaultMode={memo ? "markdown" : "edit"}
-        markdownView={<MarkdownView markdown={memo} />}
+        markdownView={<MarkdownView markdown={memo} circuits={circuits} />}
         textView={
           <pre
             className={`whitespace-pre-wrap break-words ${BOX_CLASS} font-mono text-base`}

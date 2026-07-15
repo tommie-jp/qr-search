@@ -14,6 +14,15 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  {
+    // 回路図の描画スクリプトは Next のバンドルを通さず node が直接起動する
+    // 素の CommonJS なので、require() を使う (ESM 化すると子プロセスとして
+    // 動かなくなる)
+    files: ["scripts/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

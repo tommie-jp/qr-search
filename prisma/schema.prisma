@@ -44,3 +44,18 @@ model Image {
 
   @@map("images")
 }
+
+// memo の ```circuitikz フェンスから描いた SVG のキャッシュ。
+// 描画は TeX (WASM) の起動込みで 1 秒強かかる一方、memo は何度も表示され
+// 内容はめったに変わらないため、本文のハッシュで引けるようにする。
+// hash は sha256(レンダラ版 + ソース) で、レンダラ版を混ぜることで
+// 描画結果が変わったときに古い SVG を返し続けないようにしている。
+// 画像と同じく DB に置くことで pg_dump だけで丸ごと復元できる
+// (消えても再描画できる派生キャッシュなので、消失しても実害はない)。
+model CircuitSvg {
+  hash      String   @id
+  svg       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("circuit_svgs")
+}

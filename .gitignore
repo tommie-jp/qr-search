@@ -52,3 +52,6 @@ next-env.d.ts
 # doCopyDBfromVPS2.sh がローカル DB を上書きする前に取る退避ダンプ。
 # 本番の実データ (メモ・画像) を含むため git 管理外
 /backup/
+
+# node-tikzjax の webfont (scripts/copyTikzFonts.mjs が node_modules から複製する)
+/public/tikzjax

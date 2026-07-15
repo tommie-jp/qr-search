@@ -1,0 +1,127 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { circuitHash } from './circuitikz'
+
+// DB と TeX の実描画は差し替えて、キャッシュの分岐だけを見る
+const findUnique = vi.fn()
+const create = vi.fn()
+const renderCircuit = vi.fn()
+
+vi.mock('./db', () => ({
+  prisma: { circuitSvg: { findUnique: (...a: unknown[]) => findUnique(...a), create: (...a: unknown[]) => create(...a) } },
+}))
+
+vi.mock('./circuitikz', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./circuitikz')>()
+  return { ...actual, renderCircuit: (...a: unknown[]) => renderCircuit(...a) }
+})
+
+const { getOrRenderCircuit, renderCircuits } = await import('./circuitCache')
+
+const SOURCE = String.raw`\begin{circuitikz}\draw (0,0) to[R=$R_1$] (2,0);\end{circuitikz}`
+const SVG = '<svg><path/></svg>'
+
+describe('getOrRenderCircuit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  test('returns the cached SVG without rendering on a hit', async () => {
+    findUnique.mockResolvedValue({ hash: circuitHash(SOURCE), svg: SVG })
+
+    const svg = await getOrRenderCircuit(SOURCE)
+
+    expect(svg).toBe(SVG)
+    expect(renderCircuit).not.toHaveBeenCalled()
+  })
+
+  test('renders and stores the SVG on a miss', async () => {
+    findUnique.mockResolvedValue(null)
+    renderCircuit.mockResolvedValue(SVG)
+    create.mockResolvedValue({})
+
+    const svg = await getOrRenderCircuit(SOURCE)
+
+    expect(svg).toBe(SVG)
+    expect(renderCircuit).toHaveBeenCalledWith(SOURCE)
+    expect(create).toHaveBeenCalledWith({
+      data: { hash: circuitHash(SOURCE), svg: SVG },
+    })
+  })
+
+  test('looks up by the version-salted hash', async () => {
+    findUnique.mockResolvedValue({ svg: SVG })
+
+    await getOrRenderCircuit(SOURCE)
+
+    expect(findUnique).toHaveBeenCalledWith({ where: { hash: circuitHash(SOURCE) } })
+  })
+
+  // キャッシュは無くても再描画できる派生データ。DB が落ちていても図は出したい
+  test('still renders when the cache read fails', async () => {
+    findUnique.mockRejectedValue(new Error('db down'))
+    renderCircuit.mockResolvedValue(SVG)
+
+    expect(await getOrRenderCircuit(SOURCE)).toBe(SVG)
+  })
+
+  test('still returns the SVG when the cache write fails', async () => {
+    findUnique.mockResolvedValue(null)
+    renderCircuit.mockResolvedValue(SVG)
+    create.mockRejectedValue(new Error('db down'))
+
+    expect(await getOrRenderCircuit(SOURCE)).toBe(SVG)
+  })
+
+  test('propagates render errors instead of caching them', async () => {
+    findUnique.mockResolvedValue(null)
+    renderCircuit.mockRejectedValue(new Error('TeX error'))
+
+    await expect(getOrRenderCircuit(SOURCE)).rejects.toThrow('TeX error')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  // 検査を直したときに RENDERER_VERSION を上げ忘れても、危険な図が
+  // キャッシュから素通りしないこと
+  test('re-checks the cached SVG instead of trusting the row', async () => {
+    findUnique.mockResolvedValue({ svg: '<svg><script>alert(1)</script></svg>' })
+
+    await expect(getOrRenderCircuit(SOURCE)).rejects.toThrow(/想定外/)
+  })
+})
+
+describe('renderCircuits', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    findUnique.mockResolvedValue(null)
+    create.mockResolvedValue({})
+    renderCircuit.mockResolvedValue(SVG)
+  })
+
+  test('renders every fence in the memo', async () => {
+    const md = '```circuitikz\nA\n```\n\n```circuitikz\nB\n```\n'
+
+    const map = await renderCircuits(md)
+
+    expect(map.get('A')).toEqual({ svg: SVG })
+    expect(map.get('B')).toEqual({ svg: SVG })
+  })
+
+  test('folds a failed render into the map instead of throwing', async () => {
+    renderCircuit.mockRejectedValue(new Error('TeX error'))
+
+    const map = await renderCircuits('```circuitikz\nA\n```')
+
+    expect(map.get('A')).toEqual({ error: 'TeX error', texLog: '' })
+  })
+
+  // 1 枚ごとに最大 10 秒かかるため、際限なく並べられるとページが止まる
+  test('caps how many circuits one memo can render', async () => {
+    const md = Array.from({ length: 12 }, (_, i) => `\`\`\`circuitikz\nC${i}\n\`\`\``).join('\n\n')
+
+    const map = await renderCircuits(md)
+
+    expect(renderCircuit).toHaveBeenCalledTimes(8)
+    expect(map.get('C7')).toEqual({ svg: SVG })
+    expect(map.get('C8')).toMatchObject({ error: expect.stringContaining('8 個まで') })
+  })
+})

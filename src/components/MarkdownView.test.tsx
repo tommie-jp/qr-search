@@ -21,6 +21,43 @@ test("単一改行を改行として表示する (breaks)", () => {
   expect(html).toContain("<br/>");
 });
 
+test("circuitikz フェンスは描画済み SVG に差し替える", () => {
+  const code = "\\draw (0,0) to[R=$R_1$] (2,0);";
+  const html = renderToStaticMarkup(
+    <MarkdownView
+      markdown={"```circuitikz\n" + code + "\n```"}
+      circuits={new Map([[code, { svg: "<svg><path d='M0 0'/></svg>" }]])}
+    />,
+  );
+  expect(html).toContain("circuit-diagram");
+  expect(html).toContain("<path");
+  expect(html).not.toContain("<code");
+});
+
+test("circuitikz の描画エラーは TeX ログとソースを添えて赤枠で出す", () => {
+  const code = "\\draw (0,0) to[NOPE] (2,0);";
+  const html = renderToStaticMarkup(
+    <MarkdownView
+      markdown={"```circuitikz\n" + code + "\n```"}
+      circuits={
+        new Map([
+          [code, { error: "回路図を描画できませんでした", texLog: "! Package pgfkeys Error" }],
+        ])
+      }
+    />,
+  );
+  expect(html).toContain("回路図を描画できませんでした");
+  expect(html).toContain("! Package pgfkeys Error");
+  expect(html).toContain("to[NOPE]");
+});
+
+// circuits を渡さないページ (docs など) で図が消えたりせず、素直にコードで出る
+test("circuits を渡さなければ circuitikz はコードブロックのまま", () => {
+  const html = render("```circuitikz\n\\draw (0,0) to[R] (2,0);\n```");
+  expect(html).toContain("<code");
+  expect(html).not.toContain("circuit-diagram");
+});
+
 test("mermaid フェンスはコードブロックではなく図として扱う", () => {
   const html = render("```mermaid\ngraph TD; A-->B;\n```");
   expect(html).toContain("mermaid-diagram");
