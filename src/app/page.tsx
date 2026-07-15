@@ -31,7 +31,14 @@ export default async function Home({ searchParams }: HomeProps) {
 
   return (
     <div className="space-y-4">
-      <SearchForm initialQuery={query} tags={tags.map((t) => t.tag)} />
+      {/* key で query が変わったら作り直す。検索窓の値は useState の初期値なので、
+          クライアント遷移 (タグリンク) では再初期化されず、URL と結果は新しいのに
+          窓だけ前の値のまま残ってしまう */}
+      <SearchForm
+        key={query}
+        initialQuery={query}
+        tags={tags.map((t) => t.tag)}
+      />
 
       <div className="flex items-center justify-between text-sm">
         <p className="flex items-baseline gap-2 text-gray-600">
