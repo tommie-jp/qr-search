@@ -31,3 +31,16 @@ enum Mode {
   memo
   url
 }
+
+// memo に挿入した画像。ファイルシステム (volume) ではなく DB に持つことで、
+// pg_dump だけでメモと画像が一緒に取れ、両者の整合が壊れないようにする。
+// name は Ver2.x で発番済みの "UUID.拡張子" をそのまま引き継ぐ
+// (既存メモ内の /api/images/<name> リンクを壊さないため)。
+model Image {
+  name      String   @id
+  mime      String
+  data      Bytes
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("images")
+}

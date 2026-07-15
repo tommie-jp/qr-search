@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { NextResponse } from 'next/server'
-import { getUploadDir, isValidImageName, mimeForName } from '@/lib/uploads'
+import { prisma } from '@/lib/db'
+import { extForMime, isValidImageName } from '@/lib/uploads'
 
 interface RouteContext {
   params: Promise<{ name: string }>
@@ -22,24 +21,28 @@ export async function GET(
     )
   }
 
-  try {
-    const bytes = await readFile(path.join(getUploadDir(), name))
-    return new NextResponse(new Uint8Array(bytes), {
-      headers: {
-        // ファイル名が UUID で内容が変わらないため長期キャッシュしてよい
-        'Content-Type': mimeForName(name) ?? 'application/octet-stream',
-        'Cache-Control': 'public, max-age=31536000, immutable',
-        // ユーザー由来のバイト列を配信するため MIME スニッフィングを禁止
-        'X-Content-Type-Options': 'nosniff',
-      },
-    })
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
-      return NextResponse.json(
-        { success: false, data: null, error: '画像が見つかりません' },
-        { status: 404 },
-      )
-    }
-    throw e
+  const image = await prisma.image.findUnique({
+    where: { name },
+    select: { mime: true, data: true },
+  })
+
+  if (!image) {
+    return NextResponse.json(
+      { success: false, data: null, error: '画像が見つかりません' },
+      { status: 404 },
+    )
   }
+
+  return new NextResponse(new Uint8Array(image.data), {
+    headers: {
+      // 保存時に検証済みだが、DB の値をそのまま信用せず既知の画像 MIME のときだけ採用する
+      'Content-Type': extForMime(image.mime)
+        ? image.mime
+        : 'application/octet-stream',
+      // ファイル名が UUID で内容が変わらないため長期キャッシュしてよい
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      // ユーザー由来のバイト列を配信するため MIME スニッフィングを禁止
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
 }

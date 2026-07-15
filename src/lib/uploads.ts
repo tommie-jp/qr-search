@@ -1,5 +1,3 @@
-import path from 'node:path'
-
 // 画像アップロードの制約。SVG はスクリプトを埋め込めるため対応しない
 const MIME_TO_EXT: Record<string, string> = {
   'image/png': 'png',
@@ -51,6 +49,43 @@ export function matchesMagicBytes(bytes: Uint8Array, ext: string): boolean {
   )
 }
 
-export function getUploadDir(): string {
-  return process.env.UPLOAD_DIR || path.join(process.cwd(), 'data', 'uploads')
+// multipart のヘッダ等のオーバーヘッド分を上限に足す
+const MAX_BODY_BYTES = MAX_IMAGE_BYTES + 1024 * 1024
+
+export interface UploadRejection {
+  status: number
+  error: string
+}
+
+// 本文を読む前に弾けるものだけを見る。問題なければ null。
+export function checkUploadRequest(request: Request): UploadRejection | null {
+  // CSRF 対策: ブラウザがクロスオリジン POST に付ける Origin がホストと
+  // 食い違う場合は本文を読む前に拒否する (同一オリジンの fetch は許可)
+  const origin = request.headers.get('origin')
+  if (origin && !isSameOrigin(origin, request)) {
+    return { status: 403, error: 'クロスオリジンのアップロードは許可されていません' }
+  }
+
+  // メモリ枯渇対策: formData() は本文全体をバッファするため、
+  // Content-Length の時点で明らかに大きすぎるものは先に弾く
+  const contentLength = Number(request.headers.get('content-length') ?? 0)
+  if (contentLength > MAX_BODY_BYTES) {
+    return { status: 413, error: tooLargeMessage() }
+  }
+
+  return null
+}
+
+function isSameOrigin(origin: string, request: Request): boolean {
+  const host = request.headers.get('host') ?? new URL(request.url).host
+  try {
+    return new URL(origin).host === host
+  } catch {
+    // パースできない Origin は正規のブラウザが送るものではない。同一とはみなさない
+    return false
+  }
+}
+
+export function tooLargeMessage(): string {
+  return `ファイルが大きすぎます (最大 ${MAX_IMAGE_BYTES / 1024 / 1024}MB)`
 }

@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 import {
+  checkUploadRequest,
   extForMime,
   isValidImageName,
   matchesMagicBytes,
@@ -58,4 +59,50 @@ test('拡張子と中身が食い違う場合は false (MIME 偽装)', () => {
   expect(matchesMagicBytes(JPEG_HEAD, 'png')).toBe(false)
   expect(matchesMagicBytes(PNG_HEAD, 'webp')).toBe(false)
   expect(matchesMagicBytes(new Uint8Array(0), 'png')).toBe(false)
+})
+
+function uploadRequest(headers: Record<string, string>): Request {
+  return new Request('http://localhost/api/images', {
+    method: 'POST',
+    body: new FormData(),
+    headers,
+  })
+}
+
+test('Origin がないリクエスト (curl 等) は通す', () => {
+  expect(checkUploadRequest(uploadRequest({ host: 'localhost' }))).toBeNull()
+})
+
+test('同一オリジンの POST は通す', () => {
+  const request = uploadRequest({ origin: 'http://localhost', host: 'localhost' })
+  expect(checkUploadRequest(request)).toBeNull()
+})
+
+test('クロスオリジンの POST は 403 で弾く (CSRF)', () => {
+  const request = uploadRequest({
+    origin: 'https://evil.example.com',
+    host: 'localhost',
+  })
+  expect(checkUploadRequest(request)?.status).toBe(403)
+})
+
+test('Origin が壊れていても例外にせず 403 で弾く', () => {
+  const request = uploadRequest({ origin: 'not-a-url', host: 'localhost' })
+  expect(checkUploadRequest(request)?.status).toBe(403)
+})
+
+test('Content-Length が上限を超えていれば本文を読まず 413 で弾く', () => {
+  const request = uploadRequest({
+    host: 'localhost',
+    'content-length': String(100 * 1024 * 1024),
+  })
+  expect(checkUploadRequest(request)?.status).toBe(413)
+})
+
+test('Content-Length が上限内なら通す', () => {
+  const request = uploadRequest({
+    host: 'localhost',
+    'content-length': String(1024),
+  })
+  expect(checkUploadRequest(request)).toBeNull()
 })
