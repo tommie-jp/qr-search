@@ -11,7 +11,7 @@ COPY . .
 # ビルド時のページデータ収集で db.ts が import されるためダミー URL を渡す
 # (全ページ force-dynamic なので実際の接続は起きない。実行時は compose が上書き)
 ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
-# npm run build = tikzjax フォント複製 + prisma generate + next build
+# npm run build = tikzjax フォント + zxing wasm の複製 + prisma generate + next build
 RUN npm run build
 
 # 実行ステージ: standalone 出力のみの最小イメージ

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import QRCode from "qrcode";
 import { PrintButton } from "@/components/PrintButton";
+import { qrBaseUrl } from "@/lib/site";
 import { buildItemUrl, isValidItemNo } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +18,7 @@ export default async function PrintPage({ params }: PrintPageProps) {
     notFound();
   }
 
-  const baseUrl = process.env.QR_BASE_URL ?? "https://qr.tommie.jp";
-  const itemUrl = buildItemUrl(baseUrl, itemNo);
+  const itemUrl = buildItemUrl(qrBaseUrl(), itemNo);
   const qrDataUrl = await QRCode.toDataURL(itemUrl, {
     margin: 1,
     width: 240,

@@ -6,6 +6,7 @@ import { SearchForm } from "@/components/SearchForm";
 import { listTags, searchItemProps, searchItems } from "@/lib/items";
 import { queryHasTagTerm } from "@/lib/search";
 import { buildSearchUrl } from "@/lib/searchUrl";
+import { qrStickerHost } from "@/lib/site";
 import { parseSort } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -32,12 +33,15 @@ export default async function Home({ searchParams }: HomeProps) {
   return (
     <div className="space-y-4">
       {/* key で query が変わったら作り直す。検索窓の値は useState の初期値なので、
-          クライアント遷移 (タグリンク) では再初期化されず、URL と結果は新しいのに
-          窓だけ前の値のまま残ってしまう */}
+          クライアント遷移 (スキャン・タグリンク) では再初期化されず、
+          URL と結果は新しいのに窓だけ前の値のまま残ってしまう。
+          stickerHost … シールに焼かれたホストは QR_BASE_URL 固定で、
+          アプリを開いているホスト (localhost 等) とは食い違いうる */}
       <SearchForm
         key={query}
         initialQuery={query}
         tags={tags.map((t) => t.tag)}
+        stickerHost={qrStickerHost()}
       />
 
       <div className="flex items-center justify-between text-sm">

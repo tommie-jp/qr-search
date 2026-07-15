@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { BOX_CLASS } from "@/components/ui";
 import {
@@ -13,6 +14,9 @@ import {
 interface SearchFormProps {
   initialQuery: string;
   tags: string[];
+  // QR シールに焼かれている URL のホスト (QR_BASE_URL 由来)。
+  // process.env はクライアントに渡らないのでサーバから降ろす
+  stickerHost: string;
 }
 
 interface Dropdown {
@@ -23,11 +27,20 @@ interface Dropdown {
 
 const MAX_CANDIDATES = 8;
 
+// スキャナはカメラと読み取りエンジン (wasm 約 1MB) を抱えるので、
+// ボタンを押すまで一切読み込まない (docs/09-スキャン計画.md §2)。
+// ssr: false … camera / document を触るのでサーバでは描画できない
+const ScannerModal = dynamic(
+  () => import("@/components/ScannerModal").then((m) => m.ScannerModal),
+  { ssr: false },
+);
+
 // 検索窓。素の GET フォームのまま、タグ (#…) を打ちかけたときだけ
 // 候補ドロップダウンで補完を助ける (JS 無効でも検索自体は動く)。
-export function SearchForm({ initialQuery, tags }: SearchFormProps) {
+export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps) {
   const [query, setQuery] = useState(initialQuery);
   const [dropdown, setDropdown] = useState<Dropdown | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // 補完適用後にキャレット位置を復元するための保留値。
   const pendingCaret = useRef<number | null>(null);
@@ -166,12 +179,27 @@ export function SearchForm({ initialQuery, tags }: SearchFormProps) {
           </ul>
         )}
       </div>
+      {/* カメラ非対応の環境でも隠さない。押したとき理由を出す方が原因を追える
+          (docs/09-スキャン計画.md §6) */}
+      <button
+        type="button"
+        onClick={() => setIsScanning(true)}
+        className={`whitespace-nowrap ${BOX_CLASS} font-medium text-gray-700`}
+      >
+        スキャン
+      </button>
       <button
         type="submit"
         className="whitespace-nowrap rounded bg-blue-600 px-4 py-2 font-medium text-white"
       >
         検索
       </button>
+      {isScanning && (
+        <ScannerModal
+          stickerHost={stickerHost}
+          onClose={() => setIsScanning(false)}
+        />
+      )}
     </form>
   );
 }
