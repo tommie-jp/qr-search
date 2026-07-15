@@ -16,6 +16,31 @@ export function isTaggableCode(code: string): boolean {
   return parseTagToken(`#${code}`) !== null
 }
 
+// 978 / 979 で始まる 13 桁は書籍用に予約された EAN-13 の接頭辞 (Bookland)。
+// つまり読み取った数字だけで書籍だと分かる (JAN や DataMatrix と違い、
+// 読み取ったフォーマットの情報が要らない)。
+//
+// ただし 979 帯のうち 9790 だけは ISMN (印刷楽譜の番号) で書籍ではないので外す。
+// 978x… と 9791-9799… の 2 通りを書く。
+const ISBN_PATTERN = /^(?:978[0-9]|979[1-9])[0-9]{9}$/
+
+// このコードが ISBN か (docs/10-スキャン新規登録計画.md §5)。
+//
+// 接頭辞と桁数だけでなくチェックデジットも検算する。スキャン経由なら zxing が
+// EAN-13 の検算を済ませているが、検索窓に手入力した番号はここだけが頼りで、
+// 検算しないと「ISBN である」と名乗る関数が嘘をつく。
+export function isIsbn(code: string): boolean {
+  if (!ISBN_PATTERN.test(code)) {
+    return false
+  }
+  // EAN-13: 左から重み 1,3,1,3... を掛けた総和 (チェックデジット込み) が 10 の倍数
+  const sum = [...code].reduce(
+    (acc, char, i) => acc + Number(char) * (i % 2 === 0 ? 1 : 3),
+    0,
+  )
+  return sum % 10 === 0
+}
+
 // 事前入力する本文。タイトルを書くための空行 2 つの下にタグを置く。
 //
 // 一覧の要約 (memoSummary) は空行を飛ばすので、何も書かないうちは要約が
@@ -24,8 +49,14 @@ export function isTaggableCode(code: string): boolean {
 // CodeMirror の既定カーソル位置 (文書先頭) がそのままタイトルを書く位置。
 //
 // タグは読み取った綴りのまま置く (正規化は tags キャッシュ側の仕事)。
+//
+// ISBN なら #book も付ける。「持っている本を一覧したい」は自然に起きる括りで、
+// タグにする価値がある。#isbn と #book の併記はしない (ISBN を持つノート =
+// 書籍で同じ集合を指し、タグ一覧のノイズが倍になるだけ)。誤判定しても
+// カーソルが載った編集ページが開いているので、その場で消せる。
 export function scanRegisterMemo(code: string): string {
-  return `\n\n#${code}`
+  const kind = isIsbn(code) ? ' #book' : ''
+  return `\n\n#${code}${kind}`
 }
 
 // 「新規登録」ボタンのリンク先。itemNo は採番済みの次番号を渡す。

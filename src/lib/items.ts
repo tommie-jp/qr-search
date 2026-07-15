@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { Prisma } from '@/generated/prisma/client'
 import type { Item } from '@/generated/prisma/client'
+import { firstUnusedNo, MIN_ITEM_NO } from '@/lib/itemNo'
 import { memoSummary } from '@/lib/memoSummary'
 import {
   extractProps,
@@ -27,16 +28,25 @@ export async function getItem(itemNo: string): Promise<Item | null> {
   return prisma.item.findUnique({ where: { itemNo } })
 }
 
-// 新規ノートに使う次の itemNo (docs/10-スキャン新規登録計画.md §4)。
-// item_no_num の最大 + 1。非数字の itemNo は item_no_num が null なので
-// 自然に無視される。index 済みの列なので安い。
+// 新規ノートに使う itemNo (docs/10-スキャン新規登録計画.md §4)。
+// MIN_ITEM_NO 以上で未使用の最小番号。max+1 だと番号が増える一方だが、
+// 番号はシールに印刷して部品に貼るものなので短いほど扱いやすい。
+//
+// 非数字の itemNo は item_no_num が null なので where で自然に外れる。
+// 全件引いて JS で隙間を探す。index 済みの列で 500 件規模なら、SQL の
+// gap 検索を書くより読める形の方がよい。
 //
 // 予約はしない。番号が競合するのは別タブで同時に作ったときだけで、単一
 // ユーザでは実質起きない。万一先を越されても、編集ページは既存ノートなら
 // その本文を表示する (事前入力しない) ので開いた瞬間に気づける。
 export async function nextItemNo(): Promise<string> {
-  const { _max } = await prisma.item.aggregate({ _max: { itemNoNum: true } })
-  return String((_max.itemNoNum ?? 0) + 1)
+  const rows = await prisma.item.findMany({
+    where: { itemNoNum: { gte: MIN_ITEM_NO } },
+    select: { itemNoNum: true },
+    orderBy: { itemNoNum: 'asc' },
+  })
+  const usedAsc = rows.flatMap((row) => (row.itemNoNum === null ? [] : [row.itemNoNum]))
+  return String(firstUnusedNo(usedAsc, MIN_ITEM_NO))
 }
 
 // Ver1 の /item/:itemNo と同じく、未登録なら新規作成する (upsert)。
