@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { Item } from "@/generated/prisma/client";
 import type { Sort } from "@/lib/validation";
@@ -17,22 +18,45 @@ interface ItemListProps {
   page: number;
   sort: Sort;
   action: BulkTagAction;
+  // 0 件の検索語をタグにした新規ノートの編集ページ。タグにできない語
+  // (URL・複数語) や採番できないときは null。採番はサーバでしか引けないので
+  // page.tsx から降ろす (docs/10-スキャン新規登録計画.md)
+  registerHref: string | null;
 }
 
-function emptyState(items: Item[]) {
+function emptyState(items: Item[], query: string, registerHref: string | null) {
   if (items.length > 0) {
     return null;
   }
   return (
-    <li className="px-4 py-6 text-center text-gray-500">
-      該当する部品がありません
+    <li className="space-y-3 px-4 py-6 text-center text-gray-500">
+      <p>該当する部品がありません</p>
+      {registerHref && (
+        // 何が作られるか (#コード) を見せる。押しても編集ページが開くだけで、
+        // 「更新」を押すまで DB には何も書かない
+        <p>
+          <Link
+            href={registerHref}
+            className="inline-block rounded bg-blue-600 px-4 py-2 font-medium text-white"
+          >
+            <span className="font-mono">#{query}</span> を新規登録
+          </Link>
+        </p>
+      )}
     </li>
   );
 }
 
 // 検索結果リスト。通常は今までどおりの表示 + 「選択」トグル。選択モードでは
 // 各行にチェックボックス、上部に一括タグ付け/削除のツールバーを出す。
-export function ItemList({ items, query, page, sort, action }: ItemListProps) {
+export function ItemList({
+  items,
+  query,
+  page,
+  sort,
+  action,
+  registerHref,
+}: ItemListProps) {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
@@ -71,7 +95,7 @@ export function ItemList({ items, query, page, sort, action }: ItemListProps) {
           {items.map((item) => (
             <ItemRow key={item.itemNo} item={item} />
           ))}
-          {emptyState(items)}
+          {emptyState(items, query, registerHref)}
         </ul>
       </div>
     );
@@ -107,7 +131,7 @@ export function ItemList({ items, query, page, sort, action }: ItemListProps) {
             }
           />
         ))}
-        {emptyState(items)}
+        {emptyState(items, query, null)}
       </ul>
     </form>
   );

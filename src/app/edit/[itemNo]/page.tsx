@@ -5,22 +5,31 @@ import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MemoEditor } from "@/components/MemoEditor";
 import { MEMO_INPUT_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
+import { isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
 import { isValidItemNo } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
 interface EditPageProps {
   params: Promise<{ itemNo: string }>;
+  searchParams: Promise<{ code?: string }>;
 }
 
 // Ver1 の /edit/:itemNo 相当。mode / memo / url をまとめて編集する
-export default async function EditPage({ params }: EditPageProps) {
+export default async function EditPage({ params, searchParams }: EditPageProps) {
   const { itemNo } = await params;
   if (!isValidItemNo(itemNo)) {
     notFound();
   }
-  const item = await getItem(itemNo);
+  const [item, { code }] = await Promise.all([getItem(itemNo), searchParams]);
   const mode = item?.mode ?? "memo";
+
+  // スキャンした未登録コードからの新規登録 (docs/10-スキャン新規登録計画.md §5)。
+  // 既存ノートには効かせない。採番が競合して先に使われていた場合、既存の本文を
+  // 黙って上書きする初期値を出すと、そのまま更新して壊しかねない。
+  // タグにできない code は無視する (通常の導線では来ない。URL を手で触った場合)
+  const defaultMemo =
+    !item && code && isTaggableCode(code) ? scanRegisterMemo(code) : (item?.memo ?? "");
 
   return (
     <div className="space-y-4">
@@ -52,7 +61,7 @@ export default async function EditPage({ params }: EditPageProps) {
           </label>
         </fieldset>
 
-        <MemoEditor defaultValue={item?.memo ?? ""} autoFocus />
+        <MemoEditor defaultValue={defaultMemo} autoFocus />
         <textarea
           name="url"
           rows={3}

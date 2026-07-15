@@ -3,7 +3,8 @@ import { bulkTagAction } from "@/app/actions";
 import { ItemList } from "@/components/ItemList";
 import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
-import { listTags, searchItemProps, searchItems } from "@/lib/items";
+import { listTags, nextItemNo, searchItemProps, searchItems } from "@/lib/items";
+import { isTaggableCode, scanRegisterHref } from "@/lib/scanRegister";
 import { queryHasTagTerm } from "@/lib/search";
 import { buildSearchUrl } from "@/lib/searchUrl";
 import { qrStickerHost } from "@/lib/site";
@@ -29,6 +30,15 @@ export default async function Home({ searchParams }: HomeProps) {
       ? searchItemProps(query, sort)
       : Promise.resolve({ rows: [], omitted: 0 }),
   ]);
+
+  // スキャンした未登録コードから新規ノートを作る導線
+  // (docs/10-スキャン新規登録計画.md §3)。0 件かつタグにできる語のときだけ
+  // 採番を引く。ヒットした検索や URL・複数語では引かない (無駄な問い合わせを
+  // しないためと、ボタンを出さないため)
+  const registerHref =
+    result.total === 0 && isTaggableCode(query)
+      ? scanRegisterHref(await nextItemNo(), query)
+      : null;
 
   return (
     <div className="space-y-4">
@@ -80,6 +90,7 @@ export default async function Home({ searchParams }: HomeProps) {
         page={result.page}
         sort={sort}
         action={bulkTagAction}
+        registerHref={registerHref}
       />
 
       <div className="flex items-center justify-between text-sm">

@@ -27,6 +27,18 @@ export async function getItem(itemNo: string): Promise<Item | null> {
   return prisma.item.findUnique({ where: { itemNo } })
 }
 
+// 新規ノートに使う次の itemNo (docs/10-スキャン新規登録計画.md §4)。
+// item_no_num の最大 + 1。非数字の itemNo は item_no_num が null なので
+// 自然に無視される。index 済みの列なので安い。
+//
+// 予約はしない。番号が競合するのは別タブで同時に作ったときだけで、単一
+// ユーザでは実質起きない。万一先を越されても、編集ページは既存ノートなら
+// その本文を表示する (事前入力しない) ので開いた瞬間に気づける。
+export async function nextItemNo(): Promise<string> {
+  const { _max } = await prisma.item.aggregate({ _max: { itemNoNum: true } })
+  return String((_max.itemNoNum ?? 0) + 1)
+}
+
 // Ver1 の /item/:itemNo と同じく、未登録なら新規作成する (upsert)。
 // tags / props は memo から抽出した派生キャッシュ (保存のたびに再計算する)。
 export async function upsertMemo(itemNo: string, memo: string): Promise<Item> {
