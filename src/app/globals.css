@@ -26,6 +26,14 @@ summary {
   touch-action: manipulation;
 }
 
+/* CodeMirror (memo エディタ) は font-family: monospace のみ指定で font-size が
+   未指定のため、ブラウザ既定の等幅サイズ (13px) で描画される。iOS Safari は
+   16px 未満の入力欄にフォーカスすると自動ズームし、更新後もズームが残るので、
+   16px (= 1rem, 読み込み中 textarea の text-base と同じ) を明示して防ぐ */
+.cm-editor {
+  font-size: 1rem;
+}
+
 /* viewport-fit=cover でノッチ/ホームバーに潜り込まないための余白。
    env() 非対応・ノッチなし端末では 0 になり px-4 / pb-6 と同じ */
 @utility px-safe {
