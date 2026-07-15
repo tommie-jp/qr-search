@@ -1,13 +1,15 @@
-// PWA アイコンを SVG から生成する。
+// PWA アイコンとブラウザタブのアイコンを SVG から生成する。
 //
 // copyTikzFonts.mjs と違い、これは **ビルドでは走らない**。生成物 (public/icon-*.png と
-// src/app/apple-icon.png) はリポジトリにコミットしてある。意匠を変えたいときだけ手で叩く:
+// src/app/apple-icon.png, src/app/icon.svg) はリポジトリにコミットしてある。
+// 意匠を変えたいときだけ手で叩く:
 //
 //   node scripts/genIcons.mjs
 //
 // 絵柄は QR のファインダパターン 3 個 + 虫めがねで「QR search」を表す。
 // 元絵を SVG でここに直書きしているのは、512px の PNG を唯一の原本にすると
 // 修正のたびに手作業のトレースが要るため (PNG は原本ではなく生成物)。
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
@@ -17,7 +19,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const SIZE = 512 // 元絵の viewBox。出力サイズはここから縮小する
 const PAD = 64 // 縁の余白 (content は 384x384)
 const FG = '#ffffff'
-const BG = '#111827' // tailwind gray-900 = 本文色。ヘッダ白とのコントラストが強い
+const BG = '#2563eb' // tailwind blue-600 = アプリのアクセント色。白の FG と 4.6:1 で分離する
 const FINDER = 120 // ファインダパターン 1 個の一辺
 const M = FINDER / 7 // QR のモジュール 1 個 (ファインダは 7x7 モジュール)
 
@@ -83,3 +85,10 @@ for (const target of targets) {
     .toFile(out)
   console.log(`icon: ${target.file} (${target.size}x${target.size})`)
 }
+
+// ブラウザタブのアイコン。Next.js の icon.(svg|png|ico) 規約で <link rel="icon"> が付く。
+// ここだけ PNG に焼かず SVG のまま置くのは、favicon が 16px から数百 px まで
+// 環境ごとに違うサイズで描かれるため。ベクタなら全サイズで鮮明になる (sizes="any")。
+const svgIcon = 'src/app/icon.svg'
+await writeFile(path.join(projectRoot, svgIcon), `${svg({ radius: 96 })}\n`)
+console.log(`icon: ${svgIcon} (vector)`)

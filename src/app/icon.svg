@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 512 512" width="512" height="512">
+    <rect width="512" height="512" rx="96" fill="#2563eb"/>
+    <g transform="translate(256 256) scale(1) translate(-256 -256)">
+    
+    
+    <rect x="64" y="64" width="120" height="120" rx="11.999999999999998" fill="#ffffff"/>
+    <rect x="81.14285714285714" y="81.14285714285714" width="85.71428571428571" height="85.71428571428571" rx="6.857142857142858" fill="#2563eb"/>
+    <rect x="98.28571428571428" y="98.28571428571428" width="51.42857142857143" height="51.42857142857143" rx="5.142857142857142" fill="#ffffff"/>
+    
+    <rect x="328" y="64" width="120" height="120" rx="11.999999999999998" fill="#ffffff"/>
+    <rect x="345.14285714285717" y="81.14285714285714" width="85.71428571428571" height="85.71428571428571" rx="6.857142857142858" fill="#2563eb"/>
+    <rect x="362.2857142857143" y="98.28571428571428" width="51.42857142857143" height="51.42857142857143" rx="5.142857142857142" fill="#ffffff"/>
+    
+    <rect x="64" y="328" width="120" height="120" rx="11.999999999999998" fill="#ffffff"/>
+    <rect x="81.14285714285714" y="345.14285714285717" width="85.71428571428571" height="85.71428571428571" rx="6.857142857142858" fill="#2563eb"/>
+    <rect x="98.28571428571428" y="362.2857142857143" width="51.42857142857143" height="51.42857142857143" rx="5.142857142857142" fill="#ffffff"/>
+    <circle cx="380" cy="380" r="50" fill="none" stroke="#ffffff" stroke-width="22"/>
+    <line x1="418" y1="418" x2="442" y2="442"
+          stroke="#ffffff" stroke-width="26" stroke-linecap="round"/>
+    </g>
+</svg>
