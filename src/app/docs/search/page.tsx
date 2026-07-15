@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Metadata } from "next";
 import { MarkdownView } from "@/components/MarkdownView";
+import { SITE_NAME } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "全文検索の使い方 - QR search",
+  title: `全文検索の使い方 - ${SITE_NAME}`,
 };
 
 // docs/05-全文検索の使い方.md をそのままヘルプページとして表示する。

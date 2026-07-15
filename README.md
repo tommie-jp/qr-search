@@ -93,6 +93,30 @@ Basic 認証のパスワードファイル `/etc/nginx/.htpasswd-qr` は
 | `/item/:itemNo` | 部品表示 + メモ更新(QR の飛び先。未登録なら新規作成) |
 | `/edit/:itemNo` | mode / memo / url の編集 |
 | `/print/:itemNo` | QR コード印刷 |
+| `/manifest.webmanifest` | PWA の manifest(`src/app/manifest.ts` が生成) |
+
+## PWA (ホーム画面へのインストール)
+
+manifest とアイコンだけを置いた最小構成。Service Worker は持たない
+(検索も表示も編集もサーバ必須で、オフラインに出来ることがほぼないため)。
+
+**逆プロキシで manifest とアイコンの認証を外すこと。** ブラウザはこれらを
+Authorization ヘッダなしで取得するため、サイト全体を Basic 認証下に置くと
+401 になり「インストール可能」と判定されない。対象は
+`/manifest.webmanifest` `/icon-*.png` `/apple-icon.png` の 3 種
+(どれも秘密情報を含まない)。この Caddyfile には設定済み。
+
+そのとき **ボディ上限 (`request_body` / `client_max_body_size`) は
+認証側のブロックの内側に置かないこと**。認証除外パスがボディ無制限になり、
+未認証で巨大なリクエストを投げ込めるようになる。
+
+アイコンは `public/icon-*.png` と `src/app/apple-icon.png`。元絵の SVG は
+生成スクリプトに直書きしてあり、意匠を変えるときだけ手で叩く
+(ビルドでは走らない):
+
+```bash
+node scripts/genIcons.mjs
+```
 
 ## データ移行 (Ver1 → Ver2)
 

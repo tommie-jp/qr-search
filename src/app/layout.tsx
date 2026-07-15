@@ -5,11 +5,12 @@ import QRCode from "qrcode";
 import pkg from "../../package.json";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { parseBasicAuthUser } from "@/lib/auth";
+import { SITE_DESCRIPTION, SITE_NAME } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "QR search",
-  description: "部品に貼った QR シールから部品情報を表示・管理する",
+  title: SITE_NAME,
+  description: SITE_DESCRIPTION,
 };
 
 // maximumScale / userScalable はあえて指定しない。ピンチズームを潰すと
@@ -46,7 +47,7 @@ export default async function RootLayout({
         <header className="border-b border-gray-200 bg-white print:hidden">
           <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-safe py-3">
             <Link href="/" className="text-lg font-bold">
-              QR search
+              {SITE_NAME}
             </Link>
             <span className="text-xs text-gray-400">v{pkg.version}</span>
             <div className="ml-auto flex items-baseline gap-3">

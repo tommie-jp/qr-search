@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Metadata } from "next";
 import { MarkdownView } from "@/components/MarkdownView";
+import { SITE_NAME } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "メモ記法 - QR search",
+  title: `メモ記法 - ${SITE_NAME}`,
 };
 
 // docs/メモ記法.md をそのままヘルプページとして表示する。
