@@ -26,8 +26,16 @@ if [ "${1:-}" = "--build" ]; then
   docker compose build app
 fi
 
-log "DB マイグレーション (db は depends_on で自動起動)"
-docker compose run --rm migrate
+log "db 起動"
+docker compose up -d --wait db
+
+log "DB マイグレーション"
+# compose の migrate サービスは使わない (削除済み): あれはビルド済みイメージの中の
+# prisma/migrations を見るため、イメージが古いと新しい migration が入っておらず
+# 「No pending migrations」と言って黙って何もしない。実際ローカルのイメージは
+# init 1 件しか持っていなかった。doDeploy.sh と同様にホストの prisma CLI から
+# 作業ツリーの migration を直接当てる
+npx prisma migrate deploy
 
 log "app 起動"
 docker compose up -d app

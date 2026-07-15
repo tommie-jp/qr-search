@@ -22,9 +22,6 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# 画像アップロード先。named volume の初期化時に node 所有を引き継がせる
-RUN mkdir -p /app/data/uploads && chown -R node:node /app/data
-
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
