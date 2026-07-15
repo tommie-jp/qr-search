@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
 import QRCode from "qrcode";
@@ -10,6 +10,16 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "QR search",
   description: "部品に貼った QR シールから部品情報を表示・管理する",
+};
+
+// maximumScale / userScalable はあえて指定しない。ピンチズームを潰すと
+// 型番など細かい文字を拡大できなくなるうえ、iOS Safari は無視する
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#ffffff",
+  colorScheme: "light",
 };
 
 const SITE_URL = process.env.QR_BASE_URL ?? "https://qr.tommie.jp";
@@ -34,7 +44,7 @@ export default async function RootLayout({
     <html lang="ja" className="h-full antialiased">
       <body className="min-h-full bg-gray-50 text-gray-900">
         <header className="border-b border-gray-200 bg-white print:hidden">
-          <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-4 py-3">
+          <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-safe py-3">
             <Link href="/" className="text-lg font-bold">
               QR search
             </Link>
@@ -57,7 +67,7 @@ export default async function RootLayout({
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-2xl px-4 py-6">{children}</main>
+        <main className="mx-auto max-w-2xl px-safe pt-6 pb-safe">{children}</main>
       </body>
     </html>
   );
