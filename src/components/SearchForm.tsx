@@ -130,7 +130,7 @@ export function SearchForm({ initialQuery, tags }: SearchFormProps) {
             refresh(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
           }
           onBlur={() => setDropdown(null)}
-          placeholder="部品番号・メモ・URL を全文検索（スペースで AND、#でタグ）"
+          placeholder="部品番号・メモ・URL を全文検索（スペースで AND、|で OR、#でタグ）"
           autoComplete="off"
           role="combobox"
           aria-expanded={dropdown !== null}
