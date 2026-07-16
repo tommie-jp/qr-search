@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { formatPubdate, openBdUrl, parseOpenBdResponse } from './openbd'
+import { openBdUrl, parseOpenBdResponse } from './openbd'
 
 // 実際の応答 (api.openbd.jp/v1/get?isbn=9784873115658) から必要な枝だけ抜いたもの
 const response = (overrides: Record<string, unknown> = {}) => [
@@ -97,20 +97,4 @@ test('文字列でない値は無視する (外部データを信用しない)',
   })
 })
 
-test('刊行日は年月まで (日は落とす)', () => {
-  // 版を見分けるのが目的なので日まではいらない
-  expect(formatPubdate('201206')).toBe('2012.06')
-  expect(formatPubdate('20120621')).toBe('2012.06')
-})
-
-test('刊行日の区切り文字は形式が揺れるので数字だけ見る', () => {
-  // ONIX の日付は YYYYMMDD だが、openBD には YYYY-MM 形式も混ざる
-  expect(formatPubdate('2012-06')).toBe('2012.06')
-  expect(formatPubdate('2012-06-21')).toBe('2012.06')
-})
-
-test('刊行日が年だけならそのまま、読めなければ空', () => {
-  expect(formatPubdate('2012')).toBe('2012')
-  expect(formatPubdate('')).toBe('')
-  expect(formatPubdate('近日刊行')).toBe('')
-})
+// 刊行日の整形 (formatPubdate) は NDL と共通なので book.test.ts で見る

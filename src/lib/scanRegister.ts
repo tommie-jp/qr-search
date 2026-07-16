@@ -1,4 +1,4 @@
-import type { BookSummary } from './openbd'
+import type { BookSummary } from './book'
 import { parseTagToken } from './tags'
 
 // スキャンした未登録コードから新規ノートを作る導線の組み立て

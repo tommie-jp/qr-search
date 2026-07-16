@@ -1,0 +1,69 @@
+// ISBN から書誌を引く順番 (設計は docs/13-書誌自動取得計画.md §1)。
+// サーバ側で動く (/api/books/[isbn] から呼ばれる)。
+//
+// 1 つの API では網羅できないため、性格の違う 2 つを順に試す。
+//   openBD    … 新刊・近刊に強い。JSON で軽い。ただし古い本をほぼ持たない
+//   NDL サーチ … 納本制度で和書はほぼ網羅。古い本も洋書も引ける。RSS (XML)
+//
+// 実測 (「プログラミング」を含む本、NDL から採った実在の ISBN の openBD 収録率):
+//   1995-1999 年 … 1/12    2003-2007 年 … 2/3
+//   2012-2016 年 … 25/25   2022-2025 年 … 18/21
+// 新しい本ほど openBD が当たるので先に引き、外したぶんを NDL が拾う。
+// 逆順にすると、NDL の目録が追いつく前の新刊を落とす。
+
+import type { BookSummary } from './book'
+import { fetchBook as fetchFromNdl } from './ndlSearch'
+import { fetchBook as fetchFromOpenBd } from './openbd'
+
+// 1 つの API が黙り込んでも次を試せるよう、取得ごとに上限を持つ。
+// 実測の応答は openBD が 30ms、NDL が 30ms〜3 秒 (未キャッシュの ISBN) なので余る
+const SOURCE_TIMEOUT_MS = 8000
+
+const SOURCES = [
+  { name: 'openBD', fetch: fetchFromOpenBd },
+  { name: 'NDL サーチ', fetch: fetchFromNdl },
+]
+
+// 外側の signal (中断) を生かしたまま、この 1 回だけの上限を足す。
+// AbortSignal.any は環境によっては無いため、素の AbortController で組む。
+async function withTimeout<T>(
+  signal: AbortSignal | undefined,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), SOURCE_TIMEOUT_MS)
+  const forward = () => abort.abort(signal?.reason)
+  signal?.addEventListener('abort', forward, { once: true })
+  try {
+    return await run(abort.signal)
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', forward)
+  }
+}
+
+// 見つかった最初の書誌を返す。どこにも無ければ null (エラーではない)。
+// 個々の API の失敗は握り潰さず警告に残したうえで、次の API を試す。
+export async function lookupBook(
+  isbn: string,
+  signal?: AbortSignal,
+): Promise<BookSummary | null> {
+  for (const source of SOURCES) {
+    if (signal?.aborted) {
+      break // 呼び出しが打ち切られた。次を叩かない
+    }
+    try {
+      const book = await withTimeout(signal, (s) => source.fetch(isbn, s))
+      if (book) {
+        return book
+      }
+      // 収録漏れ。エラーではないので警告も出さず次へ
+    } catch (err) {
+      if (signal?.aborted) {
+        throw err // 中断。呼び出し側が黙らせる
+      }
+      console.warn(`${source.name} から書誌を取得できませんでした`, err)
+    }
+  }
+  return null
+}

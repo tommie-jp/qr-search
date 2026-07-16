@@ -3,16 +3,13 @@
 //
 // ISBN をスキャンしたとき、この API を**スマホのブラウザから直接**引く。
 // openBD は access-control-allow-origin: * を返すので CORS で弾かれず、
-// API キーも要らない。サーバを経由しないので、VPS のコードも設定も
-// 増えない (Google Books はキー運用が要るので Phase 1 では使わない)。
+// API キーも要らない。サーバを経由しないので、VPS のコードも設定も増えない。
+//
+// 新刊・近刊に強い一方、**古い本はほとんど持っていない** (実測: 1990 年代の
+// 本の収録率 1/12、2012-2016 年は 25/25)。落ちた分は NDL サーチが拾う
+// (bookLookup.ts)。
 
-export interface BookSummary {
-  title: string
-  authors: string[]
-  publisher: string
-  // 表示用に整形済みの刊行年月 ("2012.06")
-  pubdate: string
-}
+import { asString, type BookSummary, formatPubdate } from './book'
 
 const OPENBD_ENDPOINT = 'https://api.openbd.jp/v1/get'
 
@@ -20,30 +17,12 @@ export function openBdUrl(isbn: string): string {
   return `${OPENBD_ENDPOINT}?isbn=${encodeURIComponent(isbn)}`
 }
 
-// 以下 2 つは外部データの型を信用しないための入口 (JSON は何でも来る)。
+// 外部データの型を信用しないための入口 (asString は book.ts と共通)。
 // 読めない値は「無い」ものとして扱い、部分的にでも書誌を組み立てる。
-function asString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-// 刊行日を年月まで整形する。目的は版の見分けなので日はいらない。
-// openBD の pubdate は "201206" / "20120621" / "2012-06" と形式が揺れるため、
-// 区切り文字は当てにせず数字だけを見る。
-export function formatPubdate(raw: string): string {
-  const digits = raw.replace(/\D/g, '')
-  if (digits.length >= 6) {
-    return `${digits.slice(0, 4)}.${digits.slice(4, 6)}`
-  }
-  if (digits.length === 4) {
-    return digits
-  }
-  return ''
 }
 
 // 著者は ONIX の Contributor から取る。summary.author は
