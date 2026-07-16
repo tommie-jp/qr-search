@@ -14,6 +14,7 @@ function makeItem(overrides: Partial<Item> = {}): Item {
     props: [],
     createdAt: new Date("2024-01-01T00:00:00Z"),
     updatedAt: new Date("2024-01-01T00:00:00Z"),
+    deletedAt: null,
     ...overrides,
   };
 }
@@ -25,6 +26,7 @@ const render = (items: Item[], selected: Set<string>) =>
     <BulkTagToolbar
       items={items}
       selected={selected}
+      trashAction={noop}
       onSelectAll={noop}
       onClear={noop}
       onCancel={noop}
@@ -54,4 +56,21 @@ test("未選択なら削除チップを出さず、追加を無効化する", ()
   const html = render([makeItem({ itemNo: "1", tags: ["bjt"] })], new Set());
   expect(html).not.toContain('name="removeTag"');
   expect(html).toContain("disabled");
+});
+
+// ゴミ箱 (docs/12-ゴミ箱計画.md §5)。タグの「削除」チップと紛らわしくないよう、
+// ノートを消す方は行き先を言う「ゴミ箱へ」にしてある
+test("選択中はノートをゴミ箱へ入れるボタンを出す", () => {
+  const html = render([makeItem({ itemNo: "1" })], new Set(["1"]));
+  expect(html).toContain("ゴミ箱へ");
+});
+
+test("未選択ならゴミ箱へボタンも無効化する", () => {
+  const html = render([makeItem({ itemNo: "1" })], new Set());
+  expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*ゴミ箱へ/);
+});
+
+test("タグのチップは「タグを削除」と明示する (ノートの削除と区別する)", () => {
+  const html = render([makeItem({ itemNo: "1", tags: ["bjt"] })], new Set(["1"]));
+  expect(html).toContain("タグを削除:");
 });

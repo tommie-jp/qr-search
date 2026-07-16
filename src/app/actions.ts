@@ -3,7 +3,16 @@
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { parseBulkTagForm } from '@/lib/bulkTags'
-import { getItem, upsertItem, upsertMemo } from '@/lib/items'
+import {
+  emptyTrash,
+  getItem,
+  purgeItems,
+  restoreItems,
+  trashItems,
+  upsertItem,
+  upsertMemo,
+} from '@/lib/items'
+import { parseBackUrl, parseSelectedItemNos } from '@/lib/itemSelection'
 import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
 import { isValidItemNo, parseMode } from '@/lib/validation'
 
@@ -53,6 +62,59 @@ export async function updateItemAction(formData: FormData): Promise<void> {
   await upsertItem(itemNo, { memo, url, mode })
   revalidatePath(`/item/${itemNo}`)
   redirect(savedHref(itemNo))
+}
+
+// --- ゴミ箱 (二段階削除。docs/12-ゴミ箱計画.md) ---
+
+// 検索結果で選択したノートをゴミ箱へ入れる (復元できるので confirm は出さない)。
+// 一括タグと同じフォームから formAction で分岐して呼ばれる。
+export async function trashItemsAction(formData: FormData): Promise<void> {
+  const itemNos = parseSelectedItemNos(formData)
+  const back = parseBackUrl(formData)
+
+  if (itemNos.length > 0) {
+    await trashItems(itemNos)
+    revalidatePath('/')
+    revalidatePath('/trash')
+  }
+
+  redirect(back)
+}
+
+// ゴミ箱から戻す。/trash の「復元」と /item のバナーの両方から呼ばれ、
+// どちらも同じルートを revalidate すれば呼び出し元がそのまま描き直される
+// (Next.js は revalidatePath で現在のルートを再レンダリングして返す)。
+export async function restoreItemsAction(formData: FormData): Promise<void> {
+  const itemNos = parseSelectedItemNos(formData)
+  if (itemNos.length === 0) {
+    return
+  }
+
+  await restoreItems(itemNos)
+  revalidatePath('/')
+  revalidatePath('/trash')
+  for (const itemNo of itemNos) {
+    revalidatePath(`/item/${itemNo}`)
+  }
+}
+
+// 永久削除。ゴミ箱にある行しか消せないことは items.ts の purgeItems が保証する
+// (UI の confirm は最後の一押しで、防護そのものではない)。
+export async function purgeItemsAction(formData: FormData): Promise<void> {
+  const itemNos = parseSelectedItemNos(formData)
+  if (itemNos.length === 0) {
+    return
+  }
+
+  await purgeItems(itemNos)
+  revalidatePath('/')
+  revalidatePath('/trash')
+}
+
+export async function emptyTrashAction(): Promise<void> {
+  await emptyTrash()
+  revalidatePath('/')
+  revalidatePath('/trash')
 }
 
 // 検索結果で選択した複数ノートへ、タグをまとめて追加/削除する。

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { updateMemoAction } from "@/app/actions";
+import { restoreItemsAction, updateMemoAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MarkdownView } from "@/components/MarkdownView";
 import { MemoPanel } from "@/components/MemoPanel";
@@ -9,6 +9,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { PendingLink } from "@/components/PendingLink";
 import { SavedToast } from "@/components/SavedToast";
 import { SubmitButton } from "@/components/SubmitButton";
+import { TrashedBanner } from "@/components/TrashedBanner";
 import { UnsavedGuard } from "@/components/UnsavedGuard";
 import { ACTION_LINK_CLASS, BOX_CLASS, STICKY_ACTIONS_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
@@ -77,6 +78,10 @@ export default async function ItemPage({ params, searchParams }: ItemPageProps) 
           <p className="rounded bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
             未登録の部品番号です。メモを保存すると新規登録されます。
           </p>
+        )}
+
+        {item?.deletedAt && (
+          <TrashedBanner itemNo={itemNo} restoreAction={restoreItemsAction} />
         )}
 
         {item && item.url && (

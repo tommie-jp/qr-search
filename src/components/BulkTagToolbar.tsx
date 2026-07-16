@@ -2,10 +2,14 @@
 
 import type { Item } from "@/generated/prisma/client";
 import { selectedTagsUnion } from "@/lib/bulkTags";
+import { DANGER_BUTTON_CLASS } from "./ui";
 
 interface BulkTagToolbarProps {
   items: Item[];
   selected: Set<string>;
+  // ノートをゴミ箱へ入れるサーバーアクション。同じ form のまま formAction で
+  // 送り先だけ差し替える (bulkTagAction に mode 分岐を足さない)
+  trashAction: (formData: FormData) => void | Promise<void>;
   onSelectAll: () => void;
   onClear: () => void;
   onCancel: () => void;
@@ -15,9 +19,13 @@ interface BulkTagToolbarProps {
 // 追加は入力欄 + 「追加」送信ボタン、削除は選択アイテムが持つタグをチップ
 // (それ自体が送信ボタン name=removeTag) にして押されたタグだけを消す。
 // どちらのボタンが押されたかでサーバー側が add / remove を判別する。
+//
+// 最下段はノート自体をゴミ箱へ入れるボタン (docs/12-ゴミ箱計画.md §5)。
+// タグ操作とは別の行に分け、「タグを削除」チップと区別する。
 export function BulkTagToolbar({
   items,
   selected,
+  trashAction,
   onSelectAll,
   onClear,
   onCancel,
@@ -75,7 +83,7 @@ export function BulkTagToolbar({
 
       {removable.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-gray-600">削除:</span>
+          <span className="text-gray-600">タグを削除:</span>
           {removable.map((tag) => (
             <button
               key={tag}
@@ -89,6 +97,19 @@ export function BulkTagToolbar({
           ))}
         </div>
       )}
+
+      {/* ノート自体の削除。タグ操作と混ざらないよう線で区切って最下段に置く。
+          ゴミ箱行きは復元できるので confirm は出さない (永久削除は /trash 側) */}
+      <div className="flex justify-end border-t border-blue-200 pt-2">
+        <button
+          type="submit"
+          formAction={trashAction}
+          disabled={disabled}
+          className={`${DANGER_BUTTON_CLASS} whitespace-nowrap`}
+        >
+          🗑 ゴミ箱へ
+        </button>
+      </div>
     </div>
   );
 }

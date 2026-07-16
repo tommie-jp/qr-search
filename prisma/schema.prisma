@@ -24,6 +24,11 @@ model Item {
   props     Json     @default("[]")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  // ゴミ箱 (二段階削除)。null = 通常、非 null = ゴミ箱行き日時。
+  // 検索・タグ集計は null の行だけを見る。永久削除は行の DELETE。
+  // ゴミ箱の行も items に残るため、nextItemNo の採番はその番号を
+  // 自然に飛ばす (= 復元まで番号が予約される。docs/12-ゴミ箱計画.md §4)。
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([itemNoNum])
   @@index([tags], type: Gin)

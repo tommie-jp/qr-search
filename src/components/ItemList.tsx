@@ -19,19 +19,42 @@ interface ItemListProps {
   page: number;
   sort: Sort;
   action: BulkTagAction;
+  // 選択したノートをゴミ箱へ入れる (docs/12-ゴミ箱計画.md §5)
+  trashAction: BulkTagAction;
   // 0 件の検索語をタグにした新規ノートの編集ページ。タグにできない語
   // (URL・複数語) や採番できないときは null。採番はサーバでしか引けないので
   // page.tsx から降ろす (docs/10-スキャン新規登録計画.md)
   registerHref: string | null;
+  // 同じ検索条件でゴミ箱に当たった件数 (0 件検索のときだけサーバが数える)
+  trashedMatches: number;
 }
 
-function emptyState(items: Item[], query: string, registerHref: string | null) {
+function emptyState(
+  items: Item[],
+  query: string,
+  registerHref: string | null,
+  trashedMatches: number,
+) {
   if (items.length > 0) {
     return null;
   }
   return (
     <li className="space-y-3 px-4 py-6 text-center text-gray-500">
       <p>該当する部品がありません</p>
+      {trashedMatches > 0 && (
+        // 消したノートを探して 0 件のときと、ゴミ箱のノートと同じコードを
+        // 再スキャンしたときの受け皿。復元は /trash 側で行う
+        // (docs/12-ゴミ箱計画.md §5)
+        <p>
+          <Link
+            href="/trash"
+            transitionTypes={["nav-forward"]}
+            className={`${ACTION_LINK_CLASS} justify-center`}
+          >
+            🗑 ゴミ箱に {trashedMatches} 件の一致があります
+          </Link>
+        </p>
+      )}
       {registerHref && (
         // 何が作られるか (#コード) を見せる。押しても編集ページが開くだけで、
         // 「更新」を押すまで DB には何も書かない
@@ -57,7 +80,9 @@ export function ItemList({
   page,
   sort,
   action,
+  trashAction,
   registerHref,
+  trashedMatches,
 }: ItemListProps) {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -97,7 +122,7 @@ export function ItemList({
           {items.map((item) => (
             <ItemRow key={item.itemNo} item={item} />
           ))}
-          {emptyState(items, query, registerHref)}
+          {emptyState(items, query, registerHref, trashedMatches)}
         </ul>
       </div>
     );
@@ -111,6 +136,7 @@ export function ItemList({
       <BulkTagToolbar
         items={items}
         selected={selected}
+        trashAction={trashAction}
         onSelectAll={() => setSelected(new Set(items.map((i) => i.itemNo)))}
         onClear={() => setSelected(new Set())}
         onCancel={exitSelect}
@@ -133,7 +159,7 @@ export function ItemList({
             }
           />
         ))}
-        {emptyState(items, query, null)}
+        {emptyState(items, query, null, 0)}
       </ul>
     </form>
   );

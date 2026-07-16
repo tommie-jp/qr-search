@@ -14,13 +14,19 @@ function makeItem(overrides: Partial<Item> = {}): Item {
     props: [],
     createdAt: new Date("2024-01-01T00:00:00Z"),
     updatedAt: new Date("2024-01-01T00:00:00Z"),
+    deletedAt: null,
     ...overrides,
   };
 }
 
 const noop = () => {};
 
-const render = (items: Item[], query = "", registerHref: string | null = null) =>
+const render = (
+  items: Item[],
+  query = "",
+  registerHref: string | null = null,
+  trashedMatches = 0,
+) =>
   renderToStaticMarkup(
     <ItemList
       items={items}
@@ -28,7 +34,9 @@ const render = (items: Item[], query = "", registerHref: string | null = null) =
       page={1}
       sort="updated"
       action={noop}
+      trashAction={noop}
       registerHref={registerHref}
+      trashedMatches={trashedMatches}
     />,
   );
 
@@ -79,4 +87,25 @@ test("1 件以上あれば「新規登録」を出さない", () => {
     "/edit/4952?code=9784873115658",
   );
   expect(html).not.toContain("新規登録");
+});
+
+// 0 件でもゴミ箱に同じ条件の一致があれば知らせる (docs/12-ゴミ箱計画.md §5)。
+// 消したノートを探して 0 件のときや、ゴミ箱のノートと同じコードを
+// 再スキャンして二重登録しかけたときの受け皿
+test("0 件 + ゴミ箱に一致があれば案内リンクを出す", () => {
+  const html = render([], "9784873115658", null, 2);
+  expect(html).toContain("ゴミ箱に 2 件");
+  expect(html).toContain('href="/trash"');
+});
+
+test("ゴミ箱に一致が無ければ案内を出さない", () => {
+  const html = render([], "9784873115658", null, 0);
+  expect(html).not.toContain("ゴミ箱");
+});
+
+test("ゴミ箱の案内と「新規登録」は共存する (復元か新規かはユーザが選ぶ)", () => {
+  // 同じ本の 2 冊目など、新規が正しい場合もあるのでボタンは残す
+  const html = render([], "9784873115658", "/edit/4952?code=9784873115658", 1);
+  expect(html).toContain("ゴミ箱に 1 件");
+  expect(html).toContain("新規登録");
 });

@@ -24,6 +24,8 @@ export const PAGE_SIZE = 20
 // 個人利用で 1 タグに数百件も付かない前提の安全弁。
 export const PROPS_TABLE_LIMIT = 200
 
+// ゴミ箱のノートも返す (フィルタしない)。QR シールから開いた /item は
+// ゴミ箱でも本文を見せてバナーと復元を出すため (docs/12-ゴミ箱計画.md §5)。
 export async function getItem(itemNo: string): Promise<Item | null> {
   return prisma.item.findUnique({ where: { itemNo } })
 }
@@ -35,6 +37,11 @@ export async function getItem(itemNo: string): Promise<Item | null> {
 // 非数字の itemNo は item_no_num が null なので where で自然に外れる。
 // 全件引いて JS で隙間を探す。index 済みの列で 500 件規模なら、SQL の
 // gap 検索を書くより読める形の方がよい。
+//
+// ゴミ箱 (deleted_at 非 null) の行は**意図的に外さない**。ゴミ箱にある間は
+// その番号を使用中として飛ばすことで、復元するまで番号を予約する
+// (削除→新規作成→復元で番号が衝突するのを防ぐ)。番号が解放されるのは
+// 永久削除で行が消えたときだけ (docs/12-ゴミ箱計画.md §4)。
 //
 // 予約はしない。番号が競合するのは別タブで同時に作ったときだけで、単一
 // ユーザでは実質起きない。万一先を越されても、編集ページは既存ノートなら
@@ -88,10 +95,11 @@ export interface TagCount {
 
 // 全ノートのタグを件数つきで集計する (件数降順・同数はタグ名昇順)。
 // 検索窓のタグ補完・タグ一覧に使う。個人利用でタグ総数は小さい前提。
+// ゴミ箱のノートは数えない (検索で引けないタグを補完に出さないため)。
 export async function listTags(): Promise<TagCount[]> {
   return prisma.$queryRaw<TagCount[]>`
     SELECT tag, count(*)::int AS count
-    FROM (SELECT unnest(tags) AS tag FROM items) AS t
+    FROM (SELECT unnest(tags) AS tag FROM items WHERE deleted_at IS NULL) AS t
     GROUP BY tag
     ORDER BY count DESC, tag ASC
   `
@@ -133,19 +141,33 @@ function buildQueryCondition(query: string): Prisma.Sql | null {
   return Prisma.join(groupSql, ' OR ')
 }
 
-// 検索の WHERE 句。空クエリなら WHERE を付けない (一覧ブラウズ)。
+const NOT_TRASHED = Prisma.sql`deleted_at IS NULL`
+const TRASHED = Prisma.sql`deleted_at IS NOT NULL`
+const HAS_PROPS = Prisma.sql`props <> '[]'::jsonb`
+
+// 条件を AND で綴じて WHERE 句にする (null の条件は無視する)。
+// 各条件を括弧で包むのが要点。検索条件は DNF (`(…) OR (…)`) なので、
+// 裸で AND すると OR より AND が強く結合して条件が壊れる。
+function buildWhereFrom(conditions: (Prisma.Sql | null)[]): Prisma.Sql {
+  const present = conditions
+    .filter((c) => c !== null)
+    .map((c) => Prisma.sql`(${c})`)
+  return Prisma.sql`WHERE ${Prisma.join(present, ' AND ')}`
+}
+
+// 検索の WHERE 句。空クエリ (一覧ブラウズ) でもゴミ箱は必ず外す。
 function buildWhere(query: string): Prisma.Sql {
-  const condition = buildQueryCondition(query)
-  return condition === null ? Prisma.empty : Prisma.sql`WHERE ${condition}`
+  return buildWhereFrom([NOT_TRASHED, buildQueryCondition(query)])
 }
 
 // 特性表の WHERE 句。検索条件に加えてプロパティを持つノートだけへ絞る。
 function buildPropsWhere(query: string): Prisma.Sql {
-  const condition = buildQueryCondition(query)
-  const hasProps = Prisma.sql`props <> '[]'::jsonb`
-  return condition === null
-    ? Prisma.sql`WHERE ${hasProps}`
-    : Prisma.sql`WHERE (${condition}) AND ${hasProps}`
+  return buildWhereFrom([NOT_TRASHED, buildQueryCondition(query), HAS_PROPS])
+}
+
+// ゴミ箱側の WHERE 句 (0 件検索時の案内で使う)。検索と同じ条件を裏返すだけ。
+function buildTrashedWhere(query: string): Prisma.Sql {
+  return buildWhereFrom([TRASHED, buildQueryCondition(query)])
 }
 
 // ソート句。PGroonga のスコアは小テーブルで seq scan になり効かないため、
@@ -183,7 +205,8 @@ export async function searchItems(
            tags,
            props,
            created_at AS "createdAt",
-           updated_at AS "updatedAt"
+           updated_at AS "updatedAt",
+           deleted_at AS "deletedAt"
     FROM items
     ${where}
     ${buildOrderBy(sort)}
@@ -242,6 +265,93 @@ export async function searchItemProps(
 async function countItemProps(where: Prisma.Sql): Promise<number> {
   const rows = await prisma.$queryRaw<{ count: number }[]>`
     SELECT count(*)::int AS count FROM items ${where}
+  `
+  return rows[0]?.count ?? 0
+}
+
+// --- ゴミ箱 (二段階削除。docs/12-ゴミ箱計画.md) ---
+
+// ゴミ箱へ入れる / 戻す。どちらも updated_at は触らない。本文は変わって
+// いないので、削除・復元で更新順が動くのは嘘になるため。Prisma の
+// updateMany は @updatedAt を必ず打ってしまうので生 SQL で書く。
+export async function trashItems(itemNos: string[]): Promise<number> {
+  if (itemNos.length === 0) {
+    return 0
+  }
+  return prisma.$executeRaw`
+    UPDATE items SET deleted_at = now()
+    WHERE item_no IN (${Prisma.join(itemNos)}) AND deleted_at IS NULL
+  `
+}
+
+export async function restoreItems(itemNos: string[]): Promise<number> {
+  if (itemNos.length === 0) {
+    return 0
+  }
+  return prisma.$executeRaw`
+    UPDATE items SET deleted_at = NULL
+    WHERE item_no IN (${Prisma.join(itemNos)}) AND deleted_at IS NOT NULL
+  `
+}
+
+// 永久削除 (DB から消す)。**ゴミ箱にある行しか消さない**のがこの関数の要点で、
+// 二段階削除の保証はここにある (UI ではなくサーバ側で担保する)。
+// ここで初めて itemNo が解放され、新規ノートに再利用されうる。
+export async function purgeItems(itemNos: string[]): Promise<number> {
+  if (itemNos.length === 0) {
+    return 0
+  }
+  const { count } = await prisma.item.deleteMany({
+    where: { itemNo: { in: itemNos }, deletedAt: { not: null } },
+  })
+  return count
+}
+
+export async function emptyTrash(): Promise<number> {
+  const { count } = await prisma.item.deleteMany({
+    where: { deletedAt: { not: null } },
+  })
+  return count
+}
+
+export interface TrashedItem {
+  itemNo: string
+  summary: string
+  deletedAt: Date
+}
+
+// ゴミ箱の一覧 (削除の新しい順)。要約はここで作り、memo 全文はクライアントへ
+// 送らない (特性表と同じ流儀)。個人利用で数件しか溜まらない前提でページ送りなし。
+export async function listTrashedItems(): Promise<TrashedItem[]> {
+  const rows = await prisma.item.findMany({
+    where: { deletedAt: { not: null } },
+    select: { itemNo: true, memo: true, url: true, mode: true, deletedAt: true },
+    orderBy: { deletedAt: 'desc' },
+  })
+  // where で非 null に絞っているが型は Date | null なので、flatMap で外す
+  return rows.flatMap((row) =>
+    row.deletedAt === null
+      ? []
+      : [
+          {
+            itemNo: row.itemNo,
+            summary: row.mode === 'url' ? row.url : memoSummary(row.memo),
+            deletedAt: row.deletedAt,
+          },
+        ],
+  )
+}
+
+export async function countTrashedItems(): Promise<number> {
+  return prisma.item.count({ where: { deletedAt: { not: null } } })
+}
+
+// 検索が 0 件のとき、同じ条件がゴミ箱に当たるかを数える (docs/12 §5)。
+// 「消したノートを探して 0 件」や、ゴミ箱のノートと同じコードの再スキャンで
+// 二重登録しかけたときに、ゴミ箱へ誘導するために使う。0 件のときしか撃たない。
+export async function countTrashedMatches(query: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM items ${buildTrashedWhere(query)}
   `
   return rows[0]?.count ?? 0
 }

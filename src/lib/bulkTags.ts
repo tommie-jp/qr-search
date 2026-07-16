@@ -2,13 +2,8 @@
 // タグの抽出・正規化は tags.ts に委ね、ここは「入力の解釈」と
 // 「選択アイテムのタグ集計」だけを担う。
 
-import { buildSearchUrl } from './searchUrl'
+import { parseBackUrl, parseSelectedItemNos } from './itemSelection'
 import { parseTagToken } from './tags'
-import { isValidItemNo, parseSort } from './validation'
-
-// 1 回の一括操作で処理する最大アイテム数 (選択はページ内=最大 20 件だが、
-// 細工されたフォームに備えてループを有界にする)。
-const MAX_BULK_ITEMS = 100
 
 // タグ入力の上限。itemNo と同様、細工された巨大入力で 1 回の操作が
 // item 数 × タグ数の重い処理にならないよう有界にする。
@@ -73,25 +68,10 @@ export function parseBulkTagForm(formData: FormData): BulkTagRequest {
   const isRemove = typeof removeTag === 'string' && removeTag.length > 0
   const rawTags = isRemove ? removeTag : String(formData.get('addTags') ?? '')
 
-  const seen = new Set<string>()
-  const itemNos: string[] = []
-  for (const value of formData.getAll('itemNo')) {
-    if (typeof value !== 'string' || !isValidItemNo(value) || seen.has(value)) {
-      continue
-    }
-    seen.add(value)
-    itemNos.push(value)
-    if (itemNos.length >= MAX_BULK_ITEMS) {
-      break
-    }
+  return {
+    mode: isRemove ? 'remove' : 'add',
+    itemNos: parseSelectedItemNos(formData),
+    tags: parseTagInput(rawTags),
+    back: parseBackUrl(formData),
   }
-
-  const page = Number(formData.get('page')) || 1
-  const back = buildSearchUrl(
-    String(formData.get('q') ?? ''),
-    page,
-    parseSort(formData.get('sort')),
-  )
-
-  return { mode: isRemove ? 'remove' : 'add', itemNos, tags: parseTagInput(rawTags), back }
 }

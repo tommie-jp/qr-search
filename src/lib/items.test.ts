@@ -1,7 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type {
+  countTrashedItems as CountTrashedItemsFn,
+  countTrashedMatches as CountTrashedMatchesFn,
+  getItem as GetItemFn,
+  listTags as ListTagsFn,
+  listTrashedItems as ListTrashedItemsFn,
+  nextItemNo as NextItemNoFn,
+  purgeItems as PurgeItemsFn,
+  restoreItems as RestoreItemsFn,
   searchItemProps as SearchItemPropsFn,
   searchItems as SearchItemsFn,
+  trashItems as TrashItemsFn,
   upsertMemo as UpsertMemoFn,
 } from './items'
 import type { PrismaClient } from '@/generated/prisma/client'
@@ -23,6 +32,15 @@ describe.skipIf(!runDbTests)(
     let searchItems: typeof SearchItemsFn
     let searchItemProps: typeof SearchItemPropsFn
     let upsertMemo: typeof UpsertMemoFn
+    let listTags: typeof ListTagsFn
+    let getItem: typeof GetItemFn
+    let trashItems: typeof TrashItemsFn
+    let restoreItems: typeof RestoreItemsFn
+    let purgeItems: typeof PurgeItemsFn
+    let listTrashedItems: typeof ListTrashedItemsFn
+    let countTrashedItems: typeof CountTrashedItemsFn
+    let countTrashedMatches: typeof CountTrashedMatchesFn
+    let nextItemNo: typeof NextItemNoFn
     let prisma: PrismaClient
 
     const seed = [
@@ -83,7 +101,20 @@ describe.skipIf(!runDbTests)(
     ]
 
     beforeAll(async () => {
-      ;({ searchItems, searchItemProps, upsertMemo } = await import('./items'))
+      ;({
+        searchItems,
+        searchItemProps,
+        upsertMemo,
+        listTags,
+        getItem,
+        trashItems,
+        restoreItems,
+        purgeItems,
+        listTrashedItems,
+        countTrashedItems,
+        countTrashedMatches,
+        nextItemNo,
+      } = await import('./items'))
       ;({ prisma } = await import('./db'))
       await prisma.item.deleteMany({ where: { itemNo: { startsWith: TEST_PREFIX } } })
       for (const s of seed) {
@@ -240,6 +271,160 @@ describe.skipIf(!runDbTests)(
 
       test('searchItemProps reports nothing omitted when under the limit', async () => {
         expect((await searchItemProps('#zzftbjt')).omitted).toBe(0)
+      })
+    })
+
+    describe('trash (ゴミ箱)', () => {
+      // ゴミ箱のテストは行の状態 (deleted_at) を書き換えるため、上の seed とは
+      // 別のノートをテストごとに作る。zzft プレフィックスなので afterAll の
+      // 後始末に乗る (数値 itemNo を使う採番のテストだけは例外。下記)。
+      const seedNote = (
+        itemNo: string,
+        data: {
+          memo?: string
+          tags?: string[]
+          props?: { key: string; label: string; value: string }[]
+          deletedAt?: Date | null
+        },
+      ) => {
+        const values = {
+          itemNoNum: null,
+          memo: '',
+          url: '',
+          mode: 'memo' as const,
+          tags: [],
+          props: [],
+          deletedAt: null,
+          ...data,
+        }
+        return prisma.item.upsert({
+          where: { itemNo },
+          update: values,
+          create: { itemNo, ...values },
+        })
+      }
+
+      test('trashed notes drop out of full-text search', async () => {
+        await seedNote('zzftdel1', { memo: 'zzftdeltoken ライト' })
+        expect(itemNos(await searchItems('zzftdeltoken', 1))).toEqual(['zzftdel1'])
+
+        await trashItems(['zzftdel1'])
+
+        expect(itemNos(await searchItems('zzftdeltoken', 1))).toEqual([])
+      })
+
+      test('trashed notes drop out of the empty-query browse too', async () => {
+        // 一覧ブラウズは実データ込みで返るので、件数の差分で見る
+        await seedNote('zzftdel2', { memo: 'zzftbrowsetoken' })
+        const before = (await searchItems('', 1)).total
+
+        await trashItems(['zzftdel2'])
+
+        expect((await searchItems('', 1)).total).toBe(before - 1)
+      })
+
+      test('trashed notes drop out of the props table', async () => {
+        await seedNote('zzftdelp1', {
+          memo: '2SC0001\n#zzftdelbjt\nhFE=100',
+          tags: ['zzftdelbjt'],
+          props: [{ key: 'hfe', label: 'hFE', value: '100' }],
+        })
+        expect((await searchItemProps('#zzftdelbjt')).rows.map((r) => r.itemNo)).toEqual([
+          'zzftdelp1',
+        ])
+
+        await trashItems(['zzftdelp1'])
+
+        expect((await searchItemProps('#zzftdelbjt')).rows).toEqual([])
+      })
+
+      test('trashed notes drop out of the tag list (補完・集計)', async () => {
+        await seedNote('zzftdelt1', { memo: 'zzfttagmemo #zzftdeltag', tags: ['zzftdeltag'] })
+        expect((await listTags()).find((t) => t.tag === 'zzftdeltag')?.count).toBe(1)
+
+        await trashItems(['zzftdelt1'])
+
+        expect((await listTags()).find((t) => t.tag === 'zzftdeltag')).toBeUndefined()
+      })
+
+      test('restoreItems brings a note back into search', async () => {
+        await seedNote('zzftres1', { memo: 'zzftrestoretoken' })
+        await trashItems(['zzftres1'])
+        expect(itemNos(await searchItems('zzftrestoretoken', 1))).toEqual([])
+
+        await restoreItems(['zzftres1'])
+
+        expect(itemNos(await searchItems('zzftrestoretoken', 1))).toEqual(['zzftres1'])
+      })
+
+      test('purgeItems deletes only rows that are already in the trash', async () => {
+        // 二段階削除の要。通常ノートを渡しても消えてはいけない
+        await seedNote('zzftpg1', { memo: 'zzftpurgetoken', deletedAt: new Date() })
+        await seedNote('zzftpg2', { memo: 'zzftpurgetoken' })
+
+        await purgeItems(['zzftpg1', 'zzftpg2'])
+
+        expect(await getItem('zzftpg1')).toBeNull()
+        expect(await getItem('zzftpg2')).not.toBeNull()
+      })
+
+      test('getItem still returns a trashed note (/item のバナー用)', async () => {
+        await seedNote('zzftget1', { memo: 'zzftgettoken', deletedAt: new Date() })
+
+        expect((await getItem('zzftget1'))?.deletedAt).toBeInstanceOf(Date)
+      })
+
+      test('countTrashedMatches counts trashed hits only, for both text and tag terms', async () => {
+        await seedNote('zzftcm1', { memo: 'zzftcmtoken #zzftcmtag', tags: ['zzftcmtag'] })
+        await seedNote('zzftcm2', {
+          memo: 'zzftcmtoken #zzftcmtag',
+          tags: ['zzftcmtag'],
+          deletedAt: new Date(),
+        })
+
+        // 通常ノート (zzftcm1) は数えず、ゴミ箱の 1 件だけ
+        expect(await countTrashedMatches('zzftcmtoken')).toBe(1)
+        expect(await countTrashedMatches('#zzftcmtag')).toBe(1)
+      })
+
+      test('listTrashedItems returns newest-deleted first, with a summary', async () => {
+        await seedNote('zzftlt1', {
+          memo: 'ふるいノート\n本文',
+          deletedAt: new Date('2026-01-01T00:00:00Z'),
+        })
+        await seedNote('zzftlt2', {
+          memo: 'あたらしいノート\n本文',
+          deletedAt: new Date('2026-02-01T00:00:00Z'),
+        })
+
+        const mine = (await listTrashedItems()).filter((r) => r.itemNo.startsWith('zzftlt'))
+
+        expect(mine.map((r) => r.itemNo)).toEqual(['zzftlt2', 'zzftlt1'])
+        expect(mine[0]?.summary).toBe('あたらしいノート')
+      })
+
+      test('countTrashedItems counts the trash', async () => {
+        const before = await countTrashedItems()
+
+        await seedNote('zzftct1', { memo: 'zzftcounttoken', deletedAt: new Date() })
+
+        expect(await countTrashedItems()).toBe(before + 1)
+      })
+
+      test('nextItemNo skips a number that is in the trash (番号の予約)', async () => {
+        // ゴミ箱の間は番号を再利用しない (docs/12-ゴミ箱計画.md §4)。
+        // 採番は item_no_num を見るのでここだけ数値 itemNo を使う。zzft の
+        // 後始末には乗らないため finally で明示的に消す (docs/10 §7 の但し書き)。
+        const no = await nextItemNo()
+        try {
+          await prisma.item.create({
+            data: { itemNo: no, itemNoNum: Number(no), memo: '', deletedAt: new Date() },
+          })
+
+          expect(await nextItemNo()).not.toBe(no)
+        } finally {
+          await prisma.item.deleteMany({ where: { itemNo: no } })
+        }
       })
     })
   },

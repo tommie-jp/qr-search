@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { updateItemAction } from "@/app/actions";
+import { restoreItemsAction, updateItemAction } from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MemoEditor } from "@/components/MemoEditor";
 import { PageTransition } from "@/components/PageTransition";
 import { SubmitButton } from "@/components/SubmitButton";
+import { TrashedBanner } from "@/components/TrashedBanner";
 import { UnsavedGuard } from "@/components/UnsavedGuard";
 import {
   ACTION_LINK_CLASS,
@@ -44,6 +45,13 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
         <h1 className="text-xl font-bold">
           edit <span className="font-mono">#{itemNo}</span>
         </h1>
+
+        {/* 保存しても deletedAt は触らない (復元は明示的な操作だけ) ので、
+            ここで知らせないと「編集して更新したのに検索に出ない」になる
+            (docs/12-ゴミ箱計画.md §5) */}
+        {item?.deletedAt && (
+          <TrashedBanner itemNo={itemNo} restoreAction={restoreItemsAction} />
+        )}
 
         <form action={updateItemAction} className="space-y-3">
           <UnsavedGuard />

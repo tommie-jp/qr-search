@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { bulkTagAction } from "@/app/actions";
+import { bulkTagAction, trashItemsAction } from "@/app/actions";
 import { ItemList } from "@/components/ItemList";
 import { PageTransition } from "@/components/PageTransition";
 import { PendingLink } from "@/components/PendingLink";
@@ -7,7 +7,14 @@ import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
 import { ACTION_LINK_CLASS } from "@/components/ui";
-import { listTags, nextItemNo, searchItemProps, searchItems } from "@/lib/items";
+import {
+  countTrashedItems,
+  countTrashedMatches,
+  listTags,
+  nextItemNo,
+  searchItemProps,
+  searchItems,
+} from "@/lib/items";
 import { isTaggableCode, scanRegisterHref } from "@/lib/scanRegister";
 import { queryHasTagTerm } from "@/lib/search";
 import { buildSearchUrl } from "@/lib/searchUrl";
@@ -27,22 +34,27 @@ export default async function Home({ searchParams }: HomeProps) {
   // 特性表はタグ検索のときだけ出す。表は「同族の部品を並べて比べる」ビューで、
   // タグ検索がまさにその族の指定だから (docs/08-プロパティ計画.md §4)。
   const showProps = queryHasTagTerm(query);
-  const [result, tags, props] = await Promise.all([
+  const [result, tags, props, trashCount] = await Promise.all([
     searchItems(query, Number(page) || 1, sort),
     listTags(),
     showProps
       ? searchItemProps(query, sort)
       : Promise.resolve({ rows: [], omitted: 0 }),
+    countTrashedItems(),
   ]);
 
-  // スキャンした未登録コードから新規ノートを作る導線
-  // (docs/10-スキャン新規登録計画.md §3)。0 件かつタグにできる語のときだけ
-  // 採番を引く。ヒットした検索や URL・複数語では引かない (無駄な問い合わせを
-  // しないためと、ボタンを出さないため)
-  const registerHref =
-    result.total === 0 && isTaggableCode(query)
-      ? scanRegisterHref(await nextItemNo(), query)
-      : null;
+  // 0 件のときだけ引く 2 つ。どちらも独立なので並べて撃つ。
+  // - 採番: スキャンした未登録コードから新規ノートを作る導線
+  //   (docs/10-スキャン新規登録計画.md §3)。タグにできる語のときだけ。
+  //   ヒットした検索や URL・複数語では引かない (無駄な問い合わせをしないためと、
+  //   ボタンを出さないため)
+  // - ゴミ箱の一致: 消したノートを探して 0 件のときに知らせる
+  //   (docs/12-ゴミ箱計画.md §5)。ゴミ箱が空なら数えるまでもない
+  const [nextNo, trashedMatches] = await Promise.all([
+    result.total === 0 && isTaggableCode(query) ? nextItemNo() : null,
+    result.total === 0 && trashCount > 0 ? countTrashedMatches(query) : 0,
+  ]);
+  const registerHref = nextNo === null ? null : scanRegisterHref(nextNo, query);
 
   return (
     // 検索窓と結果をまとめて包み、打つそばからの URL 書き換えと待ち状態を
@@ -74,6 +86,16 @@ export default async function Home({ searchParams }: HomeProps) {
                 >
                   検索ヘルプ
                 </Link>
+                {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
+                {trashCount > 0 && (
+                  <Link
+                    href="/trash"
+                    transitionTypes={["nav-forward"]}
+                    className="text-xs text-blue-600 underline"
+                  >
+                    ゴミ箱 ({trashCount})
+                  </Link>
+                )}
               </p>
               {/* 並び替え・ページ送りは同じルートの searchParams だけを変える
                 遷移で loading.tsx の骨組みが出ないため、リンク側でスピナーを出す */}
@@ -117,7 +139,9 @@ export default async function Home({ searchParams }: HomeProps) {
               page={result.page}
               sort={sort}
               action={bulkTagAction}
+              trashAction={trashItemsAction}
               registerHref={registerHref}
+              trashedMatches={trashedMatches}
             />
 
             <div className="flex items-center justify-between text-sm">
