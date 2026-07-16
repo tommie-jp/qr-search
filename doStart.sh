@@ -5,6 +5,7 @@
 # 使い方:
 #   ./doStart.sh           # 起動 (イメージが無ければビルド)
 #   ./doStart.sh --build   # イメージを作り直してから起動
+#   ./doStart.sh -h        # ヘルプを表示
 #
 # 停止は: docker compose down
 # Caddy (HTTPS + Basic 認証) 込みで試す場合は:
@@ -14,6 +15,29 @@ cd "$(dirname "$0")"
 
 log() { echo ""; echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+qr-search をローカルで本番相当 (docker compose) に起動する。
+db 起動 → DB マイグレーション → app 起動 → ヘルスチェック。
+
+使い方:
+  ./doStart.sh           # 起動 (イメージが無ければビルド)
+  ./doStart.sh --build   # イメージを作り直してから起動
+  ./doStart.sh -h        # このヘルプを表示
+
+注意: package.json のバージョンなどビルド時に埋め込まれる値を反映するには
+--build が必要 (引数なしは既存イメージのまま起動する)。
+
+停止は: docker compose down
+Caddy (HTTPS + Basic 認証) 込みで試す場合は:
+  docker compose --profile proxy up -d
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
 
 [ -f .env ] || die ".env がない。cp .env.example .env して値を設定すること"
 
