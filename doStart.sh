@@ -3,9 +3,9 @@
 # db 起動 → DB マイグレーション → app 起動 → ヘルスチェック。
 #
 # 使い方:
-#   ./doStart.sh           # 起動 (イメージが無ければビルド)
-#   ./doStart.sh --build   # イメージを作り直してから起動
-#   ./doStart.sh -h        # ヘルプを表示
+#   ./doStart.sh            # イメージを作り直してから起動
+#   ./doStart.sh --nobuild  # ビルドせず既存イメージのまま起動
+#   ./doStart.sh -h         # ヘルプを表示
 #
 # 停止は: docker compose down
 # Caddy (HTTPS + Basic 認証) 込みで試す場合は:
@@ -22,12 +22,12 @@ qr-search をローカルで本番相当 (docker compose) に起動する。
 db 起動 → DB マイグレーション → app 起動 → ヘルスチェック。
 
 使い方:
-  ./doStart.sh           # 起動 (イメージが無ければビルド)
-  ./doStart.sh --build   # イメージを作り直してから起動
-  ./doStart.sh -h        # このヘルプを表示
+  ./doStart.sh            # イメージを作り直してから起動
+  ./doStart.sh --nobuild  # ビルドせず既存イメージのまま起動
+  ./doStart.sh -h         # このヘルプを表示
 
-注意: package.json のバージョンなどビルド時に埋め込まれる値を反映するには
---build が必要 (引数なしは既存イメージのまま起動する)。
+注意: --nobuild は既存イメージのまま起動するため、package.json のバージョンなど
+ビルド時に埋め込まれる値は古いままになる。
 
 停止は: docker compose down
 Caddy (HTTPS + Basic 認証) 込みで試す場合は:
@@ -35,9 +35,16 @@ Caddy (HTTPS + Basic 認証) 込みで試す場合は:
 EOF
 }
 
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-esac
+DO_BUILD=1
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    --nobuild) DO_BUILD=0 ;;
+    --build) DO_BUILD=1 ;;
+    *) usage >&2; die "不明な引数: $arg" ;;
+  esac
+done
 
 [ -f .env ] || die ".env がない。cp .env.example .env して値を設定すること"
 
@@ -45,9 +52,11 @@ APP_PORT="$(grep -oP '^APP_PORT=\K.*' .env || true)"
 APP_URL="http://127.0.0.1:${APP_PORT:-3000}/"
 HEALTH_RETRIES=30
 
-if [ "${1:-}" = "--build" ]; then
+if [ "$DO_BUILD" = 1 ]; then
   log "イメージビルド"
   docker compose build app
+else
+  log "イメージビルドをスキップ (--nobuild)"
 fi
 
 log "db 起動"

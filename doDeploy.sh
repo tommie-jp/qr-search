@@ -3,6 +3,8 @@
 #
 # 前提 (docs/03-移行計画.md の手順を自動化したもの):
 #   - vps2 の ~/41-QR-search/qr-search/ に compose.yaml と .env が配置済み
+#   - その .env に APP_ENV=production がある (無いと本番の画面がローカル扱いに
+#     なるため、手順 1/8 で弾く)
 #   - vps2 は空きメモリが少なくビルド不可のため、
 #     イメージはローカルでビルドして docker save/load で転送する
 #   - DB マイグレーションはランタイムイメージに prisma CLI が無いため、
@@ -45,22 +47,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "1/7 lint + test"
+# 非本番の画面はピンク + タイトル [LOCAL] になる (src/lib/appEnv.ts)。
+# 判定は「APP_ENV=production を明示したときだけ本番」なので、リモートの .env に
+# 書き忘れると本番が LOCAL 表示のまま公開されてしまう。ビルドで時間を使う前に弾く
+log "1/8 デプロイ先の APP_ENV 確認"
+REMOTE_APP_ENV="$(ssh "$REMOTE" "grep '^APP_ENV=' '$REMOTE_DIR/.env' | cut -d= -f2-")"
+if [ "$REMOTE_APP_ENV" != "production" ]; then
+  die "$REMOTE の $REMOTE_DIR/.env に APP_ENV=production がない (現在: ${REMOTE_APP_ENV:-未設定})。
+     これが無いと本番の画面がローカル扱い (ピンク + [LOCAL]) になる。
+     次を実行してから再デプロイすること:
+       ssh $REMOTE \"echo APP_ENV=production >> $REMOTE_DIR/.env\""
+fi
+echo "OK: APP_ENV=production"
+
+log "2/8 lint + test"
 npm run lint
 npm test
 
-log "2/7 バージョンアップ ($BUMP)"
+log "3/8 バージョンアップ ($BUMP)"
 ./doVersion.sh "$BUMP"
 
 log "デプロイ対象: v$(node -p "require('./package.json').version")"
 
-log "3/7 イメージビルド ($IMAGE)"
+log "4/8 イメージビルド ($IMAGE)"
 docker compose build app
 
-log "4/7 イメージ転送 ($REMOTE へ docker save/load)"
+log "5/8 イメージ転送 ($REMOTE へ docker save/load)"
 docker save "$IMAGE" | gzip | ssh "$REMOTE" 'gunzip | docker load'
 
-log "5/7 DB マイグレーション (SSH トンネル localhost:$TUNNEL_PORT 経由)"
+log "6/8 DB マイグレーション (SSH トンネル localhost:$TUNNEL_PORT 経由)"
 REMOTE_PW="$(ssh "$REMOTE" "grep '^POSTGRES_PASSWORD=' '$REMOTE_DIR/.env' | cut -d= -f2-")"
 [ -n "$REMOTE_PW" ] || die "$REMOTE の $REMOTE_DIR/.env から POSTGRES_PASSWORD を取得できない"
 ENCODED_PW="$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$REMOTE_PW")"
@@ -71,10 +86,10 @@ ssh -M -S "$SSH_CTRL" -f -N \
 DATABASE_URL="postgresql://qr:${ENCODED_PW}@127.0.0.1:${TUNNEL_PORT}/qr" \
   npx prisma migrate deploy
 
-log "6/7 app コンテナ再作成"
+log "7/8 app コンテナ再作成"
 ssh "$REMOTE" "cd '$REMOTE_DIR' && docker compose up -d --no-build --force-recreate app"
 
-log "7/7 ヘルスチェック ($REMOTE 上の $HEALTH_URL)"
+log "8/8 ヘルスチェック ($REMOTE 上の $HEALTH_URL)"
 for i in $(seq 1 "$HEALTH_RETRIES"); do
   status="$(ssh "$REMOTE" "curl -fsS -o /dev/null -w '%{http_code}' '$HEALTH_URL'" || true)"
   if [ "$status" = "200" ]; then

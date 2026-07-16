@@ -1,5 +1,12 @@
 import type { MetadataRoute } from "next";
-import { SITE_DESCRIPTION, SITE_NAME } from "@/lib/site";
+import {
+  isProductionEnv,
+  LOCAL_BACKGROUND_COLOR,
+  LOCAL_THEME_COLOR,
+  PROD_BACKGROUND_COLOR,
+  PROD_THEME_COLOR,
+} from "@/lib/appEnv";
+import { SITE_DESCRIPTION, SITE_NAME, siteTitle } from "@/lib/site";
 
 // PWA の manifest。/manifest.webmanifest で配信される。
 //
@@ -10,13 +17,20 @@ import { SITE_DESCRIPTION, SITE_NAME } from "@/lib/site";
 //
 // Service Worker は置かない。Chrome のインストール条件は manifest + アイコンで足り、
 // このアプリは検索も表示も編集もサーバ必須でオフラインに出来ることがほぼないため。
+// ローカルをホーム画面に入れている場合、standalone には URL バーが無く、
+// 本番と見分ける手がかりが名前・スプラッシュ・ステータスバーの帯しかない。
+// ブラウザ (layout.tsx) と同じ塗り分けをここにも入れる (src/lib/appEnv.ts)
 export default function manifest(): MetadataRoute.Manifest {
+  const isProd = isProductionEnv();
+
   return {
     // id を省くと start_url が既定の識別子になり、後で start_url を変えたときに
     // 「別アプリ」と見なされて二重インストールになる
     id: "/",
-    name: SITE_NAME,
-    short_name: SITE_NAME,
+    name: siteTitle(),
+    // ランチャーのラベル。12 文字を超えると省略され、付けた目印ごと消えるため
+    // [LOCAL] を冠さず短い別名にする
+    short_name: isProd ? SITE_NAME : "LOCAL QR",
     description: SITE_DESCRIPTION,
     lang: "ja",
     start_url: "/",
@@ -24,8 +38,10 @@ export default function manifest(): MetadataRoute.Manifest {
     // QR シールの /item/:itemNo を拾わせたいのでルートに広げる
     scope: "/",
     display: "standalone",
-    background_color: "#f9fafb", // bg-gray-50 = body の背景 (起動時スプラッシュに出る)
-    theme_color: "#ffffff", // ヘッダ白。layout.tsx の viewport.themeColor と揃える
+    // body の背景 (起動時スプラッシュに出る)
+    background_color: isProd ? PROD_BACKGROUND_COLOR : LOCAL_BACKGROUND_COLOR,
+    // ヘッダの色。layout.tsx の viewport.themeColor と揃える
+    theme_color: isProd ? PROD_THEME_COLOR : LOCAL_THEME_COLOR,
     icons: [
       { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },

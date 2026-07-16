@@ -1,7 +1,18 @@
+import { isProductionEnv } from "./appEnv";
+
 // サイト名と説明文は <head> の metadata と PWA manifest の両方が使う。
 // 別々に書くと表示名がじわじわ食い違うため、ここを唯一の出どころにする。
 export const SITE_NAME = "QR search";
 export const SITE_DESCRIPTION = "部品に貼った QR シールから部品情報を表示・管理する";
+
+// タブと PWA のホーム画面に出す表示名。非本番は [LOCAL] を冠する。
+//
+// 画面をピンクに塗るだけでは、タブを何枚も開いているときに背景が見えず
+// 誤認を防げない。タブの一覧で本番と見分けられるのはタイトルだけなので、
+// 色と対で入れる (src/lib/appEnv.ts)
+export function siteTitle(): string {
+  return isProductionEnv() ? SITE_NAME : `[LOCAL] ${SITE_NAME}`;
+}
 
 const DEFAULT_QR_BASE_URL = "https://qr.tommie.jp";
 

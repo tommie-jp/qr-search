@@ -2,10 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Metadata } from "next";
 import { MarkdownView } from "@/components/MarkdownView";
-import { SITE_NAME } from "@/lib/site";
 
+// サイト名は付けない。root layout の title.template が付ける
+// (手で連結すると非本番の [LOCAL] が抜け落ちる)
 export const metadata: Metadata = {
-  title: `全文検索の使い方 - ${SITE_NAME}`,
+  title: "全文検索の使い方",
 };
 
 // docs/05-全文検索の使い方.md をそのままヘルプページとして表示する。

@@ -1,10 +1,16 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { qrBaseUrl, qrStickerHost } from './site'
+import { qrBaseUrl, qrStickerHost, siteTitle } from './site'
 
 const original = process.env.QR_BASE_URL
+const originalAppEnv = process.env.APP_ENV
 
 afterEach(() => {
   process.env.QR_BASE_URL = original
+  if (originalAppEnv === undefined) {
+    delete process.env.APP_ENV
+  } else {
+    process.env.APP_ENV = originalAppEnv
+  }
   vi.restoreAllMocks()
 })
 
@@ -24,6 +30,17 @@ test('空文字 (.env に `QR_BASE_URL=` と書いた形) でも既定へ倒す'
   process.env.QR_BASE_URL = ''
   expect(qrBaseUrl()).toBe('https://qr.tommie.jp')
   expect(qrStickerHost()).toBe('qr.tommie.jp')
+})
+
+// タブを並べているときは背景色が見えないため、誤認を防げるのはタイトルだけになる
+test('本番のタイトルは素のサイト名', () => {
+  process.env.APP_ENV = 'production'
+  expect(siteTitle()).toBe('QR search')
+})
+
+test('非本番のタイトルは [LOCAL] を冠する', () => {
+  delete process.env.APP_ENV
+  expect(siteTitle()).toBe('[LOCAL] QR search')
 })
 
 test('URL として壊れていても投げず、既定へ倒して警告する', () => {

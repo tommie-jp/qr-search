@@ -1,5 +1,15 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import manifest from "./manifest";
+
+const originalAppEnv = process.env.APP_ENV;
+
+afterEach(() => {
+  if (originalAppEnv === undefined) {
+    delete process.env.APP_ENV;
+  } else {
+    process.env.APP_ENV = originalAppEnv;
+  }
+});
 
 // manifest の中身をそのまま写経しても「変えたら落ちる」だけのテストにしかならないので、
 // 壊れると PWA として成立しなくなる条件だけを検査する。
@@ -62,5 +72,39 @@ describe("PWA manifest", () => {
     // short_name はランチャーのラベルに使われ、長いと省略される
     expect(short_name?.length).toBeGreaterThan(0);
     expect(short_name?.length).toBeLessThanOrEqual(12);
+  });
+
+  // standalone はブラウザの URL バーが無く、本番と見分ける手がかりが
+  // ホーム画面の名前・起動時のスプラッシュ・ステータスバーの帯しかない
+  describe("非本番の見分け", () => {
+    test("本番は素の名前と白系の色", () => {
+      // Arrange
+      process.env.APP_ENV = "production";
+
+      // Act
+      const { name, short_name, theme_color, background_color } = manifest();
+
+      // Assert
+      expect(name).toBe("QR search");
+      expect(short_name).toBe("QR search");
+      expect(theme_color).toBe("#ffffff");
+      expect(background_color).toBe("#f9fafb");
+    });
+
+    test("非本番は名前に LOCAL が入りピンクになる", () => {
+      // Arrange
+      delete process.env.APP_ENV;
+
+      // Act
+      const { name, short_name, theme_color, background_color } = manifest();
+
+      // Assert
+      expect(name).toContain("LOCAL");
+      expect(short_name).toContain("LOCAL");
+      // ランチャーのラベルに収まること (省略されると LOCAL が消えかねない)
+      expect(short_name?.length).toBeLessThanOrEqual(12);
+      expect(theme_color).toBe("#fce7f3");
+      expect(background_color).toBe("#fdf2f8");
+    });
   });
 });
