@@ -1,3 +1,4 @@
+import type { BookSummary } from './openbd'
 import { parseTagToken } from './tags'
 
 // スキャンした未登録コードから新規ノートを作る導線の組み立て
@@ -41,6 +42,13 @@ export function isIsbn(code: string): boolean {
   return sum % 10 === 0
 }
 
+// 書誌の見出し部分 (書名 / 著者 / 出版社)。欠けた項目は行ごと落とし、
+// 本文の頭に空行が生まれないようにする。
+function bookHeader({ title, authors, publisher, pubdate }: BookSummary): string {
+  const imprint = publisher && pubdate ? `${publisher} (${pubdate})` : publisher || pubdate
+  return [title, authors.join(' / '), imprint].filter(Boolean).join('\n')
+}
+
 // 事前入力する本文。タイトルを書くための空行 2 つの下にタグを置く。
 //
 // 一覧の要約 (memoSummary) は空行を飛ばすので、何も書かないうちは要約が
@@ -54,9 +62,14 @@ export function isIsbn(code: string): boolean {
 // タグにする価値がある。#isbn と #book の併記はしない (ISBN を持つノート =
 // 書籍で同じ集合を指し、タグ一覧のノイズが倍になるだけ)。誤判定しても
 // カーソルが載った編集ページが開いているので、その場で消せる。
-export function scanRegisterMemo(code: string): string {
+//
+// book を渡すと書名・著者・出版社が上に載る (openBD から引けたとき。
+// docs/13-書誌自動取得計画.md)。書名が 1 行目に来るので一覧の要約が書名になり、
+// 全文検索も書名・著者で引けるようになる。引けなければ従来どおり手で書く。
+export function scanRegisterMemo(code: string, book?: BookSummary | null): string {
   const kind = isIsbn(code) ? ' #book' : ''
-  return `\n\n#${code}${kind}`
+  const header = book ? bookHeader(book) : ''
+  return `${header}\n\n#${code}${kind}`
 }
 
 // 「新規登録」ボタンのリンク先。itemNo は採番済みの次番号を渡す。

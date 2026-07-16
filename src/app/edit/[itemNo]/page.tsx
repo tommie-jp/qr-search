@@ -13,7 +13,7 @@ import {
   STICKY_ACTIONS_CLASS,
 } from "@/components/ui";
 import { getItem } from "@/lib/items";
-import { isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
+import { isIsbn, isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
 import { isValidItemNo } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -36,8 +36,11 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
   // 既存ノートには効かせない。採番が競合して先に使われていた場合、既存の本文を
   // 黙って上書きする初期値を出すと、そのまま更新して壊しかねない。
   // タグにできない code は無視する (通常の導線では来ない。URL を手で触った場合)
-  const defaultMemo =
-    !item && code && isTaggableCode(code) ? scanRegisterMemo(code) : (item?.memo ?? "");
+  const newCode = !item && code && isTaggableCode(code) ? code : null;
+  const defaultMemo = newCode ? scanRegisterMemo(newCode) : (item?.memo ?? "");
+  // ISBN なら書誌の自動取得を任せる (openBD をブラウザから直接引くので
+  // ここでは待たない。docs/13-書誌自動取得計画.md)
+  const isbn = newCode && isIsbn(newCode) ? newCode : undefined;
 
   return (
     <PageTransition>
@@ -80,7 +83,7 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
             </label>
           </fieldset>
 
-          <MemoEditor defaultValue={defaultMemo} autoFocus />
+          <MemoEditor defaultValue={defaultMemo} autoFocus isbn={isbn} />
           <textarea
             name="url"
             rows={3}

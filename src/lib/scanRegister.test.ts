@@ -64,6 +64,48 @@ test('ISBN なら #book も付ける', () => {
   expect(scanRegisterMemo('9784873115658')).toBe('\n\n#9784873115658 #book')
 })
 
+test('書誌が取れたら書名・著者・出版社を上に置く', () => {
+  // 1 行目が書名になるので、一覧の要約 (memoSummary) が書名になる。
+  // 空行を 1 つ挟んでタグ。空行は自分のメモを書く場所
+  // (docs/13-書誌自動取得計画.md §3)
+  const memo = scanRegisterMemo('9784873115658', {
+    title: 'リーダブルコード',
+    authors: ['Boswell, Dustin', '角, 征典'],
+    publisher: 'オーム社',
+    pubdate: '2012.06',
+  })
+  expect(memo).toBe(
+    'リーダブルコード\nBoswell, Dustin / 角, 征典\nオーム社 (2012.06)\n\n#9784873115658 #book',
+  )
+})
+
+test('書誌が無ければ従来どおり空行 2 つ + タグ', () => {
+  // openBD の収録漏れ・通信失敗。導線は止めず手で書く
+  expect(scanRegisterMemo('9784873115658', null)).toBe(
+    '\n\n#9784873115658 #book',
+  )
+})
+
+test('書誌の欠けた項目は行ごと落とす (空行を作らない)', () => {
+  const memo = scanRegisterMemo('9784873115658', {
+    title: 'タイトルだけの本',
+    authors: [],
+    publisher: '',
+    pubdate: '',
+  })
+  expect(memo).toBe('タイトルだけの本\n\n#9784873115658 #book')
+})
+
+test('刊行年月が無ければ出版社だけ、出版社が無ければ刊行年月だけ', () => {
+  const base = { title: '本', authors: [] }
+  expect(scanRegisterMemo('9784873115658', { ...base, publisher: 'オーム社', pubdate: '' })).toBe(
+    '本\nオーム社\n\n#9784873115658 #book',
+  )
+  expect(scanRegisterMemo('9784873115658', { ...base, publisher: '', pubdate: '2012.06' })).toBe(
+    '本\n2012.06\n\n#9784873115658 #book',
+  )
+})
+
 test('979 始まり (ISBN-13 の新しい接頭辞) も ISBN として扱う', () => {
   expect(isIsbn('9791234567896')).toBe(true)
 })
