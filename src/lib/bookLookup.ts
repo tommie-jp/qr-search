@@ -14,33 +14,14 @@
 import type { BookSummary } from './book'
 import { fetchBook as fetchFromNdl } from './ndlSearch'
 import { fetchBook as fetchFromOpenBd } from './openbd'
-
-// 1 つの API が黙り込んでも次を試せるよう、取得ごとに上限を持つ。
-// 実測の応答は openBD が 30ms、NDL が 30ms〜3 秒 (未キャッシュの ISBN) なので余る
-const SOURCE_TIMEOUT_MS = 8000
+// 1 つの API が黙り込んでも次を試せるよう、取得ごとに上限を持つ
+// (withSourceTimeout は productLookup と共通)
+import { withSourceTimeout } from './sourceTimeout'
 
 const SOURCES = [
   { name: 'openBD', fetch: fetchFromOpenBd },
   { name: 'NDL サーチ', fetch: fetchFromNdl },
 ]
-
-// 外側の signal (中断) を生かしたまま、この 1 回だけの上限を足す。
-// AbortSignal.any は環境によっては無いため、素の AbortController で組む。
-async function withTimeout<T>(
-  signal: AbortSignal | undefined,
-  run: (signal: AbortSignal) => Promise<T>,
-): Promise<T> {
-  const abort = new AbortController()
-  const timer = setTimeout(() => abort.abort(), SOURCE_TIMEOUT_MS)
-  const forward = () => abort.abort(signal?.reason)
-  signal?.addEventListener('abort', forward, { once: true })
-  try {
-    return await run(abort.signal)
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', forward)
-  }
-}
 
 // 見つかった最初の書誌を返す。どこにも無ければ null (エラーではない)。
 // 個々の API の失敗は握り潰さず警告に残したうえで、次の API を試す。
@@ -59,7 +40,7 @@ export async function lookupBook(
       break // 呼び出しが打ち切られた。次を叩かない
     }
     try {
-      const book = await withTimeout(signal, (s) => source.fetch(isbn, s))
+      const book = await withSourceTimeout(signal, (s) => source.fetch(isbn, s))
       if (book) {
         return book
       }

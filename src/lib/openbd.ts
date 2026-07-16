@@ -9,20 +9,12 @@
 // 本の収録率 1/12、2012-2016 年は 25/25)。落ちた分は NDL サーチが拾う
 // (bookLookup.ts)。
 
-import { asString, type BookSummary, formatPubdate } from './book'
+import { asRecord, asString, type BookSummary, formatPubdate } from './book'
 
 const OPENBD_ENDPOINT = 'https://api.openbd.jp/v1/get'
 
 export function openBdUrl(isbn: string): string {
   return `${OPENBD_ENDPOINT}?isbn=${encodeURIComponent(isbn)}`
-}
-
-// 外部データの型を信用しないための入口 (asString は book.ts と共通)。
-// 読めない値は「無い」ものとして扱い、部分的にでも書誌を組み立てる。
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
 }
 
 // 著者は ONIX の Contributor から取る。summary.author は
@@ -67,7 +59,7 @@ export function parseOpenBdResponse(json: unknown): BookSummary | null {
 }
 
 // ISBN の書誌を引く。収録漏れのときは null (エラーではない)。
-// タイムアウトは呼び出し側が signal で持つ (useBookPrefill)。
+// タイムアウトは呼び出し側が signal で持つ (bookLookup.ts)。
 export async function fetchBook(
   isbn: string,
   signal?: AbortSignal,

@@ -1,4 +1,5 @@
 import type { BookSummary } from './book'
+import type { ProductSummary } from './product'
 import { parseTagToken } from './tags'
 
 // スキャンした未登録コードから新規ノートを作る導線の組み立て
@@ -31,10 +32,11 @@ const ISBN_PATTERN = /^(?:978[0-9]|979[1-9])[0-9]{9}$/
 // EAN-13 の検算を済ませているが、検索窓に手入力した番号はここだけが頼りで、
 // 検算しないと「ISBN である」と名乗る関数が嘘をつく。
 export function isIsbn(code: string): boolean {
-  if (!ISBN_PATTERN.test(code)) {
-    return false
-  }
-  // EAN-13: 左から重み 1,3,1,3... を掛けた総和 (チェックデジット込み) が 10 の倍数
+  return ISBN_PATTERN.test(code) && hasEan13CheckDigit(code)
+}
+
+// EAN-13: 左から重み 1,3,1,3... を掛けた総和 (チェックデジット込み) が 10 の倍数
+function hasEan13CheckDigit(code: string): boolean {
   const sum = [...code].reduce(
     (acc, char, i) => acc + Number(char) * (i % 2 === 0 ? 1 : 3),
     0,
@@ -42,11 +44,27 @@ export function isIsbn(code: string): boolean {
   return sum % 10 === 0
 }
 
-// 書誌の見出し部分 (書名 / 著者 / 出版社)。欠けた項目は行ごと落とし、
-// 本文の頭に空行が生まれないようにする。
+// このコードが JAN (書籍以外の EAN-13) か (docs/14-JAN商品情報取得計画.md §2)。
+//
+// 45/49 (日本) には縛らない。輸入品も国内 EC ではそのまま売られていて、
+// Yahoo!ショッピングでヒットする。ISBN を先に除くので書籍は常に書籍側の
+// 導線 (bookLookup) に行き、ISMN (9790 = 印刷楽譜) は isIsbn が偽なので
+// こちらに落ちる (楽譜も EC でヒットしうるので専用の分岐は作らない)。
+const JAN_PATTERN = /^[0-9]{13}$/
+
+export function isJan(code: string): boolean {
+  return JAN_PATTERN.test(code) && !isIsbn(code) && hasEan13CheckDigit(code)
+}
+
+// 見出し部分。書籍は 書名 / 著者 / 出版社 (刊行年月)、商品は 商品名 / ブランド。
+// 欠けた項目は行ごと落とし、本文の頭に空行が生まれないようにする。
 function bookHeader({ title, authors, publisher, pubdate }: BookSummary): string {
   const imprint = publisher && pubdate ? `${publisher} (${pubdate})` : publisher || pubdate
   return [title, authors.join(' / '), imprint].filter(Boolean).join('\n')
+}
+
+function productHeader({ title, brand }: ProductSummary): string {
+  return [title, brand].filter(Boolean).join('\n')
 }
 
 // 事前入力する本文。タイトルを書くための空行 2 つの下にタグを置く。
@@ -63,12 +81,21 @@ function bookHeader({ title, authors, publisher, pubdate }: BookSummary): string
 // 書籍で同じ集合を指し、タグ一覧のノイズが倍になるだけ)。誤判定しても
 // カーソルが載った編集ページが開いているので、その場で消せる。
 //
-// book を渡すと書名・著者・出版社が上に載る (openBD から引けたとき。
-// docs/13-書誌自動取得計画.md)。書名が 1 行目に来るので一覧の要約が書名になり、
-// 全文検索も書名・著者で引けるようになる。引けなければ従来どおり手で書く。
-export function scanRegisterMemo(code: string, book?: BookSummary | null): string {
+// summary を渡すと書誌 (書名・著者・出版社) や商品情報 (商品名・ブランド) が
+// 上に載る (docs/13-書誌自動取得計画.md / docs/14-JAN商品情報取得計画.md)。
+// 1 行目に書名・商品名が来るので一覧の要約がそれになり、全文検索でも
+// 引けるようになる。引けなければ従来どおり手で書く。
+// 2 つの型は authors の有無で見分ける (判別用のフィールドは足さない)。
+export function scanRegisterMemo(
+  code: string,
+  summary?: BookSummary | ProductSummary | null,
+): string {
   const kind = isIsbn(code) ? ' #book' : ''
-  const header = book ? bookHeader(book) : ''
+  const header = !summary
+    ? ''
+    : 'authors' in summary
+      ? bookHeader(summary)
+      : productHeader(summary)
   return `${header}\n\n#${code}${kind}`
 }
 

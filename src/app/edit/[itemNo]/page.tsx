@@ -13,7 +13,7 @@ import {
   STICKY_ACTIONS_CLASS,
 } from "@/components/ui";
 import { getItem } from "@/lib/items";
-import { isIsbn, isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
+import { isIsbn, isJan, isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
 import { isValidItemNo } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -38,9 +38,16 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
   // タグにできない code は無視する (通常の導線では来ない。URL を手で触った場合)
   const newCode = !item && code && isTaggableCode(code) ? code : null;
   const defaultMemo = newCode ? scanRegisterMemo(newCode) : (item?.memo ?? "");
-  // ISBN なら書誌の自動取得を任せる (openBD をブラウザから直接引くので
-  // ここでは待たない。docs/13-書誌自動取得計画.md)
-  const isbn = newCode && isIsbn(newCode) ? newCode : undefined;
+  // ISBN なら書誌 (docs/13-書誌自動取得計画.md)、JAN なら商品情報
+  // (docs/14-JAN商品情報取得計画.md) の自動取得を任せる。取得はクライアントが
+  // 後から引くので、ここでは待たない
+  const prefill = !newCode
+    ? undefined
+    : isIsbn(newCode)
+      ? ({ kind: "book", code: newCode } as const)
+      : isJan(newCode)
+        ? ({ kind: "product", code: newCode } as const)
+        : undefined;
 
   return (
     <PageTransition>
@@ -83,7 +90,7 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
             </label>
           </fieldset>
 
-          <MemoEditor defaultValue={defaultMemo} autoFocus isbn={isbn} />
+          <MemoEditor defaultValue={defaultMemo} autoFocus prefill={prefill} />
           <textarea
             name="url"
             rows={3}

@@ -14,8 +14,15 @@ export interface BookSummary {
 
 // 外部データの型を信用しないための入口 (JSON も XML も何でも来る)。
 // 読めない値は「無い」ものとして扱い、部分的にでも書誌を組み立てる。
+// 商品情報の境界 (yahooShopping.ts) もここを共用する (二重定義しない)。
 export function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+export function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
 }
 
 // 刊行日を年月に整形する。目的は版の見分けなので日はいらない。

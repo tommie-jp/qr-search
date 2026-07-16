@@ -28,6 +28,8 @@ services:
     environment:
       DATABASE_URL: postgresql://qr:${POSTGRES_PASSWORD}@db:5432/qr
       QR_BASE_URL: ${QR_BASE_URL:-https://qr.tommie.jp}
+      # JAN の商品情報取得 (docs/14)。未設定でも起動する (取得しないだけ)
+      YAHOO_SHOPPING_APP_ID: ${YAHOO_SHOPPING_APP_ID:-}
     ports:
       # ローカル: tailscale serve 用 / vps2: nginx のプロキシ先 (loopback のみ)
       - "127.0.0.1:${APP_PORT:-3000}:3000"
