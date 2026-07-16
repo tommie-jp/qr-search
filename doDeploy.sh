@@ -8,8 +8,12 @@
 #   - DB マイグレーションはランタイムイメージに prisma CLI が無いため、
 #     SSH トンネル経由でローカルから prisma migrate deploy を実行する
 #
+# デプロイのたびに ./doVersion.sh でバージョンを必ず上げる。
+# 画面フッターはビルド時に package.json の version を埋め込むため、
+# バージョンアップはイメージビルドより前に行う。
+#
 # 使い方:
-#   ./doDeploy.sh
+#   ./doDeploy.sh [patch|minor|major]   (省略時: patch)
 #
 # 環境変数で上書き可能:
 #   DEPLOY_REMOTE      ssh 接続先 (default: vps2)
@@ -17,6 +21,12 @@
 #   DEPLOY_TUNNEL_PORT マイグレーション用トンネルのローカルポート (default: 15432)
 set -euo pipefail
 cd "$(dirname "$0")"
+
+BUMP="${1:-patch}"
+case "$BUMP" in
+  patch|minor|major) ;;
+  *) echo "usage: $0 [patch|minor|major]" >&2; exit 1 ;;
+esac
 
 REMOTE="${DEPLOY_REMOTE:-vps2}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-41-QR-search/qr-search}"
@@ -35,19 +45,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "デプロイ対象: v$(node -p "require('./package.json').version")"
-
-log "1/6 lint + test"
+log "1/7 lint + test"
 npm run lint
 npm test
 
-log "2/6 イメージビルド ($IMAGE)"
+log "2/7 バージョンアップ ($BUMP)"
+./doVersion.sh "$BUMP"
+
+log "デプロイ対象: v$(node -p "require('./package.json').version")"
+
+log "3/7 イメージビルド ($IMAGE)"
 docker compose build app
 
-log "3/6 イメージ転送 ($REMOTE へ docker save/load)"
+log "4/7 イメージ転送 ($REMOTE へ docker save/load)"
 docker save "$IMAGE" | gzip | ssh "$REMOTE" 'gunzip | docker load'
 
-log "4/6 DB マイグレーション (SSH トンネル localhost:$TUNNEL_PORT 経由)"
+log "5/7 DB マイグレーション (SSH トンネル localhost:$TUNNEL_PORT 経由)"
 REMOTE_PW="$(ssh "$REMOTE" "grep '^POSTGRES_PASSWORD=' '$REMOTE_DIR/.env' | cut -d= -f2-")"
 [ -n "$REMOTE_PW" ] || die "$REMOTE の $REMOTE_DIR/.env から POSTGRES_PASSWORD を取得できない"
 ENCODED_PW="$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$REMOTE_PW")"
@@ -58,10 +71,10 @@ ssh -M -S "$SSH_CTRL" -f -N \
 DATABASE_URL="postgresql://qr:${ENCODED_PW}@127.0.0.1:${TUNNEL_PORT}/qr" \
   npx prisma migrate deploy
 
-log "5/6 app コンテナ再作成"
+log "6/7 app コンテナ再作成"
 ssh "$REMOTE" "cd '$REMOTE_DIR' && docker compose up -d --no-build --force-recreate app"
 
-log "6/6 ヘルスチェック ($REMOTE 上の $HEALTH_URL)"
+log "7/7 ヘルスチェック ($REMOTE 上の $HEALTH_URL)"
 for i in $(seq 1 "$HEALTH_RETRIES"); do
   status="$(ssh "$REMOTE" "curl -fsS -o /dev/null -w '%{http_code}' '$HEALTH_URL'" || true)"
   if [ "$status" = "200" ]; then
