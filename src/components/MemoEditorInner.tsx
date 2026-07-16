@@ -1,5 +1,6 @@
 "use client";
 
+import { redo, redoDepth, undo, undoDepth } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -7,6 +8,7 @@ import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fenceLanguageCompletion } from "./fenceCompletion";
 import { fenceLanguageLinter } from "./fenceLinter";
+import { SECONDARY_BUTTON_CLASS } from "./ui";
 
 export interface MemoEditorInnerProps {
   value: string;
@@ -73,6 +75,9 @@ export default function MemoEditorInner({
 }: MemoEditorInnerProps) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // undo / redo ボタンの活殺 (docs/11-アプリ的UIUX計画.md §2-4)。
+  // 履歴自体は basicSetup が既定で持っている (Ctrl+Z も従来どおり効く)
+  const [history, setHistory] = useState({ canUndo: false, canRedo: false });
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -169,6 +174,15 @@ export default function MemoEditorInner({
     // insertImages は ref と state セッターのみ参照するため再生成不要
   }, []);
 
+  // undo / redo をボタンから呼ぶ。モバイルには Ctrl+Z がないため
+  const runHistoryCommand = (command: (view: EditorView) => boolean) => {
+    const view = editorRef.current?.view;
+    if (view) {
+      command(view);
+      view.focus();
+    }
+  };
+
   const handleFilePick = (files: FileList | null) => {
     const view = editorRef.current?.view;
     const picked = imageFiles(files);
@@ -197,18 +211,50 @@ export default function MemoEditorInner({
             foldGutter: false,
             highlightActiveLine: false,
           }}
+          // 履歴の深さが変わったときだけボタンの活殺を更新する。
+          // onUpdate はカーソル移動でも呼ばれるので、同じ値なら前の state を
+          // 返して再レンダリングを止める
+          onUpdate={(update) => {
+            const next = {
+              canUndo: undoDepth(update.state) > 0,
+              canRedo: redoDepth(update.state) > 0,
+            };
+            setHistory((prev) =>
+              prev.canUndo === next.canUndo && prev.canRedo === next.canRedo
+                ? prev
+                : next,
+            );
+          }}
         />
       </div>
-      <div className="flex items-center gap-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <button
+          type="button"
+          onClick={() => runHistoryCommand(undo)}
+          disabled={!history.canUndo}
+          className={SECONDARY_BUTTON_CLASS}
+        >
+          元に戻す
+        </button>
+        <button
+          type="button"
+          onClick={() => runHistoryCommand(redo)}
+          disabled={!history.canRedo}
+          className={SECONDARY_BUTTON_CLASS}
+        >
+          やり直す
+        </button>
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="rounded border border-gray-300 bg-white px-3 py-1 text-gray-700 disabled:opacity-50"
+          className={SECONDARY_BUTTON_CLASS}
         >
           {uploading ? "アップロード中…" : "画像を挿入"}
         </button>
-        <span className="text-gray-400">
+        {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
+            幅が狭いときは畳んでボタンの場所を空ける */}
+        <span className="hidden text-gray-400 sm:inline">
           画像はペースト・ドラッグ&ドロップでも挿入できます
         </span>
         <span

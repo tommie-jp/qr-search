@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* ホーム画面から起動したときだけ効く変体 (docs/11-アプリ的UIUX計画.md §5)。
+   例: standalone:inline-flex */
+@custom-variant standalone (@media (display-mode: standalone));
+
 html {
   /* iOS のラバーバンド (ドラッグで画面全体が引きずられる) と
      Android の引っ張って更新を止める */
@@ -43,4 +47,69 @@ summary {
 
 @utility pb-safe {
   padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+
+/* ヘッダ用。standalone はステータスバーの下から始まる (viewport-fit=cover) ため
+   その分を空ける。ブラウザで開いているときは inset が 0 で py-3 と同じ */
+@utility pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
+/* 画面遷移のアニメーション (docs/11-アプリ的UIUX計画.md §4)。
+   クラス名は layout.tsx の <ViewTransition> が種類に応じて付ける。
+   横方向で前後を表す: 進むと新しい画面が右から入り、戻ると左から入る。
+   古い画面は素早く消し (150ms)、新しい画面はやや遅れて穏やかに出す */
+::view-transition-old(.nav-forward) {
+  --slide-offset: -40px;
+  animation:
+    150ms ease-in both fade reverse,
+    300ms ease-in-out both slide reverse;
+}
+
+::view-transition-new(.nav-forward) {
+  --slide-offset: 40px;
+  animation:
+    200ms ease-out 100ms both fade,
+    300ms ease-in-out both slide;
+}
+
+::view-transition-old(.nav-back) {
+  --slide-offset: 40px;
+  animation:
+    150ms ease-in both fade reverse,
+    300ms ease-in-out both slide reverse;
+}
+
+::view-transition-new(.nav-back) {
+  --slide-offset: -40px;
+  animation:
+    200ms ease-out 100ms both fade,
+    300ms ease-in-out both slide;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide {
+  from {
+    translate: var(--slide-offset);
+  }
+  to {
+    translate: 0;
+  }
+}
+
+/* 動きを減らす設定の端末では動かさない */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
 }

@@ -54,10 +54,10 @@ export function MemoPanel({
             role="tab"
             aria-selected={mode === key}
             onClick={() => selectMode(key)}
-            className={`rounded-t border border-b-0 px-4 py-1 ${
+            className={`min-h-10 rounded-t border border-b-0 px-4 transition-colors ${
               mode === key
                 ? "border-gray-300 bg-white font-medium text-blue-600"
-                : "border-transparent bg-gray-100 text-gray-500"
+                : "border-transparent bg-gray-100 text-gray-500 active:bg-gray-200"
             }`}
           >
             {label}

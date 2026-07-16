@@ -24,7 +24,13 @@ export function MemoEditor({
   autoFocus = false,
   minHeight = "14rem",
 }: MemoEditorProps) {
-  const [value, setValue] = useState(defaultValue);
+  // 行末を LF に揃えてから渡す。DB には Ver1 由来の CRLF の本文があり、
+  // CodeMirror は行末を LF として扱うので、素のまま渡すと「エディタの中身」と
+  // この hidden input が初手から食い違う。すると @uiw/react-codemirror が
+  // 差を埋めようと dispatch し、履歴に見えない 1 手が積まれてしまう
+  // (何も編集していないのに「元に戻す」が押せ、押すと本文が dirty になる)。
+  // どのみち 1 文字でも打てば LF に正規化されて保存されるので、最初から揃える
+  const [value, setValue] = useState(() => defaultValue.replace(/\r\n/g, "\n"));
   const [isEditorReady, setIsEditorReady] = useState(false);
 
   return (

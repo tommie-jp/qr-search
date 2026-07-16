@@ -4,6 +4,7 @@ import Link from "next/link";
 import QRCode from "qrcode";
 import pkg from "../../package.json";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
+import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import { parseBasicAuthUser } from "@/lib/auth";
 import { SITE_DESCRIPTION, SITE_NAME } from "@/lib/site";
 import "./globals.css";
@@ -44,8 +45,12 @@ export default async function RootLayout({
   return (
     <html lang="ja" className="h-full antialiased">
       <body className="min-h-full bg-gray-50 text-gray-900">
-        <header className="border-b border-gray-200 bg-white print:hidden">
-          <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-safe py-3">
+        {/* 深くスクロールしても検索・ホームに戻れるよう貼り付ける (docs/11 §5)。
+            pt-safe … standalone はステータスバーの下に潜り込む (viewport-fit=cover)。
+            ブラウザで開いているときは inset が 0 で従来と同じ余白になる */}
+        <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur print:hidden">
+          <div className="mx-auto flex max-w-2xl items-center gap-2 px-safe pt-safe pb-3">
+            <StandaloneBackButton />
             <Link href="/" className="text-lg font-bold">
               {SITE_NAME}
             </Link>
@@ -68,6 +73,8 @@ export default async function RootLayout({
             </div>
           </div>
         </header>
+        {/* 遷移アニメーションは各ページの <PageTransition> が持つ
+            (layout の要素は unmount されず enter/exit が起きないため) */}
         <main className="mx-auto max-w-2xl px-safe pt-6 pb-safe">{children}</main>
       </body>
     </html>

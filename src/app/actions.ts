@@ -28,13 +28,20 @@ function readItemNo(formData: FormData): string {
   return itemNo
 }
 
+// 保存後の「保存しました」トースト用の戻り先 (docs/11-アプリ的UIUX計画.md §2-3)。
+// 値を時刻にするのは、連続保存でも毎回トーストを出すため (SavedToast の key に
+// 使う)。印はトーストを出した直後にクライアントが URL から消す
+function savedHref(itemNo: string): string {
+  return `/item/${itemNo}?saved=${Date.now()}`
+}
+
 // Ver1 の /item/:itemNo POST 相当: memo だけをその場で更新 (未登録なら作成)
 export async function updateMemoAction(formData: FormData): Promise<void> {
   const itemNo = readItemNo(formData)
   const memo = readText(formData, 'memo')
   await upsertMemo(itemNo, memo)
   revalidatePath(`/item/${itemNo}`)
-  redirect(`/item/${itemNo}`)
+  redirect(savedHref(itemNo))
 }
 
 // Ver1 の /edit/:itemNo POST 相当: mode / memo / url を更新 (未登録なら作成)
@@ -45,7 +52,7 @@ export async function updateItemAction(formData: FormData): Promise<void> {
   const mode = parseMode(formData.get('mode'))
   await upsertItem(itemNo, { memo, url, mode })
   revalidatePath(`/item/${itemNo}`)
-  redirect(`/item/${itemNo}`)
+  redirect(savedHref(itemNo))
 }
 
 // 検索結果で選択した複数ノートへ、タグをまとめて追加/削除する。

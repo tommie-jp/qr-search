@@ -2,7 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { BOX_CLASS } from "@/components/ui";
+import { useSearchNav } from "@/components/SearchNav";
+import {
+  BOX_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  SECONDARY_BUTTON_CLASS,
+} from "@/components/ui";
 import {
   applyCompletion,
   longestCommonPrefix,
@@ -27,6 +32,9 @@ interface Dropdown {
 
 const MAX_CANDIDATES = 8;
 
+// 打ち終わりを待つ間隔。短すぎると 1 文字ごとに DB を引き、長いと反応が鈍い
+const SEARCH_DEBOUNCE_MS = 300;
+
 // スキャナはカメラと読み取りエンジン (wasm 約 1MB) を抱えるので、
 // ボタンを押すまで一切読み込まない (docs/09-スキャン計画.md §2)。
 // ssr: false … camera / document を触るのでサーバでは描画できない
@@ -38,12 +46,18 @@ const ScannerModal = dynamic(
 // 検索窓。素の GET フォームのまま、タグ (#…) を打ちかけたときだけ
 // 候補ドロップダウンで補完を助ける (JS 無効でも検索自体は動く)。
 export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps) {
+  const { navigate } = useSearchNav();
   const [query, setQuery] = useState(initialQuery);
   const [dropdown, setDropdown] = useState<Dropdown | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  // 入力中かどうか (URL の反映を止める判断に使う)
+  const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // 補完適用後にキャレット位置を復元するための保留値。
   const pendingCaret = useRef<number | null>(null);
+  // 打ち終わり待ちのタイマーと、IME で変換中かどうか。
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isComposing = useRef(false);
 
   useEffect(() => {
     if (pendingCaret.current !== null && inputRef.current) {
@@ -52,6 +66,43 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
       pendingCaret.current = null;
     }
   });
+
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current);
+      }
+    };
+  }, []);
+
+  // URL の検索語が外から変わったら窓も合わせる (スキャン・タグリンク・戻る)。
+  // 入力中 (窓にフォーカスがある) は反映しない: 自分が投げた検索の結果が返る頃には
+  // 続きを打っていることがあり、URL で上書きすると打った文字が消えるため。
+  // フォーカスがなければ URL が正で、打ち終わった後は最後の応答に必ず追いつく
+  const [syncedQuery, setSyncedQuery] = useState(initialQuery);
+  if (initialQuery !== syncedQuery) {
+    setSyncedQuery(initialQuery);
+    if (!isFocused) {
+      setQuery(initialQuery);
+      setDropdown(null);
+    }
+  }
+
+  // 打ち終わったら検索する。打ち直すたびに前の予約は捨てる
+  const scheduleSearch = (value: string) => {
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current);
+    }
+    searchTimer.current = setTimeout(() => navigate(value), SEARCH_DEBOUNCE_MS);
+  };
+
+  const searchNow = (value: string) => {
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    }
+    navigate(value);
+  };
 
   // 現在の値とキャレット位置からタグ文脈と候補を計算する。
   const refresh = (value: string, caret: number) => {
@@ -68,6 +119,11 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
     const value = e.target.value;
     setQuery(value);
     refresh(value, e.target.selectionStart ?? value.length);
+    // IME の変換中は検索しない。確定前の文字で引いても意味がなく、
+    // 変換候補を選ぶたびにサーバへ行くことになる (compositionend で拾う)
+    if (!isComposing.current) {
+      scheduleSearch(value);
+    }
   };
 
   // 補完を確定して入力へ反映する。
@@ -79,6 +135,8 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
     pendingCaret.current = cursor;
     setDropdown(null);
     inputRef.current?.focus();
+    // タグを選ぶのは検索の意思表示なので待たずに引く
+    searchNow(next);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -129,8 +187,17 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
     }
   };
 
+  // JS が動くならクライアント遷移で結果だけ差し替える (全体の再読込を避ける)。
+  // JS 無効なら preventDefault が走らず、素の GET フォームとして今までどおり動く
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    searchNow(query);
+    // モバイルでキーボードを閉じて結果を見せる
+    inputRef.current?.blur();
+  };
+
   return (
-    <form method="GET" action="/" className="relative flex gap-2">
+    <form method="GET" action="/" onSubmit={handleSubmit} className="relative flex gap-2">
       <div className="relative w-full">
         <input
           ref={inputRef}
@@ -139,17 +206,28 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
           value={query}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onCompositionStart={() => {
+            isComposing.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            isComposing.current = false;
+            scheduleSearch(e.currentTarget.value);
+          }}
           onClick={(e) =>
             refresh(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
           }
-          onBlur={() => setDropdown(null)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => {
+            setIsFocused(false);
+            setDropdown(null);
+          }}
           placeholder="部品番号・メモ・URL を全文検索（スペースで AND、|で OR、#でタグ）"
           autoComplete="off"
           role="combobox"
           aria-expanded={dropdown !== null}
           aria-autocomplete="list"
           aria-controls="tag-suggestions"
-          className={`w-full ${BOX_CLASS}`}
+          className={`min-h-11 w-full ${BOX_CLASS}`}
         />
         {dropdown && (
           <ul
@@ -167,7 +245,7 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
                   e.preventDefault();
                   accept(tag, dropdown.ctx);
                 }}
-                className={`cursor-pointer px-3 py-1.5 text-sm ${
+                className={`flex min-h-10 cursor-pointer items-center px-3 text-sm ${
                   i === dropdown.active
                     ? "bg-blue-600 text-white"
                     : "text-gray-700 hover:bg-gray-100"
@@ -184,14 +262,13 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
       <button
         type="button"
         onClick={() => setIsScanning(true)}
-        className={`whitespace-nowrap ${BOX_CLASS} font-medium text-gray-700`}
+        className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
       >
         スキャン
       </button>
-      <button
-        type="submit"
-        className="whitespace-nowrap rounded bg-blue-600 px-4 py-2 font-medium text-white"
-      >
+      {/* 打つそばから検索するので普段は押さなくてよいが、JS 無効時の唯一の
+          検索手段であり、確定の合図としても残す */}
+      <button type="submit" className={`whitespace-nowrap ${PRIMARY_BUTTON_CLASS} px-4`}>
         検索
       </button>
       {isScanning && (

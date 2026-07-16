@@ -15,10 +15,11 @@ interface ItemRowProps {
 export function ItemRow({ item, checkbox }: ItemRowProps) {
   return (
     <li>
-      <div className="flex items-baseline gap-3 px-4 py-1.5 hover:bg-gray-50">
+      <div className="flex items-baseline gap-3 px-4 py-1.5 transition-colors hover:bg-gray-50 active:bg-gray-100">
         {checkbox}
         <Link
           href={`/item/${item.itemNo}`}
+          transitionTypes={["nav-forward"]}
           className="shrink-0 font-mono font-bold"
         >
           #{item.itemNo}
@@ -26,6 +27,7 @@ export function ItemRow({ item, checkbox }: ItemRowProps) {
         <div className="min-w-0 flex-1">
           <Link
             href={`/item/${item.itemNo}`}
+            transitionTypes={["nav-forward"]}
             className="block truncate text-sm text-gray-600"
           >
             {item.mode === "url" ? item.url : memoSummary(item.memo)}

@@ -6,6 +6,7 @@ import type { Item } from "@/generated/prisma/client";
 import type { Sort } from "@/lib/validation";
 import { BulkTagToolbar } from "./BulkTagToolbar";
 import { ItemRow } from "./ItemRow";
+import { ACTION_LINK_CLASS, PRIMARY_BUTTON_CLASS } from "./ui";
 
 // bulkTagAction をそのまま import すると db.ts (DATABASE_URL 必須) まで巻き込み
 // テストが動かないため、サーバーアクションは page.tsx から prop で受け取る。
@@ -37,7 +38,8 @@ function emptyState(items: Item[], query: string, registerHref: string | null) {
         <p>
           <Link
             href={registerHref}
-            className="inline-block rounded bg-blue-600 px-4 py-2 font-medium text-white"
+            transitionTypes={["nav-forward"]}
+            className={`${PRIMARY_BUTTON_CLASS} px-4`}
           >
             <span className="font-mono">#{query}</span> を新規登録
           </Link>
@@ -86,7 +88,7 @@ export function ItemList({
           <button
             type="button"
             onClick={() => setSelectMode(true)}
-            className="text-sm text-blue-600 underline"
+            className={ACTION_LINK_CLASS}
           >
             選択
           </button>

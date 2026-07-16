@@ -3,6 +3,12 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Docker 用の自己完結ビルド (.next/standalone)
   output: "standalone",
+  // 画面遷移のアニメーション (docs/11-アプリ的UIUX計画.md §4)。
+  // experimental なので、壊れたらこの 1 行と layout.tsx の <ViewTransition> を
+  // 外せば元に戻る。非対応ブラウザではアニメーションなしで普通に動く
+  experimental: {
+    viewTransition: true,
+  },
   // node-tikzjax は TeX の core dump などを __dirname 相対で読むため、
   // バンドルせず素のパッケージのまま standalone へ運ばせる。
   // src/lib/circuitikz.ts の _traceNodeTikzjax がこれと対で効く
