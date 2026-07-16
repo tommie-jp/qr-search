@@ -24,10 +24,15 @@ function isTagChar(ch: string | undefined): boolean {
   return ch !== undefined && TAG_CHAR.test(ch)
 }
 
-// マーカー直前が「行頭・空白・パイプ」ならタグの開始とみなす (C# のような
-// 語中の # を除外する。抽出 tags.ts の境界条件と揃える)。
+// マーカー直前が「行頭・空白・演算子」ならタグの開始とみなす
+// (C# のような語中の # を除外する)。
+// 境界の集合は search.ts の tokenize がトークンを切る位置と揃える:
+// 空白と演算子 (`|` `!` `(` `)`、全角も) の直後は新しいトークンの先頭なので、
+// そこの `#` はタグになる。揃えないと `(!#np` と打った時点で補完が止まる。
+// メモ本文のタグ抽出 (tags.ts) は空白区切りだけで、こちらより狭いことに注意
+// (本文の `C#` を拾わないため。検索窓には演算子があるので条件が違う)。
 function isBoundary(ch: string | undefined): boolean {
-  return ch === undefined || /[\s　|]/.test(ch)
+  return ch === undefined || /[\s　|｜!！()（）]/.test(ch)
 }
 
 // 引用符の内側 (`"#t` を打っている最中) では補完しない。

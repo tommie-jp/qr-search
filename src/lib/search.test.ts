@@ -1,199 +1,334 @@
 import { describe, expect, test } from 'vitest'
 import {
   MAX_SEARCH_TERMS,
-  parseSearchQuery,
+  parseSearchExpr,
   queryHasTagTerm,
-  splitSearchTerms,
-  type SearchTerm,
+  type SearchExpr,
 } from './search'
 
-// テストを読みやすくするための語ビルダ。
-const t = (value: string): SearchTerm => ({ kind: 'text', value })
-const tag = (value: string): SearchTerm => ({ kind: 'tag', value })
-
-describe('splitSearchTerms', () => {
-  test('splits on a half-width space (AND search)', () => {
-    expect(splitSearchTerms('抵抗 1608')).toEqual(['抵抗', '1608'])
-  })
-
-  test('splits on a full-width space (全角スペース)', () => {
-    expect(splitSearchTerms('ライト　RITEX')).toEqual(['ライト', 'RITEX'])
-  })
-
-  test('collapses consecutive and mixed whitespace', () => {
-    expect(splitSearchTerms('  抵抗　　\t1608  ')).toEqual(['抵抗', '1608'])
-  })
-
-  test('returns a single term when there is no whitespace', () => {
-    expect(splitSearchTerms('ライト')).toEqual(['ライト'])
-  })
-
-  test('returns an empty array for empty or whitespace-only input', () => {
-    expect(splitSearchTerms('')).toEqual([])
-    expect(splitSearchTerms('   　 ')).toEqual([])
-  })
-
-  test('de-duplicates repeated terms to avoid redundant conditions', () => {
-    expect(splitSearchTerms('ライト ライト')).toEqual(['ライト'])
-  })
-
-  test('caps the number of terms to MAX_SEARCH_TERMS', () => {
-    const many = Array.from({ length: 30 }, (_, i) => `w${i}`).join(' ')
-    expect(splitSearchTerms(many)).toHaveLength(MAX_SEARCH_TERMS)
-  })
+// テストを読みやすくするための AST ビルダ。
+const t = (value: string): SearchExpr => ({
+  op: 'term',
+  term: { kind: 'text', value },
 })
+const tag = (value: string): SearchExpr => ({
+  op: 'term',
+  term: { kind: 'tag', value },
+})
+const and = (...children: SearchExpr[]): SearchExpr => ({ op: 'and', children })
+const or = (...children: SearchExpr[]): SearchExpr => ({ op: 'or', children })
+const not = (child: SearchExpr): SearchExpr => ({ op: 'not', child })
 
-describe('parseSearchQuery — DNF (OR of AND-groups)', () => {
-  test('a plain query is a single AND-group (後方互換)', () => {
-    expect(parseSearchQuery('抵抗 1608')).toEqual([[t('抵抗'), t('1608')]])
+describe('parseSearchExpr', () => {
+  test('a single term is a bare leaf (no wrapper node)', () => {
+    expect(parseSearchExpr('ライト')).toEqual(t('ライト'))
   })
 
-  test('empty / whitespace-only input yields no groups', () => {
-    expect(parseSearchQuery('')).toEqual([])
-    expect(parseSearchQuery('   　 ')).toEqual([])
+  test('empty / whitespace-only input yields null (絞り込みなし)', () => {
+    expect(parseSearchExpr('')).toBeNull()
+    expect(parseSearchExpr('   　 ')).toBeNull()
+  })
+
+  describe('space = implicit AND', () => {
+    test('splits on a half-width space', () => {
+      expect(parseSearchExpr('抵抗 1608')).toEqual(and(t('抵抗'), t('1608')))
+    })
+
+    test('splits on a full-width space (全角スペース)', () => {
+      expect(parseSearchExpr('ライト　RITEX')).toEqual(and(t('ライト'), t('RITEX')))
+    })
+
+    test('collapses consecutive and mixed whitespace', () => {
+      expect(parseSearchExpr('  抵抗　　\t1608  ')).toEqual(and(t('抵抗'), t('1608')))
+    })
   })
 
   describe('OR keyword', () => {
-    test('splits two terms into separate groups', () => {
-      expect(parseSearchQuery('抵抗 OR コンデンサ')).toEqual([
-        [t('抵抗')],
-        [t('コンデンサ')],
-      ])
+    test('joins two terms', () => {
+      expect(parseSearchExpr('抵抗 OR コンデンサ')).toEqual(
+        or(t('抵抗'), t('コンデンサ')),
+      )
     })
 
-    test('splits three terms', () => {
-      expect(parseSearchQuery('A OR B OR C')).toEqual([[t('A')], [t('B')], [t('C')]])
+    test('joins three terms into one flat node', () => {
+      expect(parseSearchExpr('A OR B OR C')).toEqual(or(t('A'), t('B'), t('C')))
     })
 
     test('is case-insensitive (or / Or / oR)', () => {
-      expect(parseSearchQuery('a or b')).toEqual([[t('a')], [t('b')]])
-      expect(parseSearchQuery('a Or b')).toEqual([[t('a')], [t('b')]])
-      expect(parseSearchQuery('a oR b')).toEqual([[t('a')], [t('b')]])
+      expect(parseSearchExpr('a or b')).toEqual(or(t('a'), t('b')))
+      expect(parseSearchExpr('a Or b')).toEqual(or(t('a'), t('b')))
+      expect(parseSearchExpr('a oR b')).toEqual(or(t('a'), t('b')))
+    })
+
+    test('accepts the full-width ＯＲ (全角のまま打っても演算子)', () => {
+      expect(parseSearchExpr('a ＯＲ b')).toEqual(or(t('a'), t('b')))
+      expect(parseSearchExpr('#a ｏｒ #b')).toEqual(or(tag('a'), tag('b')))
+    })
+
+    test('a quoted "ＯＲ" stays a literal term', () => {
+      expect(parseSearchExpr('"ＯＲ"')).toEqual(t('ＯＲ'))
     })
 
     test('space binds tighter than OR (space=AND, OR looser)', () => {
-      expect(parseSearchQuery('抵抗 1608 OR コンデンサ')).toEqual([
-        [t('抵抗'), t('1608')],
-        [t('コンデンサ')],
-      ])
+      expect(parseSearchExpr('抵抗 1608 OR コンデンサ')).toEqual(
+        or(and(t('抵抗'), t('1608')), t('コンデンサ')),
+      )
     })
 
     test('drops empty operands (A OR / OR A)', () => {
-      expect(parseSearchQuery('A OR')).toEqual([[t('A')]])
-      expect(parseSearchQuery('OR A')).toEqual([[t('A')]])
-      expect(parseSearchQuery('A OR OR B')).toEqual([[t('A')], [t('B')]])
+      expect(parseSearchExpr('A OR')).toEqual(t('A'))
+      expect(parseSearchExpr('OR A')).toEqual(t('A'))
+      expect(parseSearchExpr('A OR OR B')).toEqual(or(t('A'), t('B')))
     })
   })
 
   describe('pipe operator', () => {
     test('splits without surrounding spaces', () => {
-      expect(parseSearchQuery('A|B')).toEqual([[t('A')], [t('B')]])
+      expect(parseSearchExpr('A|B')).toEqual(or(t('A'), t('B')))
     })
 
     test('splits three terms', () => {
-      expect(parseSearchQuery('A|B|C')).toEqual([[t('A')], [t('B')], [t('C')]])
+      expect(parseSearchExpr('A|B|C')).toEqual(or(t('A'), t('B'), t('C')))
     })
 
     test('splits with surrounding spaces too', () => {
-      expect(parseSearchQuery('A | B')).toEqual([[t('A')], [t('B')]])
+      expect(parseSearchExpr('A | B')).toEqual(or(t('A'), t('B')))
     })
 
-    test('drops empty operands (A|| B, |A, A|)', () => {
-      expect(parseSearchQuery('A||B')).toEqual([[t('A')], [t('B')]])
-      expect(parseSearchQuery('|A')).toEqual([[t('A')]])
-      expect(parseSearchQuery('A|')).toEqual([[t('A')]])
+    test('accepts the full-width ｜', () => {
+      expect(parseSearchExpr('A｜B')).toEqual(or(t('A'), t('B')))
+      expect(parseSearchExpr('#a｜#b')).toEqual(or(tag('a'), tag('b')))
+      expect(parseSearchExpr('A ｜ B')).toEqual(or(t('A'), t('B')))
+    })
+
+    test('a quoted full-width ｜ stays a literal', () => {
+      expect(parseSearchExpr('"A｜B"')).toEqual(t('A｜B'))
+    })
+
+    test('drops empty operands (A||B, |A, A|)', () => {
+      expect(parseSearchExpr('A||B')).toEqual(or(t('A'), t('B')))
+      expect(parseSearchExpr('|A')).toEqual(t('A'))
+      expect(parseSearchExpr('A|')).toEqual(t('A'))
     })
 
     test('mixes with space-AND', () => {
-      expect(parseSearchQuery('抵抗 1608|コンデンサ')).toEqual([
-        [t('抵抗'), t('1608')],
-        [t('コンデンサ')],
-      ])
+      expect(parseSearchExpr('抵抗 1608|コンデンサ')).toEqual(
+        or(and(t('抵抗'), t('1608')), t('コンデンサ')),
+      )
+    })
+  })
+
+  describe('NOT operator (!)', () => {
+    test('negates the following term', () => {
+      expect(parseSearchExpr('!#npn')).toEqual(not(tag('npn')))
+    })
+
+    test('a space between ! and its operand is allowed', () => {
+      expect(parseSearchExpr('! #npn')).toEqual(not(tag('npn')))
+    })
+
+    test('binds to one operand only, not the whole AND-group', () => {
+      expect(parseSearchExpr('#bjt !#npn')).toEqual(and(tag('bjt'), not(tag('npn'))))
+      expect(parseSearchExpr('#bjt ! #npn')).toEqual(and(tag('bjt'), not(tag('npn'))))
+      expect(parseSearchExpr('!A B')).toEqual(and(not(t('A')), t('B')))
+    })
+
+    test('binds tighter than OR', () => {
+      expect(parseSearchExpr('!A OR B')).toEqual(or(not(t('A')), t('B')))
+    })
+
+    test('negates a parenthesized group', () => {
+      expect(parseSearchExpr('#bjt !(#npn OR #pnp)')).toEqual(
+        and(tag('bjt'), not(or(tag('npn'), tag('pnp')))),
+      )
+    })
+
+    test('accepts the full-width ！', () => {
+      expect(parseSearchExpr('！#npn')).toEqual(not(tag('npn')))
+    })
+
+    test('double negation cancels out', () => {
+      expect(parseSearchExpr('!!A')).toEqual(t('A'))
+      expect(parseSearchExpr('!!!A')).toEqual(not(t('A')))
+    })
+
+    test('is a literal character when not at the start of a token', () => {
+      expect(parseSearchExpr('a!b')).toEqual(t('a!b'))
+      expect(parseSearchExpr('A!')).toEqual(t('A!'))
+    })
+
+    test('a quoted "!" is a literal term', () => {
+      expect(parseSearchExpr('"!"')).toEqual(t('!'))
+      expect(parseSearchExpr('"!npn"')).toEqual(t('!npn'))
+    })
+
+    test('negates a quoted literal (引用は ! の被演算子になる)', () => {
+      // `"or"` と違い `!` はトークンの外にあるので、引用は否定を抑止しない。
+      // これが演算子語を否定する唯一の書き方 (docs/16 §4)。
+      expect(parseSearchExpr('!"or"')).toEqual(not(t('or')))
+      expect(parseSearchExpr('!"#tag1"')).toEqual(not(t('#tag1')))
+      expect(parseSearchExpr('!"!foo"')).toEqual(not(t('!foo')))
+    })
+
+    test('a ! with no operand is ignored', () => {
+      expect(parseSearchExpr('!')).toBeNull()
+      expect(parseSearchExpr('A !')).toEqual(t('A'))
+      expect(parseSearchExpr('!#')).toBeNull() // 否定つきの空タグ
+    })
+
+    test('a ! before the OR operator is ignored (OR は被演算子にならない)', () => {
+      // 素の `or` は常に演算子。語として否定したいときは `!"or"`。
+      expect(parseSearchExpr('!or')).toBeNull()
+      expect(parseSearchExpr('A !or B')).toEqual(or(t('A'), t('B')))
+    })
+  })
+
+  describe('parentheses', () => {
+    test('groups an OR so that AND applies to the whole group', () => {
+      expect(parseSearchExpr('(抵抗 OR コンデンサ) 1608')).toEqual(
+        and(or(t('抵抗'), t('コンデンサ')), t('1608')),
+      )
+    })
+
+    test('needs no surrounding spaces', () => {
+      expect(parseSearchExpr('#bjt(!#npn)')).toEqual(and(tag('bjt'), not(tag('npn'))))
+    })
+
+    test('redundant parens collapse away', () => {
+      expect(parseSearchExpr('(A)')).toEqual(t('A'))
+      expect(parseSearchExpr('#bjt (!#npn)')).toEqual(and(tag('bjt'), not(tag('npn'))))
+    })
+
+    test('nests', () => {
+      expect(parseSearchExpr('(A (B OR C))')).toEqual(and(t('A'), or(t('B'), t('C'))))
+    })
+
+    test('accepts full-width （）', () => {
+      expect(parseSearchExpr('（#a OR #b）')).toEqual(or(tag('a'), tag('b')))
+    })
+
+    test('a quoted paren is a literal term', () => {
+      expect(parseSearchExpr('"("')).toEqual(t('('))
+      expect(parseSearchExpr('"(株)"')).toEqual(t('(株)'))
+    })
+
+    describe('tolerant recovery (壊れた入力でもそれらしく解釈する)', () => {
+      test('an unclosed ( is auto-closed at the end of input', () => {
+        expect(parseSearchExpr('(A B')).toEqual(and(t('A'), t('B')))
+        expect(parseSearchExpr('A (B OR C')).toEqual(and(t('A'), or(t('B'), t('C'))))
+      })
+
+      test('an unmatched ) is ignored', () => {
+        expect(parseSearchExpr('A)')).toEqual(t('A'))
+        expect(parseSearchExpr('A) B')).toEqual(and(t('A'), t('B')))
+      })
+
+      test('an empty group is ignored', () => {
+        expect(parseSearchExpr('()')).toBeNull()
+        expect(parseSearchExpr('!()')).toBeNull()
+        expect(parseSearchExpr('A ()')).toEqual(t('A'))
+      })
     })
   })
 
   describe('double-quoted literals', () => {
     test('"or" is a literal term, not the OR operator', () => {
-      expect(parseSearchQuery('"or"')).toEqual([[t('or')]])
+      expect(parseSearchExpr('"or"')).toEqual(t('or'))
     })
 
     test('quoted "or" inside an AND-group stays literal', () => {
-      expect(parseSearchQuery('A "or" B')).toEqual([[t('A'), t('or'), t('B')]])
+      expect(parseSearchExpr('A "or" B')).toEqual(and(t('A'), t('or'), t('B')))
     })
 
     test('quotes protect a pipe inside the term', () => {
-      expect(parseSearchQuery('"A|B"')).toEqual([[t('A|B')]])
+      expect(parseSearchExpr('"A|B"')).toEqual(t('A|B'))
     })
 
     test('quotes protect whitespace (single term with a space)', () => {
-      expect(parseSearchQuery('"A B"')).toEqual([[t('A B')]])
+      expect(parseSearchExpr('"A B"')).toEqual(t('A B'))
     })
 
     test('an unterminated quote runs to the end of input', () => {
-      expect(parseSearchQuery('"or')).toEqual([[t('or')]])
+      expect(parseSearchExpr('"or')).toEqual(t('or'))
     })
 
     test('OR still works alongside quoted literals', () => {
-      expect(parseSearchQuery('"or" OR "and"')).toEqual([[t('or')], [t('and')]])
+      expect(parseSearchExpr('"or" OR "and"')).toEqual(or(t('or'), t('and')))
     })
   })
 
   describe('tag terms', () => {
     test('an unquoted #tag becomes a tag term', () => {
-      expect(parseSearchQuery('#抵抗')).toEqual([[tag('抵抗')]])
+      expect(parseSearchExpr('#抵抗')).toEqual(tag('抵抗'))
     })
 
     test('AND of two tags', () => {
-      expect(parseSearchQuery('#tag1 #tag2')).toEqual([[tag('tag1'), tag('tag2')]])
+      expect(parseSearchExpr('#tag1 #tag2')).toEqual(and(tag('tag1'), tag('tag2')))
     })
 
     test('OR of two tags (| and OR)', () => {
-      expect(parseSearchQuery('#tag1 | #tag2')).toEqual([[tag('tag1')], [tag('tag2')]])
-      expect(parseSearchQuery('#tag1 OR #tag2')).toEqual([[tag('tag1')], [tag('tag2')]])
+      expect(parseSearchExpr('#tag1 | #tag2')).toEqual(or(tag('tag1'), tag('tag2')))
+      expect(parseSearchExpr('#tag1 OR #tag2')).toEqual(or(tag('tag1'), tag('tag2')))
     })
 
     test('normalizes the tag name (full-width, case)', () => {
-      expect(parseSearchQuery('#ＮＰＮ')).toEqual([[tag('npn')]])
+      expect(parseSearchExpr('#ＮＰＮ')).toEqual(tag('npn'))
     })
 
     test('mixes a tag with a full-text term', () => {
-      expect(parseSearchQuery('#トランジスタ 2SC1815')).toEqual([
-        [tag('トランジスタ'), t('2SC1815')],
-      ])
+      expect(parseSearchExpr('#トランジスタ 2SC1815')).toEqual(
+        and(tag('トランジスタ'), t('2SC1815')),
+      )
     })
 
     test('a quoted "#tag" stays a literal full-text term', () => {
-      expect(parseSearchQuery('"#tag1"')).toEqual([[t('#tag1')]])
+      expect(parseSearchExpr('"#tag1"')).toEqual(t('#tag1'))
     })
 
     test('a quoted "#" stays a literal full-text term', () => {
-      expect(parseSearchQuery('"#"')).toEqual([[t('#')]])
+      expect(parseSearchExpr('"#"')).toEqual(t('#'))
     })
 
     test('an unquoted bare # is ignored', () => {
-      expect(parseSearchQuery('#')).toEqual([])
-      expect(parseSearchQuery('抵抗 #')).toEqual([[t('抵抗')]])
+      expect(parseSearchExpr('#')).toBeNull()
+      expect(parseSearchExpr('抵抗 #')).toEqual(t('抵抗'))
     })
 
     test('a tag and the same-named text term are distinct', () => {
-      expect(parseSearchQuery('#抵抗 "抵抗"')).toEqual([[tag('抵抗'), t('抵抗')]])
+      expect(parseSearchExpr('#抵抗 "抵抗"')).toEqual(and(tag('抵抗'), t('抵抗')))
     })
   })
 
   describe('normalization', () => {
-    test('de-duplicates terms within a group', () => {
-      expect(parseSearchQuery('ライト ライト OR B')).toEqual([[t('ライト')], [t('B')]])
+    test('de-duplicates terms within an AND-group', () => {
+      expect(parseSearchExpr('ライト ライト')).toEqual(t('ライト'))
+      expect(parseSearchExpr('ライト ライト OR B')).toEqual(or(t('ライト'), t('B')))
     })
 
-    test('de-duplicates identical groups', () => {
-      expect(parseSearchQuery('A OR A')).toEqual([[t('A')]])
+    test('de-duplicates identical OR operands', () => {
+      expect(parseSearchExpr('A OR A')).toEqual(t('A'))
+    })
+
+    test('de-duplicates structurally identical sub-expressions', () => {
+      expect(parseSearchExpr('!A !A')).toEqual(not(t('A')))
+      expect(parseSearchExpr('(A OR B) (A OR B)')).toEqual(or(t('A'), t('B')))
+    })
+
+    test('keeps a term and its negation apart', () => {
+      expect(parseSearchExpr('A !A')).toEqual(and(t('A'), not(t('A'))))
     })
 
     test('caps the total number of terms to MAX_SEARCH_TERMS', () => {
-      const many = Array.from({ length: 30 }, (_, i) => `w${i}`).join(' OR ')
-      const groups = parseSearchQuery(many)
-      const total = groups.reduce((n, g) => n + g.length, 0)
-      expect(total).toBe(MAX_SEARCH_TERMS)
+      const countTerms = (expr: SearchExpr | null): number => {
+        if (expr === null) return 0
+        if (expr.op === 'term') return 1
+        if (expr.op === 'not') return countTerms(expr.child)
+        return expr.children.reduce((n, c) => n + countTerms(c), 0)
+      }
+      const ored = Array.from({ length: 30 }, (_, i) => `w${i}`).join(' OR ')
+      expect(countTerms(parseSearchExpr(ored))).toBe(MAX_SEARCH_TERMS)
+      const anded = Array.from({ length: 30 }, (_, i) => `w${i}`).join(' ')
+      expect(countTerms(parseSearchExpr(anded))).toBe(MAX_SEARCH_TERMS)
     })
   })
 })
@@ -204,9 +339,16 @@ describe('queryHasTagTerm', () => {
     expect(queryHasTagTerm('＃ＮＰＮ')).toBe(true)
   })
 
-  test('is true when a tag appears in any OR group', () => {
+  test('is true when a tag appears anywhere in positive position', () => {
     expect(queryHasTagTerm('抵抗 OR #bjt')).toBe(true)
     expect(queryHasTagTerm('#bjt 2sc')).toBe(true)
+    expect(queryHasTagTerm('(抵抗 OR #bjt) 2sc')).toBe(true)
+    expect(queryHasTagTerm('#bjt !#npn')).toBe(true)
+  })
+
+  test('is false when the only tag is negated (族の指定にならないため)', () => {
+    expect(queryHasTagTerm('!#npn')).toBe(false)
+    expect(queryHasTagTerm('抵抗 !#npn')).toBe(false)
   })
 
   test('is false for a text-only query', () => {

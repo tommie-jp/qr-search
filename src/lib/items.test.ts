@@ -152,10 +152,67 @@ describe.skipIf(!runDbTests)(
       expect(itemNos(r)).toEqual(['zzfta1', 'zzfta4'])
     })
 
+    test('OR-searches with full-width operators (｜ / ＯＲ)', async () => {
+      // 日本語入力の全角モードのまま打っても半角と同じに効く
+      expect(itemNos(await searchItems('zzftonlya1｜zzfturltoken', 1))).toEqual([
+        'zzfta1',
+        'zzfta4',
+      ])
+      expect(itemNos(await searchItems('zzftonlya1 ＯＲ zzfturltoken', 1))).toEqual([
+        'zzfta1',
+        'zzfta4',
+      ])
+    })
+
     test('space binds tighter than OR (AND-group OR term)', async () => {
       // (zzfttoken AND zzftonlya1) OR zzfturltoken
       const r = await searchItems('zzfttoken zzftonlya1 OR zzfturltoken', 1)
       expect(itemNos(r)).toEqual(['zzfta1', 'zzfta4'])
+    })
+
+    // NOT / 括弧も seed 専用トークンとの AND で挟んで検証する。裸の否定は
+    // 「それ以外すべて」になり実データを巻き込むため。
+    describe('NOT and parentheses', () => {
+      test('! excludes rows matching the negated term', async () => {
+        const r = await searchItems('zzfttoken !RITEX', 1)
+        expect(itemNos(r)).toEqual(['zzfta2', 'zzfta3'])
+      })
+
+      test('! negates a parenthesized OR group', async () => {
+        const r = await searchItems('zzfttoken !(RITEX OR 2sc1815)', 1)
+        expect(itemNos(r)).toEqual(['zzfta2'])
+      })
+
+      test('parentheses group an OR so the AND applies to the whole group', async () => {
+        const r = await searchItems('zzfttoken (RITEX OR 2sc1815)', 1)
+        expect(itemNos(r)).toEqual(['zzfta1', 'zzfta3'])
+      })
+
+      test('! excludes a tag', async () => {
+        const r = await searchItems('#zzftshared !#zzfttag1', 1)
+        expect(itemNos(r)).toEqual(['zzftt2'])
+      })
+
+      test('! applies to one operand only, not the whole AND-group', async () => {
+        // zzfttoken AND NOT(RITEX) — zzfttoken 自体は否定されない
+        const r = await searchItems('!RITEX zzfttoken', 1)
+        expect(itemNos(r)).toEqual(['zzfta2', 'zzfta3'])
+      })
+
+      test('a dangling ! is ignored (寛容パース)', async () => {
+        const r = await searchItems('zzfttoken !', 1)
+        expect(itemNos(r)).toEqual(['zzfta1', 'zzfta2', 'zzfta3'])
+      })
+
+      test('an unclosed ( is auto-closed (寛容パース)', async () => {
+        const r = await searchItems('zzfttoken (RITEX OR 2sc1815', 1)
+        expect(itemNos(r)).toEqual(['zzfta1', 'zzfta3'])
+      })
+
+      test('the props table honours a negated tag', async () => {
+        const { rows } = await searchItemProps('#zzftbjt !2SC1815')
+        expect(rows.map((r) => r.itemNo)).toEqual(['zzftp2'])
+      })
     })
 
     test('AND-searches with a full-width space too', async () => {
@@ -385,6 +442,23 @@ describe.skipIf(!runDbTests)(
         // 通常ノート (zzftcm1) は数えず、ゴミ箱の 1 件だけ
         expect(await countTrashedMatches('zzftcmtoken')).toBe(1)
         expect(await countTrashedMatches('#zzftcmtag')).toBe(1)
+      })
+
+      test('countTrashedMatches honours NOT too (ゴミ箱案内にも否定が効く)', async () => {
+        await seedNote('zzftcn1', {
+          memo: 'zzftcntoken #zzftcnkeep',
+          tags: ['zzftcnkeep'],
+          deletedAt: new Date(),
+        })
+        await seedNote('zzftcn2', {
+          memo: 'zzftcntoken #zzftcndrop',
+          tags: ['zzftcndrop'],
+          deletedAt: new Date(),
+        })
+
+        // ゴミ箱の 2 件のうち #zzftcndrop の付いた方だけ除外される
+        expect(await countTrashedMatches('zzftcntoken')).toBe(2)
+        expect(await countTrashedMatches('zzftcntoken !#zzftcndrop')).toBe(1)
       })
 
       test('listTrashedItems returns newest-deleted first, with a summary', async () => {

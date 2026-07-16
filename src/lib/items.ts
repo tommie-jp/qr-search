@@ -8,7 +8,7 @@ import {
   parseStoredProps,
   type ItemPropsRow,
 } from '@/lib/props'
-import { parseSearchQuery, type SearchTerm } from '@/lib/search'
+import { parseSearchExpr, type SearchExpr, type SearchTerm } from '@/lib/search'
 import { extractTags } from '@/lib/tags'
 import {
   escapeLike,
@@ -125,20 +125,31 @@ function termCondition(term: SearchTerm): Prisma.Sql {
   return Prisma.sql`(memo &@ ${term.value} OR url &@ ${term.value} OR item_no ILIKE ${likePrefix})`
 }
 
-// 検索クエリを DNF (AND グループの OR) の条件式へ組み立てる (WHERE は付けない)。
-// グループ内は各語を AND、グループ間は OR で結合する。
+// 検索式 (AST) を条件式へ再帰的にコンパイルする。
+// 各ノードを括弧で包むので、木の入れ子がそのまま演算子の優先順位になる。
 //   `抵抗 1608 OR コンデンサ` → ((抵抗) AND (1608)) OR ((コンデンサ))
-// 空クエリ (絞り込みなし) なら null。
-function buildQueryCondition(query: string): Prisma.Sql | null {
-  const groups = parseSearchQuery(query)
-  if (groups.length === 0) {
-    return null
+//   `#bjt !(#npn OR #pnp)`   → (#bjt) AND (NOT ((#npn) OR (#pnp)))
+// 葉は termCondition がすべてパラメータとして渡すため、演算子構文が
+// PGroonga に生で届くことはない (search.ts 冒頭の設計)。
+// NOT が三値論理で化けないのは memo/url/tags が NOT NULL だから
+// (prisma/schema.prisma。NULL 混入時は NOT NULL → NULL で行が落ちる)。
+function exprCondition(expr: SearchExpr): Prisma.Sql {
+  switch (expr.op) {
+    case 'term':
+      return termCondition(expr.term)
+    case 'not':
+      return Prisma.sql`NOT (${exprCondition(expr.child)})`
+    case 'and':
+      return Prisma.sql`(${Prisma.join(expr.children.map(exprCondition), ' AND ')})`
+    case 'or':
+      return Prisma.sql`(${Prisma.join(expr.children.map(exprCondition), ' OR ')})`
   }
-  const groupSql = groups.map(
-    (terms) =>
-      Prisma.sql`(${Prisma.join(terms.map(termCondition), ' AND ')})`,
-  )
-  return Prisma.join(groupSql, ' OR ')
+}
+
+// 検索クエリの条件式 (WHERE は付けない)。空クエリ (絞り込みなし) なら null。
+function buildQueryCondition(query: string): Prisma.Sql | null {
+  const expr = parseSearchExpr(query)
+  return expr === null ? null : exprCondition(expr)
 }
 
 const NOT_TRASHED = Prisma.sql`deleted_at IS NULL`
@@ -146,8 +157,8 @@ const TRASHED = Prisma.sql`deleted_at IS NOT NULL`
 const HAS_PROPS = Prisma.sql`props <> '[]'::jsonb`
 
 // 条件を AND で綴じて WHERE 句にする (null の条件は無視する)。
-// 各条件を括弧で包むのが要点。検索条件は DNF (`(…) OR (…)`) なので、
-// 裸で AND すると OR より AND が強く結合して条件が壊れる。
+// 各条件を括弧で包むのが要点。検索条件は最上位が OR (`(…) OR (…)`) に
+// なりうるので、裸で AND すると OR より AND が強く結合して条件が壊れる。
 function buildWhereFrom(conditions: (Prisma.Sql | null)[]): Prisma.Sql {
   const present = conditions
     .filter((c) => c !== null)

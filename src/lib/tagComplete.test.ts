@@ -58,6 +58,19 @@ describe('tagContextAtCursor', () => {
     const q = '#a|#b'
     expect(tagContextAtCursor(q, q.length)).toMatchObject({ prefix: 'b' })
   })
+
+  test('accepts a tag right after an operator (境界は search.ts と揃える)', () => {
+    // 補完は演算子の直後でも効かないと `(!#np` と打った時点で止まってしまう。
+    // `)` も含めるのは、tokenize が `)` でトークンを切る (= 次が先頭になる) ため
+    for (const q of ['!#b', '#a !#b', '(#b', '#a (!#b', '！#b', '（#b', '(#a)#b', '#a｜#b']) {
+      expect(tagContextAtCursor(q, q.length)).toMatchObject({ prefix: 'b' })
+    }
+  })
+
+  test('still rejects a mid-word # (C#) even next to parens', () => {
+    const q = '(A)C#b'
+    expect(tagContextAtCursor(q, q.length)).toBeNull()
+  })
 })
 
 describe('matchTags', () => {

@@ -2,19 +2,32 @@
 // pgroonga への SQL 組み立ては items.ts が行い、ここでは
 // ユーザー入力の解析だけを純関数として扱う (DB 非依存でテストしやすくするため)。
 //
-// 検索窓の文法 (詳細は docs/05-全文検索の使い方.md):
-//   - 空白 (半角/全角) 区切り = AND
-//   - "OR" (大小無視) または "|" = OR
-//   - OR は空白より弱く結合する。例: `抵抗 1608 OR コンデンサ`
-//     → (抵抗 AND 1608) OR コンデンサ という DNF (AND グループの OR)
+// 検索窓の文法 (詳細は docs/05-全文検索の使い方.md / docs/16-論理演算検索計画.md)。
+// Lucene (Elasticsearch) / Obsidian 系の文法に揃えてある:
+//
+//   expr    := orExpr
+//   orExpr  := andExpr ( ("OR" | "|") andExpr )*
+//   andExpr := unary+                    ← 空白の並置 = 暗黙 AND
+//   unary   := ("!" | "！")* primary     ← NOT (重ねがけは打ち消し)
+//   primary := "(" expr ")" | 語 | #タグ | "引用リテラル"
+//
+//   - 優先順位は NOT > 空白 (AND) > OR。SQL・Lucene と同じ。
+//     例: `抵抗 1608 OR コンデンサ` → (抵抗 AND 1608) OR コンデンサ
+//   - 演算子は全角でも書ける (`＃` を全角で受けるのと同じ入力ゆれの吸収)。
+//     全角スペース / `｜` / `ＯＲ` / `！` / `（）` はそれぞれ半角と同じ。
+//   - 否定は Google 式の `-` ではなく `!`。`-40℃` `2SC1815-GR` のように
+//     ハイフン始まり/ハイフン入りの語が普通に出てくるドメインだから。
 //   - ダブルクォートで囲むと演算子解釈を抑止したリテラル語になる。
-//     例: `"or"` は OR 演算子ではなく語 "or"、`"A|B"` は語 "A|B"
+//     例: `"or"` は OR 演算子ではなく語 "or"、`"A|B"` は語 "A|B"、`"!"` は語 "!"
 //   - 引用されていない `#○○` はタグ検索 (items.tags の完全一致)。
 //     引用した `"#tag"` は従来どおりの全文検索リテラル。`#` 単独は無視。
-// 生の演算子構文は &@ に渡さず、ここで素の語に分解してから
+//   - 壊れた入力は例外にせず「それらしく」解釈する (未閉じ引用と同じ思想)。
+//     閉じ忘れの `(` は自動クローズ、余った `)` と空括弧と裸の `!` は無視。
+//
+// 生の演算子構文は &@ に渡さず、ここで素の語 (AST の葉) に分解してから
 // items.ts がパラメータとして渡す (構文エラー/エスケープ漏れを避ける)。
 
-import { parseTagToken } from '@/lib/tags'
+import { normalizeTag, parseTagToken } from '@/lib/tags'
 
 // 検索語 1 つ。text は全文検索 (memo/url) + itemNo 前方一致、
 // tag は items.tags の完全一致。
@@ -22,45 +35,55 @@ export type SearchTerm =
   | { kind: 'text'; value: string }
   | { kind: 'tag'; value: string }
 
-// 1 クエリあたりの語数の上限 (全 OR グループ合計)。
+// 検索式の抽象構文木。items.ts がこれを再帰的に WHERE 句へコンパイルする。
+// DNF (選言標準形) へ展開しないのは、括弧と NOT の組み合わせで項が
+// 指数的に増えうるため。木のままなら入力サイズに比例した SQL で済む。
+export type SearchExpr =
+  | { op: 'term'; term: SearchTerm }
+  | { op: 'not'; child: SearchExpr }
+  | { op: 'and'; children: SearchExpr[] }
+  | { op: 'or'; children: SearchExpr[] }
+
+// 1 クエリあたりの語数の上限 (式全体の葉の数)。
 // 語数分だけ WHERE 条件が増えるため、極端に長い入力を防ぐ安全弁。
 export const MAX_SEARCH_TERMS = 10
 
-// 半角空白 (\s: space/tab/改行) と全角空白 (　) の連続で分割する。
-const TERM_SEPARATOR = /[\s　]+/
-
-// 空白区切りの語配列を返す (重複除去・上限つき)。OR/引用は解釈しない。
-// 後方互換のために残す薄いユーティリティ。
-export function splitSearchTerms(query: string): string[] {
-  const terms = query.split(TERM_SEPARATOR).filter((term) => term.length > 0)
-  const unique = [...new Set(terms)]
-  return unique.slice(0, MAX_SEARCH_TERMS)
-}
-
-// 引用されていない単独語がこれ (大小無視) のとき OR 演算子とみなす。
+// 引用されていない単独語がこれ (全半角・大小を吸収して比較) のとき OR 演算子。
 const OR_KEYWORD = 'or'
-const PIPE = '|'
 const QUOTE = '"'
+// 演算子はすべて全角も半角と同一視する (全角スペース・`＃` の扱いと揃える。
+// 日本語キーボードからの入力ゆれの吸収。docs/16 §2)。
+const PIPE_CHARS = '|｜'
+const NOT_CHARS = '!！'
+const LPAREN_CHARS = '(（'
+const RPAREN_CHARS = ')）'
 
 function isSpace(ch: string): boolean {
   return /[\s　]/.test(ch)
 }
 
-type Token = { type: 'term'; term: SearchTerm } | { type: 'or' }
+type Token =
+  | { type: 'term'; term: SearchTerm }
+  | { type: 'or' }
+  | { type: 'not' }
+  | { type: 'lparen' }
+  | { type: 'rparen' }
 
 // 1 パスの状態機械で入力をトークン列へ分解する。
-// 引用内は空白・"|"・"OR" をすべて文字として扱い、引用を含む語は
-// OR 演算子に昇格させない (これが `"or"` をリテラルにする仕組み)。
-// 引用されていない `#○○` はタグ、`#` 単独 (タグ名なし) は破棄する。
+// 引用内は空白・`|`・`OR`・`!`・括弧をすべて文字として扱い、引用を含む語は
+// 演算子/タグに昇格させない (これが `"or"` `"!"` をリテラルにする仕組み)。
+// 括弧は引用外では常に単独トークン (`#bjt(!#npn)` と詰めて書ける)。
+// `!` はトークン先頭でのみ演算子 (`a!b` の `!` はリテラル文字のまま)。
 function tokenize(query: string): Token[] {
   const tokens: Token[] = []
   let buf = ''
   let hasChars = false // 現トークンに文字が入ったか (空引用 "" の検出用)
-  let quotedHere = false // 現トークンが引用を含むか (OR/タグ昇格の抑止用)
+  let quotedHere = false // 現トークンが引用を含むか (演算子/タグ昇格の抑止用)
 
   const flush = () => {
     if (!hasChars) return
-    if (!quotedHere && buf.toLowerCase() === OR_KEYWORD) {
+    // 正規化 (NFKC + 小文字化) はタグ名と共通の規則。`ＯＲ` も OR 演算子になる。
+    if (!quotedHere && normalizeTag(buf) === OR_KEYWORD) {
       tokens.push({ type: 'or' })
     } else if (buf.length > 0) {
       if (!quotedHere) {
@@ -101,9 +124,21 @@ function tokenize(query: string): Token[] {
       i++ // 閉じ quote を読み飛ばす (未閉じなら while が末尾で終わっており無害)
       continue
     }
-    if (isSpace(ch) || ch === PIPE) {
+    if (isSpace(ch) || PIPE_CHARS.includes(ch)) {
       flush()
-      if (ch === PIPE) tokens.push({ type: 'or' })
+      if (PIPE_CHARS.includes(ch)) tokens.push({ type: 'or' })
+      i++
+      continue
+    }
+    if (LPAREN_CHARS.includes(ch) || RPAREN_CHARS.includes(ch)) {
+      flush()
+      tokens.push({ type: LPAREN_CHARS.includes(ch) ? 'lparen' : 'rparen' })
+      i++
+      continue
+    }
+    // 直前が flush 済み (= トークン先頭) のときだけ NOT 演算子。
+    if (NOT_CHARS.includes(ch) && !hasChars) {
+      tokens.push({ type: 'not' })
       i++
       continue
     }
@@ -115,73 +150,162 @@ function tokenize(query: string): Token[] {
   return tokens
 }
 
-// 検索語の同一判定・畳み込み用キー (kind と value で一意)。
-function termKey(term: SearchTerm): string {
-  return `${term.kind}:${term.value}`
+// 対応の取れない括弧を捨て/補って、パーサが括弧の釣り合いだけは前提にできる
+// ようにする。閉じ忘れの `(` は末尾で自動クローズ、余った `)` は捨てる。
+function balanceParens(tokens: Token[]): Token[] {
+  const balanced: Token[] = []
+  let depth = 0
+  for (const token of tokens) {
+    if (token.type === 'rparen') {
+      if (depth === 0) continue // 対応する `(` がない `)` は捨てる
+      depth--
+    } else if (token.type === 'lparen') {
+      depth++
+    }
+    balanced.push(token)
+  }
+  const missing: Token[] = Array.from({ length: depth }, () => ({ type: 'rparen' }))
+  return [...balanced, ...missing]
 }
 
-// 検索クエリを DNF (AND グループの OR) に解析する。
-// 返り値 SearchTerm[][] は「グループ間 OR・グループ内 AND」を表す。
-// 例: `抵抗 1608 OR コンデンサ`
-//   → [[text 抵抗, text 1608], [text コンデンサ]]
-// 各グループ内で空語・重複語を除去し、空グループ・重複グループを畳み、
-// 語の総数を MAX_SEARCH_TERMS で全体キャップする。
-export function parseSearchQuery(query: string): SearchTerm[][] {
-  const tokens = tokenize(query)
-
-  // OR トークンでグループを区切る。
-  const groups: SearchTerm[][] = [[]]
-  for (const token of tokens) {
-    if (token.type === 'or') {
-      groups.push([])
-    } else {
-      groups[groups.length - 1].push(token.term)
-    }
+// 部分式の同一判定・畳み込み用キー (構造と値で一意)。
+// 種別ごとに接頭辞を変え、`text:A` と AND グループなどが衝突しないようにする。
+function exprKey(expr: SearchExpr): string {
+  switch (expr.op) {
+    case 'term':
+      return `${expr.term.kind}:${expr.term.value}`
+    case 'not':
+      return `!(${exprKey(expr.child)})`
+    case 'and':
+      return `&(${expr.children.map(exprKey).join(',')})`
+    case 'or':
+      return `|(${expr.children.map(exprKey).join(',')})`
   }
+}
 
-  // グループ内で空語・重複語を除去し、空グループを落とす。
-  const cleaned = groups
-    .map((group) => {
-      const seen = new Set<string>()
-      const out: SearchTerm[] = []
-      for (const term of group) {
-        if (term.value.length === 0) continue
-        const key = termKey(term)
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push(term)
-      }
-      return out
-    })
-    .filter((group) => group.length > 0)
-
-  // 同一内容のグループを畳む (順序は維持)。
+// AND/OR ノードを組み立てる。空の被演算子 (null) を落とし、同一の部分式を
+// 畳み、子が 1 つなら中身をそのまま返す (`(A)` → A、`A OR A` → A)。
+function combine(
+  op: 'and' | 'or',
+  children: (SearchExpr | null)[],
+): SearchExpr | null {
   const seen = new Set<string>()
-  const unique: SearchTerm[][] = []
-  for (const group of cleaned) {
-    const key = group.map(termKey).join('&')
+  const unique: SearchExpr[] = []
+  for (const child of children) {
+    if (child === null) continue
+    const key = exprKey(child)
     if (seen.has(key)) continue
     seen.add(key)
-    unique.push(group)
+    unique.push(child)
   }
-
-  // 語の総数を上限で丸める (WHERE 肥大の安全弁)。
-  const capped: SearchTerm[][] = []
-  let budget = MAX_SEARCH_TERMS
-  for (const group of unique) {
-    if (budget <= 0) break
-    const taken = group.slice(0, budget)
-    budget -= taken.length
-    capped.push(taken)
-  }
-  return capped
+  if (unique.length === 0) return null
+  if (unique.length === 1) return unique[0]
+  return { op, children: unique }
 }
 
-// クエリにタグ項が 1 つ以上含まれるか。
+// トークン列を再帰下降で AST へ。優先順位は NOT > AND (並置) > OR。
+// 括弧は balanceParens 済みである前提。
+function parseTokens(tokens: Token[]): SearchExpr | null {
+  let pos = 0
+  const peek = (): Token | undefined => tokens[pos]
+
+  const parsePrimary = (): SearchExpr | null => {
+    const token = peek()
+    if (token === undefined) return null
+    if (token.type === 'term') {
+      pos++
+      return { op: 'term', term: token.term }
+    }
+    if (token.type === 'lparen') {
+      pos++
+      const inner = parseOr()
+      if (peek()?.type === 'rparen') pos++
+      return inner
+    }
+    // `or` / `rparen` は上位が処理するのでここでは消費しない。
+    return null
+  }
+
+  const parseUnary = (): SearchExpr | null => {
+    let negated = false
+    while (peek()?.type === 'not') {
+      pos++
+      negated = !negated // 二重否定は打ち消す
+    }
+    const operand = parsePrimary()
+    if (operand === null) return null // 被演算子のない `!` は無視
+    return negated ? { op: 'not', child: operand } : operand
+  }
+
+  const parseAnd = (): SearchExpr | null => {
+    const children: (SearchExpr | null)[] = []
+    while (pos < tokens.length) {
+      const type = peek()!.type
+      if (type === 'or' || type === 'rparen') break
+      children.push(parseUnary())
+    }
+    return combine('and', children)
+  }
+
+  function parseOr(): SearchExpr | null {
+    const children: (SearchExpr | null)[] = [parseAnd()]
+    while (peek()?.type === 'or') {
+      pos++
+      children.push(parseAnd())
+    }
+    return combine('or', children)
+  }
+
+  return parseOr()
+}
+
+// 葉 (検索語) の数を先頭から数えて上限で丸める (WHERE 肥大の安全弁)。
+// 予算切れの葉を落とした結果、空になったノードは消える。`!` の被演算子が
+// 消えた場合は否定ごと消す (「全件除外」に化けるより無条件のほうが安全)。
+function capTerms(expr: SearchExpr, max: number): SearchExpr | null {
+  let budget = max
+  const walk = (node: SearchExpr): SearchExpr | null => {
+    switch (node.op) {
+      case 'term': {
+        if (budget <= 0) return null
+        budget--
+        return node
+      }
+      case 'not': {
+        const child = walk(node.child)
+        return child === null ? null : { op: 'not', child }
+      }
+      case 'and':
+      case 'or':
+        return combine(node.op, node.children.map(walk))
+    }
+  }
+  return walk(expr)
+}
+
+// 検索クエリを AST に解析する。絞り込みが何も残らなければ null。
+export function parseSearchExpr(query: string): SearchExpr | null {
+  const expr = parseTokens(balanceParens(tokenize(query)))
+  return expr === null ? null : capTerms(expr, MAX_SEARCH_TERMS)
+}
+
+// クエリが肯定形のタグ項を含むか。
 // 特性表を出すかの判定に使う: 表は「同族の部品を並べて比べる」ビューであり、
 // タグ検索がまさにその族の指定だから (docs/08-プロパティ計画.md)。
+// 否定 (`!#npn` = 「npn 以外すべて」) は族の指定にならないため数えない。
+function hasPositiveTag(expr: SearchExpr): boolean {
+  switch (expr.op) {
+    case 'term':
+      return expr.term.kind === 'tag'
+    case 'not':
+      return false
+    case 'and':
+    case 'or':
+      return expr.children.some(hasPositiveTag)
+  }
+}
+
 export function queryHasTagTerm(query: string): boolean {
-  return parseSearchQuery(query).some((group) =>
-    group.some((term) => term.kind === 'tag'),
-  )
+  const expr = parseSearchExpr(query)
+  return expr !== null && hasPositiveTag(expr)
 }
