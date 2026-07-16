@@ -44,10 +44,16 @@ async function withTimeout<T>(
 
 // 見つかった最初の書誌を返す。どこにも無ければ null (エラーではない)。
 // 個々の API の失敗は握り潰さず警告に残したうえで、次の API を試す。
+//
+// **どこかが失敗したまま見つからなかったときは throw する**。null と混ぜると
+// 「見つかりませんでした」と断定して伝えることになるが、実際には
+// 訊けていないだけで、その本が無いことは分かっていない。呼び出し側は
+// 「取得に失敗しました」(=もう一度試せば取れるかもしれない) と伝えられる。
 export async function lookupBook(
   isbn: string,
   signal?: AbortSignal,
 ): Promise<BookSummary | null> {
+  let failed = false
   for (const source of SOURCES) {
     if (signal?.aborted) {
       break // 呼び出しが打ち切られた。次を叩かない
@@ -57,13 +63,17 @@ export async function lookupBook(
       if (book) {
         return book
       }
-      // 収録漏れ。エラーではないので警告も出さず次へ
+      // 収録漏れ。「この API にはっきり無かった」なので警告も出さず次へ
     } catch (err) {
       if (signal?.aborted) {
         throw err // 中断。呼び出し側が黙らせる
       }
+      failed = true
       console.warn(`${source.name} から書誌を取得できませんでした`, err)
     }
+  }
+  if (failed) {
+    throw new Error('どの書誌 API からも取得できませんでした')
   }
   return null
 }
