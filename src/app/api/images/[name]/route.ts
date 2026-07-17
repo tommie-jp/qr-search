@@ -1,32 +1,81 @@
 import { NextResponse } from 'next/server'
-import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { prisma } from '@/lib/db'
+import { isPublicImageName } from '@/lib/items'
+import { currentUser } from '@/lib/session'
+import { THUMB_MIME } from '@/lib/thumbnail'
 import { extForMime, isValidImageName } from '@/lib/uploads'
 
 interface RouteContext {
   params: Promise<{ name: string }>
 }
 
+// ファイル名が UUID で内容が変わらないため長期キャッシュしてよい。
+//
+// private なのは、共有キャッシュ (プロキシ) に置かせないため。以前は
+// public だったが、非公開の画像にそれが付いているのは元から筋が悪く、
+// 未ログインでも取れる口ができた以上そのままにはしない。ブラウザの
+// キャッシュは private でも効くので、失うものはない (docs/22 §6)。
+//
+// 承知の穴: 一度公開した画像は閲覧者のブラウザに 1 年残る。非公開へ
+// 戻しても既に見た人の手元からは消えない
+const IMMUTABLE_CACHE = 'private, max-age=31536000, immutable'
+
+// サムネを求められたが未生成で原寸を返すときのキャッシュ。
+//
+// **immutable にしてはいけない**。バックフィル前や生成に失敗した画像では
+// ?thumb=1 が原寸を返すが、それを 1 年 immutable で焼くと、後からサムネが
+// 出来ても閲覧者のブラウザは数 MB の原寸を掴んだままになる。短く持たせて
+// おけば、バックフィル後の再訪でサムネへ入れ替わる
+const FALLBACK_CACHE = 'private, max-age=60'
+
 // アップロード済み画像の配信。ファイル名は UUID + 拡張子のみ許可し、
-// それ以外 (トラバーサル等) は 400 で弾く
+// それ以外 (トラバーサル等) は 400 で弾く。
+// ?thumb=1 は一覧用の縮小版 (src/lib/thumbnail.ts)。
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: RouteContext,
 ): Promise<NextResponse> {
-  // 画像はメモの中身そのもの (メモに貼った写真) なので、ノート本文と同じく守る。
-  // 名前は UUID で当てられないが、当てにくさは認証の代わりにならない
-  const denied = await denyUnlessLoggedIn()
-  if (denied) {
-    return denied
-  }
-
   const { name } = await params
+  const wantThumb =
+    new URL(request.url).searchParams.get('thumb') === '1'
 
+  // 名前の検算が先。この後の isPublicImageName は名前を SQL の
+  // position() へ渡すので、書式を確かめてから渡す
   if (!isValidImageName(name)) {
     return NextResponse.json(
       { success: false, data: null, error: '不正なファイル名です' },
       { status: 400 },
     )
+  }
+
+  // 画像はメモの中身そのもの (メモに貼った写真) なので、ノート本文と同じく守る。
+  // 名前は UUID で当てられないが、当てにくさは認証の代わりにならない。
+  //
+  // ただし公開ノートに貼った画像は配る (docs/22-ノート公開計画.md §6)。
+  // ここを閉じたままだと、公開ノートを開いた人には本文だけ出て画像が割れる
+  // = 公開が半分しか効かない。
+  //
+  // proxy.ts はこの口を未ログインでも素通しする (isSelfGuardedPath)。
+  // 素通しした以上、判定はここが唯一の砦になる
+  if (!(await canView(name))) {
+    return NextResponse.json(
+      { success: false, data: null, error: 'ログインが必要です' },
+      { status: 401, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
+
+  // サムネだけを引く。原寸 (data) は数 MB ありうるので、一覧の 20 枚分を
+  // 読んでから捨てることのないよう列を分けて取る
+  if (wantThumb) {
+    const row = await prisma.image.findUnique({
+      where: { name },
+      select: { thumb: true },
+    })
+    if (row?.thumb) {
+      return imageResponse(row.thumb, THUMB_MIME, IMMUTABLE_CACHE)
+    }
+    // 未生成 (バックフィル前・生成失敗) なら原寸で代替する。一覧は重くなるが
+    // 絵は出る。行そのものが無い場合もここを抜け、下の 404 に合流する
   }
 
   const image = await prisma.image.findUnique({
@@ -41,16 +90,37 @@ export async function GET(
     )
   }
 
-  return new NextResponse(new Uint8Array(image.data), {
+  return imageResponse(
+    image.data,
+    // 保存時に検証済みだが、DB の値をそのまま信用せず既知の画像 MIME のときだけ採用する
+    extForMime(image.mime) ? image.mime : 'application/octet-stream',
+    wantThumb ? FALLBACK_CACHE : IMMUTABLE_CACHE,
+  )
+}
+
+function imageResponse(
+  data: Uint8Array,
+  contentType: string,
+  cacheControl: string,
+): NextResponse {
+  return new NextResponse(new Uint8Array(data), {
     headers: {
-      // 保存時に検証済みだが、DB の値をそのまま信用せず既知の画像 MIME のときだけ採用する
-      'Content-Type': extForMime(image.mime)
-        ? image.mime
-        : 'application/octet-stream',
-      // ファイル名が UUID で内容が変わらないため長期キャッシュしてよい
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Content-Type': contentType,
+      'Cache-Control': cacheControl,
       // ユーザー由来のバイト列を配信するため MIME スニッフィングを禁止
       'X-Content-Type-Options': 'nosniff',
     },
   })
+}
+
+// 配ってよい画像か。ログイン中なら全部、未ログインなら公開ノートに
+// 貼られているものだけ。
+//
+// ログイン検査を先に置く (uploads.ts と同じ流儀)。持ち主の閲覧で毎回
+// items を走査しないため
+async function canView(name: string): Promise<boolean> {
+  if ((await currentUser()) !== null) {
+    return true
+  }
+  return isPublicImageName(name)
 }

@@ -30,6 +30,56 @@ export async function getItem(itemNo: string): Promise<Item | null> {
   return prisma.item.findUnique({ where: { itemNo } })
 }
 
+// --- 公開 (docs/22-ノート公開計画.md) ---
+
+// ノートを公開する / 公開をやめる。
+//
+// 「いまの状態を裏返す」ではなく**望む状態を受け取る**。裏返す作りは、
+// 二重送信や戻るボタンで意図と逆に倒れる (「1 にせよ」なら何回でも 1)。
+//
+// updated_at は触らない。本文は変わっていないのに更新順が動くのは嘘になる
+// (trashItems / restoreItems と同じ理由)。Prisma の update は @updatedAt を
+// 必ず打ってしまうので生 SQL で書く。
+//
+// WHERE の状態条件が要点: 既に公開中のノートへもう一度「公開」しても
+// public_at を上書きしない。押し直すたびに公開日時が今へ進むのは嘘になる。
+export async function setItemPublic(itemNo: string, isPublic: boolean): Promise<number> {
+  if (isPublic) {
+    return prisma.$executeRaw`
+      UPDATE items SET public_at = now()
+      WHERE item_no = ${itemNo} AND public_at IS NULL
+    `
+  }
+  return prisma.$executeRaw`
+    UPDATE items SET public_at = NULL
+    WHERE item_no = ${itemNo} AND public_at IS NOT NULL
+  `
+}
+
+// その画像が「公開中のノートの本文に貼られているか」(docs/22 §6)。
+// 未ログインの人に画像を配ってよいかの判定に使う。閉じたままだと、公開ノートを
+// 開いた人には本文だけ出て画像が割れる。
+//
+// **LIKE は使えない**。この DB には PGroonga が入っていて LIKE の挙動を
+// 乗っ取っているため、部分一致は position() で判定する。
+//
+// 名前が UUID であることは根拠にしない (route.ts のコメントのとおり、
+// 当てにくさは認証の代わりにならない)。呼ぶ側が isValidImageName で
+// 書式を確かめてから渡すこと。
+//
+// ゴミ箱の行を外すのは isPublicItem() と同じ理由。判定の条件が 2 か所に
+// 分かれてしまうが、こちらは「どの行か」が判らないので SQL で書くしかない。
+export async function isPublicImageName(name: string): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ one: number }[]>`
+    SELECT 1 AS one FROM items
+    WHERE public_at IS NOT NULL
+      AND deleted_at IS NULL
+      AND position(${name} IN memo) > 0
+    LIMIT 1
+  `
+  return rows.length > 0
+}
+
 // 新規ノートに使う itemNo (docs/10-スキャン新規登録計画.md §4)。
 // MIN_ITEM_NO 以上で未使用の最小番号。max+1 だと番号が増える一方だが、
 // 番号はシールに印刷して部品に貼るものなので短いほど扱いやすい。
@@ -217,7 +267,8 @@ export async function searchItems(
            props,
            created_at AS "createdAt",
            updated_at AS "updatedAt",
-           deleted_at AS "deletedAt"
+           deleted_at AS "deletedAt",
+           public_at  AS "publicAt"
     FROM items
     ${where}
     ${buildOrderBy(sort)}

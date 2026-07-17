@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { LoginButton } from "@/components/LoginButton";
-import { BOX_CLASS } from "@/components/ui";
+import { LoginRequiredNotice } from "@/components/LoginRequiredNotice";
 
 // サイト名は付けない。root layout の title.template が付ける
 // (手で連結すると非本番の [LOCAL] が抜け落ちる)
@@ -15,16 +14,9 @@ export const metadata: Metadata = {
 //
 // 直接 /login-required を開くこともできる (publicPaths.ts で公開している) が、
 // 出るのはこの案内だけなので害はない。
+//
+// 中身は LoginRequiredNotice に置いた。/item と /print は proxy が素通しする
+// 口なので、公開ノートでなかったとき同じ案内を自分で出す (docs/22 §4)。
 export default function LoginRequiredPage() {
-  return (
-    <div className={`${BOX_CLASS} flex flex-col items-start gap-4 py-6`}>
-      <div className="space-y-1">
-        <h1 className="text-lg font-bold">ログインが必要です</h1>
-        <p className="text-sm text-gray-600">
-          このページを見るにはログインしてください。
-        </p>
-      </div>
-      <LoginButton variant="primary" />
-    </div>
-  );
+  return <LoginRequiredNotice />;
 }

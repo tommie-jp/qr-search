@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import manifest from '@/app/manifest'
-import { isPublicPath } from './publicPaths'
+import { isPublicPath, isSelfGuardedPath } from './publicPaths'
 
 describe('isPublicPath', () => {
   // PWA: ブラウザは manifest とアイコンを Authorization ヘッダなしで取りに行く。
@@ -59,5 +59,58 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/login-secrets')).toBe(false)
     expect(isPublicPath('/icon.svg.php')).toBe(false)
     expect(isPublicPath('/item/icon.svg')).toBe(false)
+  })
+})
+
+// 公開かどうかがデータで決まる口 (docs/22-ノート公開計画.md §1)。
+// isPublicPath とは別物: ここに載っても「誰でも見てよい」わけではなく、
+// 「proxy では決められないので、読み取りだけ通してページに訊く」という意味。
+describe('isSelfGuardedPath', () => {
+  test.each([
+    '/item/4518',
+    '/item/ABC123',
+    '/item/100x', // Ver1 由来の非数字 itemNo
+    '/print/4518',
+    '/api/images/0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e9f.png',
+  ])('%s is self-guarded (page/handler decides)', (path) => {
+    expect(isSelfGuardedPath(path)).toBe(true)
+  })
+
+  // 自前判定 = 無条件公開ではない。両者を混同すると、公開ノート専用の
+  // 判定を書き忘れたページが素通しになる
+  test.each(['/item/4518', '/print/4518'])('%s is not unconditionally public', (path) => {
+    expect(isPublicPath(path)).toBe(false)
+  })
+
+  // 書き込みの口・持ち主専用の画面はここに載せない。載せた瞬間 proxy が
+  // 素通しし、requireUser() だけが防波堤になる
+  test.each([
+    '/',
+    '/edit/4518',
+    '/trash',
+    '/logs',
+    '/api/books/9784873115658',
+    '/api/products/4901234567894',
+  ])('%s is not self-guarded', (path) => {
+    expect(isSelfGuardedPath(path)).toBe(false)
+  })
+
+  // 末尾は itemNo / 画像名の書式に完全一致すること。前方一致で通すと
+  // /items-secret や /item/4518/../../ まで素通しする
+  test('does not open paths that merely start with a self-guarded prefix', () => {
+    expect(isSelfGuardedPath('/itemsecret')).toBe(false)
+    expect(isSelfGuardedPath('/item')).toBe(false)
+    expect(isSelfGuardedPath('/item/')).toBe(false)
+    expect(isSelfGuardedPath('/item/4518/edit')).toBe(false)
+    expect(isSelfGuardedPath('/item/4518/../../trash')).toBe(false)
+    expect(isSelfGuardedPath('/printer/4518')).toBe(false)
+    expect(isSelfGuardedPath('/api/imagesx/a.png')).toBe(false)
+  })
+
+  // 画像名はサーバが発番した UUID + 対応拡張子だけ (uploads.ts と対になる)
+  test('rejects image names that are not UUID + known extension', () => {
+    expect(isSelfGuardedPath('/api/images/x.png')).toBe(false)
+    expect(isSelfGuardedPath('/api/images/../../etc/passwd')).toBe(false)
+    expect(isSelfGuardedPath('/api/images/0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e9f.svg')).toBe(false)
   })
 })

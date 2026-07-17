@@ -42,6 +42,11 @@ interface MarkdownViewProps {
   // ページ側で先に済ませた結果を受け取る。渡さなければ回路図フェンスは
   // ただのコードブロックとして表示される
   circuits?: CircuitMap;
+  // 本文中の #タグ を検索リンクにするか (docs/22-ノート公開計画.md §4)。
+  // 公開ビューでは false にする — 飛び先のタグ検索は未ログインに閉じており、
+  // 押すと「ログインが必要です」に化けるため。false でも #タグ の文字は残る
+  // (本文の一部なので消さない。リンクにしないだけ)
+  linkTags?: boolean;
 }
 
 // react-markdown はカスタムコンポーネントに hast の node を渡してくるため、
@@ -107,16 +112,47 @@ function imgWithWidth({
   return <ZoomableImage {...props} alt={alt} />;
 }
 
+// 外部サイトへのリンクだけ別タブで開く。#タグ の検索リンクやメモへの
+// 内部リンク (/... で始まる) までタブを増やすと使いにくいため除く。
+// mailto: などもメーラーが起動して空タブが残るだけなので対象外
+function isExternalLink(href: string | undefined): boolean {
+  return /^https?:\/\//i.test(href ?? "");
+}
+
+function linkWithTarget({
+  node: _node,
+  children,
+  ...props
+}: MarkdownComponentProps<"a">) {
+  // rel="noreferrer" は noopener を兼ねるため、別タブでも opener は渡らない
+  const target = isExternalLink(props.href) ? "_blank" : undefined;
+  return (
+    <a {...props} className="break-all" rel="noreferrer" target={target}>
+      {children}
+    </a>
+  );
+}
+
 // memo を Markdown としてレンダリングする Server Component。
 // 生 HTML はデフォルトで無視されるが、保険として rehype-sanitize も通す
 export function MarkdownView({
   markdown,
   circuits = new Map(),
+  linkTags = true,
 }: MarkdownViewProps) {
+  // タグをリンクにしないときはプラグインごと外す。#タグ は text ノードのまま
+  // 残るので、本文の見た目は「リンクでない #タグ」になる
+  const remarkPlugins = [
+    remarkGfm,
+    remarkBreaks,
+    remarkMath,
+    ...(linkTags ? [remarkTagLinks] : []),
+  ];
+
   return (
     <div className={`prose prose-sm max-w-none break-words ${BOX_CLASS}`}>
       <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath, remarkTagLinks]}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={[
           [rehypeSanitize, sanitizeSchema],
           [rehypeKatex, { maxSize: KATEX_MAX_SIZE_EM }],
@@ -124,11 +160,7 @@ export function MarkdownView({
         components={{
           pre: preOrDiagram(circuits),
           img: imgWithWidth,
-          a: ({ node: _node, children, ...props }: MarkdownComponentProps<"a">) => (
-            <a {...props} className="break-all" rel="noreferrer">
-              {children}
-            </a>
-          ),
+          a: linkWithTarget,
         }}
       >
         {markdown}

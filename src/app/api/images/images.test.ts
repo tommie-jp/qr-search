@@ -46,6 +46,10 @@ const runDbTests =
 // (「DB に触れる前に弾く」契約そのもののテストにもなっている)
 process.env.DATABASE_URL ??= 'postgresql://unused:unused@127.0.0.1:1/unused'
 
+// 公開判定のテストが作るノートの itemNo プレフィックス。実データと衝突させない
+// (items.test.ts と同じ約束)
+const TEST_PREFIX = 'zzft'
+
 // 1x1 の PNG (最小の有効な画像バイナリ)
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -65,6 +69,14 @@ function uploadRequest(file: File, headers?: Record<string, string>): Request {
 function getRequest(name: string): [Request, { params: Promise<{ name: string }> }] {
   return [
     new Request(`http://localhost/api/images/${name}`),
+    { params: Promise.resolve({ name }) },
+  ]
+}
+
+// 一覧用の縮小版を求める GET (docs/23-検索結果表示モード計画.md §2)
+function thumbRequest(name: string): [Request, { params: Promise<{ name: string }> }] {
+  return [
+    new Request(`http://localhost/api/images/${name}?thumb=1`),
     { params: Promise.resolve({ name }) },
   ]
 }
@@ -157,10 +169,18 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
       expect(res.status).toBe(401)
     })
 
-    test('GET は 401 を返す (画像はメモの中身そのもの)', async () => {
-      const [req, ctx] = getRequest('00000000-0000-4000-8000-000000000000.png')
+    // GET の未ログインは DB ゲート側にある。公開ノートに貼った画像は未ログイン
+    // でも配るようになり (docs/22-ノート公開計画.md §6)、配ってよいかは
+    // items を引かないと判らないため、ここ (実 DB なし) では検証できない。
+    // 公開/非公開/ゴミ箱の 3 通りは下の統合テストで見る
+
+    test('GET: 不正なファイル名はログイン検査より先に 400 (DB を引かせない)', async () => {
+      // 名前を position() へ渡す前に書式を確かめる、という順序の担保。
+      // この DB は到達不能なので、順序が壊れれば接続エラーで落ちる
+      mocks.authorization = null
+      const [req, ctx] = getRequest('..%2F..%2Fetc%2Fpasswd')
       const res = await GET(req, ctx)
-      expect(res.status).toBe(401)
+      expect(res.status).toBe(400)
     })
 
     test('POST はファイル名の検査より先に断る (本文を読ませない)', async () => {
@@ -182,6 +202,9 @@ describe.skipIf(!runDbTests)(
 
     // テストで作った画像は UUID 名のため前方一致で消せない。作った名前を控えて後始末する。
     const created: string[] = []
+    // 公開判定のテストで作るノート。実データと衝突しないよう items.test.ts と
+    // 同じ "zzft" プレフィックスで統一し、後始末で消す
+    const noteItemNos: string[] = []
 
     beforeAll(async () => {
       ;({ POST } = await import('./route'))
@@ -192,6 +215,7 @@ describe.skipIf(!runDbTests)(
     afterAll(async () => {
       if (!prisma) return
       await prisma.image.deleteMany({ where: { name: { in: created } } })
+      await prisma.item.deleteMany({ where: { itemNo: { in: noteItemNos } } })
       await prisma.$disconnect()
     })
 
@@ -224,6 +248,65 @@ describe.skipIf(!runDbTests)(
       expect(bytes.equals(PNG_BYTES)).toBe(true)
     })
 
+    // 一覧用サムネ (docs/23-検索結果表示モード計画.md §2)。
+    // 原寸のまま 20 枚並べると一覧が使い物にならないので、?thumb=1 の口と
+    // 「未生成なら原寸で代替」の分岐がここの要になる
+
+    test('アップロード時にサムネを作り、?thumb=1 で縮小版を配る', async () => {
+      const name = await upload(pngFile())
+
+      const [req, ctx] = thumbRequest(name)
+      const res = await GET(req, ctx)
+
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('image/webp')
+      // 原寸 (image/png) ではないこと = 縮小版が返っている
+      expect(res.headers.get('cache-control')).toContain('immutable')
+    })
+
+    test('?thumb=1 が無ければ今までどおり原寸を配る', async () => {
+      const name = await upload(pngFile())
+
+      const [req, ctx] = getRequest(name)
+      const res = await GET(req, ctx)
+
+      expect(res.headers.get('content-type')).toBe('image/png')
+    })
+
+    test('サムネ未生成の画像は ?thumb=1 でも原寸で代替する (絵が割れない)', async () => {
+      // バックフィル前の行と、生成に失敗した行がこの状態になる
+      const name = await upload(pngFile())
+      await prisma.image.update({ where: { name }, data: { thumb: null } })
+
+      const [req, ctx] = thumbRequest(name)
+      const res = await GET(req, ctx)
+
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('image/png')
+      const bytes = Buffer.from(await res.arrayBuffer())
+      expect(bytes.equals(PNG_BYTES)).toBe(true)
+    })
+
+    test('代替で原寸を返すときは immutable にしない (後でサムネに入れ替わる)', async () => {
+      // ここを immutable にすると、バックフィル後も閲覧者のブラウザが
+      // 数 MB の原寸を 1 年掴んだままになる
+      const name = await upload(pngFile())
+      await prisma.image.update({ where: { name }, data: { thumb: null } })
+
+      const [req, ctx] = thumbRequest(name)
+      const res = await GET(req, ctx)
+
+      expect(res.headers.get('cache-control')).not.toContain('immutable')
+      expect(res.headers.get('cache-control')).toContain('max-age=60')
+    })
+
+    test('?thumb=1 でも存在しない画像は 404 (代替に落ちて 200 にしない)', async () => {
+      const [req, ctx] = thumbRequest('00000000-0000-4000-8000-000000000000.png')
+      const res = await GET(req, ctx)
+
+      expect(res.status).toBe(404)
+    })
+
     test('アップロードした画像は DB に保存される (volume ではなく)', async () => {
       const name = await upload(pngFile())
 
@@ -242,8 +325,10 @@ describe.skipIf(!runDbTests)(
       const [req, ctx] = getRequest(name)
       const res = await GET(req, ctx)
       expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+      // private … 共有キャッシュ (プロキシ) に置かせない (docs/22 §6)。
+      // 未ログインでも取れる口ができた以上、public のままにはしない
       expect(res.headers.get('cache-control')).toBe(
-        'public, max-age=31536000, immutable',
+        'private, max-age=31536000, immutable',
       )
     })
 
@@ -251,6 +336,110 @@ describe.skipIf(!runDbTests)(
       const [req, ctx] = getRequest('00000000-0000-4000-8000-000000000000.png')
       const res = await GET(req, ctx)
       expect(res.status).toBe(404)
+    })
+
+    // 未ログインの GET (docs/22-ノート公開計画.md §6)。
+    // ここを閉じたままだと公開ノートの画像だけが割れ、公開が半分しか効かない。
+    // 逆に開けすぎると非公開ノートの写真が漏れる。3 通りとも確かめる。
+    describe('未ログイン', () => {
+      // 画像を 1 枚上げ、その URL を本文に貼ったノートを作る
+      async function noteWithImage(
+        itemNo: string,
+        state: { publicAt: Date | null; deletedAt?: Date | null },
+      ): Promise<string> {
+        const name = await upload(pngFile())
+        await prisma.item.upsert({
+          where: { itemNo },
+          update: {
+            memo: `写真 ![](/api/images/${name})`,
+            publicAt: state.publicAt,
+            deletedAt: state.deletedAt ?? null,
+          },
+          create: {
+            itemNo,
+            memo: `写真 ![](/api/images/${name})`,
+            publicAt: state.publicAt,
+            deletedAt: state.deletedAt ?? null,
+          },
+        })
+        noteItemNos.push(itemNo)
+        // ここまではログイン済みで用意する。検証だけを未ログインで行う
+        mocks.authorization = null
+        return name
+      }
+
+      test('公開ノートに貼った画像は配る', async () => {
+        const name = await noteWithImage(`${TEST_PREFIX}pub`, {
+          publicAt: new Date(),
+        })
+
+        const [req, ctx] = getRequest(name)
+        const res = await GET(req, ctx)
+
+        expect(res.status).toBe(200)
+        const bytes = Buffer.from(await res.arrayBuffer())
+        expect(bytes.equals(PNG_BYTES)).toBe(true)
+      })
+
+      test('非公開ノートに貼った画像は 401 (名前を知っていても配らない)', async () => {
+        const name = await noteWithImage(`${TEST_PREFIX}priv`, {
+          publicAt: null,
+        })
+
+        const [req, ctx] = getRequest(name)
+        const res = await GET(req, ctx)
+
+        expect(res.status).toBe(401)
+      })
+
+      // サムネは一覧のための別の口だが、認可は原寸とまったく同じでなければ
+      // ならない。?thumb=1 を付けるだけで非公開の写真が取れては元も子もない
+      test('非公開ノートの画像は ?thumb=1 でも 401', async () => {
+        const name = await noteWithImage(`${TEST_PREFIX}privt`, {
+          publicAt: null,
+        })
+
+        const [req, ctx] = thumbRequest(name)
+        const res = await GET(req, ctx)
+
+        expect(res.status).toBe(401)
+      })
+
+      test('公開ノートの画像は ?thumb=1 でも配る', async () => {
+        const name = await noteWithImage(`${TEST_PREFIX}pubt`, {
+          publicAt: new Date(),
+        })
+
+        const [req, ctx] = thumbRequest(name)
+        const res = await GET(req, ctx)
+
+        expect(res.status).toBe(200)
+        expect(res.headers.get('content-type')).toBe('image/webp')
+      })
+
+      // isPublicItem() と同じ規則 (docs/22 §3)。捨てたノートの写真が
+      // 公開され続けるほうが驚きが大きい
+      test('ゴミ箱のノートに貼った画像は、公開済みでも 401', async () => {
+        const name = await noteWithImage(`${TEST_PREFIX}trash`, {
+          publicAt: new Date(),
+          deletedAt: new Date(),
+        })
+
+        const [req, ctx] = getRequest(name)
+        const res = await GET(req, ctx)
+
+        expect(res.status).toBe(401)
+      })
+
+      test('どのノートにも貼られていない画像は 401', async () => {
+        const name = await upload(pngFile())
+        mocks.authorization = null
+
+        const [req, ctx] = getRequest(name)
+        const res = await GET(req, ctx)
+
+        expect(res.status).toBe(401)
+      })
     })
   },
 )

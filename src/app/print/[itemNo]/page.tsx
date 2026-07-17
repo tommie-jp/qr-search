@@ -1,10 +1,20 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import QRCode from "qrcode";
+import { LoginRequiredNotice } from "@/components/LoginRequiredNotice";
 import { PrintButton } from "@/components/PrintButton";
+import { getItem } from "@/lib/items";
+import { isPublicItem } from "@/lib/publicItem";
+import { currentUser } from "@/lib/session";
 import { qrBaseUrl } from "@/lib/site";
 import { buildItemUrl, isValidItemNo } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
+
+// /item と揃える (docs/22-ノート公開計画.md §8)
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 interface PrintPageProps {
   params: Promise<{ itemNo: string }>;
@@ -12,10 +22,24 @@ interface PrintPageProps {
 
 // Ver1 の /print/:itemNo 相当。QR シール印刷用ページ。
 // QR には https の公開 URL を埋め込む (QR_BASE_URL で変更可能)
+//
+// 公開ビューにも QR ボタンを出すため、このページも未ログインで開ける
+// (docs/22-ノート公開計画.md §5)。ただし**素通しはしない** — /item と同じ
+// 公開判定を通す。QR の中身は itemNo から誰でも作れるので開けても秘密は
+// 漏れないが、規則を揃えることで「公開ノートに関する読み取りだけが公開」の
+// 一文で全体を説明できるようにする。例外を 1 つ作ると、次に足す人が
+// 「印刷は素通しだから他も」と読む。
 export default async function PrintPage({ params }: PrintPageProps) {
   const { itemNo } = await params;
   if (!isValidItemNo(itemNo)) {
     notFound();
+  }
+
+  // ログイン中なら行を引かない (未登録の itemNo でもシールは刷れる。
+  // 番号を先に貼っておく使い方があるため)
+  const user = await currentUser();
+  if (user === null && !isPublicItem(await getItem(itemNo))) {
+    return <LoginRequiredNotice />;
   }
 
   const itemUrl = buildItemUrl(qrBaseUrl(), itemNo);

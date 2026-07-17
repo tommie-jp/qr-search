@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { verifyBasicAuthUser } from '@/lib/auth'
 import { LOGIN_REQUIRED_PATH } from '@/lib/loginRedirect'
-import { isPublicPath } from '@/lib/publicPaths'
+import { isPublicPath, isSelfGuardedPath } from '@/lib/publicPaths'
 
 // ログインの門番 (docs/18-ログイン計画.md)。
 //
@@ -23,6 +23,19 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl
 
   if (isPublicPath(pathname)) {
+    return NextResponse.next()
+  }
+
+  // 公開かどうかがデータで決まる口 (docs/22-ノート公開計画.md §1)。
+  // 公開ノートは未ログインでも読めるが、それを判断できるのは行を見た後なので、
+  // ここでは決められない。**読み取りだけ**通し、判定はページ / route handler の
+  // isPublicItem() に委ねる。委ね先は publicPaths.ts の一覧に明記されているので、
+  // 「新しいページを足したら黙って公開されていた」は起きない。
+  //
+  // 書き込み (Server Action の POST) をここで通さないのが要点。通すと
+  // requireUser() だけが防波堤になり、公開ノートが誰でも書ける口に一歩近づく。
+  // 公開は読み取り専用と決めた以上、門番の側でも閉じておく
+  if (isSelfGuardedPath(pathname) && isReadRequest(request)) {
     return NextResponse.next()
   }
 
@@ -50,10 +63,16 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   )
 }
 
+// 読み取りだけの要求か。isPageRequest と違って /api/ も含む
+// (画像配信は読み取りだが API でもあるため)
+function isReadRequest(request: NextRequest): boolean {
+  return request.method === 'GET' || request.method === 'HEAD'
+}
+
 // 人がブラウザで開いている画面かどうか。Server Action は現在のページの URL へ
 // POST されるため、メソッドを見ないと「保存」が案内ページに化けて黙って失敗する
 function isPageRequest(request: NextRequest): boolean {
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
+  if (!isReadRequest(request)) {
     return false
   }
   return !request.nextUrl.pathname.startsWith('/api/')

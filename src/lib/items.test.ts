@@ -3,6 +3,7 @@ import type {
   countTrashedItems as CountTrashedItemsFn,
   countTrashedMatches as CountTrashedMatchesFn,
   getItem as GetItemFn,
+  isPublicImageName as IsPublicImageNameFn,
   listTags as ListTagsFn,
   listTrashedItems as ListTrashedItemsFn,
   nextItemNo as NextItemNoFn,
@@ -10,6 +11,7 @@ import type {
   restoreItems as RestoreItemsFn,
   searchItemProps as SearchItemPropsFn,
   searchItems as SearchItemsFn,
+  setItemPublic as SetItemPublicFn,
   trashItems as TrashItemsFn,
   upsertMemo as UpsertMemoFn,
 } from './items'
@@ -41,6 +43,8 @@ describe.skipIf(!runDbTests)(
     let countTrashedItems: typeof CountTrashedItemsFn
     let countTrashedMatches: typeof CountTrashedMatchesFn
     let nextItemNo: typeof NextItemNoFn
+    let setItemPublic: typeof SetItemPublicFn
+    let isPublicImageName: typeof IsPublicImageNameFn
     let prisma: PrismaClient
 
     const seed = [
@@ -114,6 +118,8 @@ describe.skipIf(!runDbTests)(
         countTrashedItems,
         countTrashedMatches,
         nextItemNo,
+        setItemPublic,
+        isPublicImageName,
       } = await import('./items'))
       ;({ prisma } = await import('./db'))
       await prisma.item.deleteMany({ where: { itemNo: { startsWith: TEST_PREFIX } } })
@@ -499,6 +505,109 @@ describe.skipIf(!runDbTests)(
         } finally {
           await prisma.item.deleteMany({ where: { itemNo: no } })
         }
+      })
+    })
+
+    // --- 公開 (docs/22-ノート公開計画.md) ---
+    describe('公開 (setItemPublic / isPublicImageName)', () => {
+      // 他の describe の seed を汚さないよう、この節で使うノートを都度作る。
+      // zzft プレフィックスなので afterAll の後始末に乗る
+      async function makeNote(
+        suffix: string,
+        data: { memo?: string; publicAt?: Date | null; deletedAt?: Date | null } = {},
+      ): Promise<string> {
+        const itemNo = `${TEST_PREFIX}pub${suffix}`
+        await prisma.item.upsert({
+          where: { itemNo },
+          update: { memo: '', publicAt: null, deletedAt: null, ...data },
+          create: { itemNo, itemNoNum: null, memo: '', ...data },
+        })
+        return itemNo
+      }
+
+      test('公開すると public_at が入り、やめると null に戻る', async () => {
+        const itemNo = await makeNote('toggle')
+
+        await setItemPublic(itemNo, true)
+        expect((await getItem(itemNo))?.publicAt).toBeInstanceOf(Date)
+
+        await setItemPublic(itemNo, false)
+        expect((await getItem(itemNo))?.publicAt).toBeNull()
+      })
+
+      // 押し直すたびに公開日時が今へ進むのは嘘 (docs/22 §7)。
+      // WHERE public_at IS NULL がそれを止めている
+      test('公開中のノートへもう一度公開しても public_at を上書きしない', async () => {
+        const itemNo = await makeNote('again')
+
+        await setItemPublic(itemNo, true)
+        const first = (await getItem(itemNo))?.publicAt
+
+        const affected = await setItemPublic(itemNo, true)
+
+        expect(affected).toBe(0)
+        expect((await getItem(itemNo))?.publicAt).toEqual(first)
+      })
+
+      // 本文は変わっていないのに更新順が動くのは嘘 (trashItems と同じ理由)。
+      // Prisma の update は @updatedAt を必ず打つので生 SQL で書いてある
+      test('公開の切り替えは updated_at を触らない', async () => {
+        const itemNo = await makeNote('touch')
+        const before = (await getItem(itemNo))?.updatedAt
+
+        await setItemPublic(itemNo, true)
+
+        expect((await getItem(itemNo))?.updatedAt).toEqual(before)
+      })
+
+      test('公開ノートに貼った画像の名前は公開と判定する', async () => {
+        const name = '0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e9f.png'
+        await makeNote('img', {
+          memo: `写真 ![](/api/images/${name})`,
+          publicAt: new Date(),
+        })
+
+        expect(await isPublicImageName(name)).toBe(true)
+      })
+
+      test('非公開ノートに貼った画像の名前は公開しない', async () => {
+        const name = '0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e01.png'
+        await makeNote('imgpriv', { memo: `![](/api/images/${name})` })
+
+        expect(await isPublicImageName(name)).toBe(false)
+      })
+
+      // isPublicItem() と同じ規則 (docs/22 §3)
+      test('ゴミ箱の公開ノートに貼った画像は公開しない', async () => {
+        const name = '0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e02.png'
+        await makeNote('imgtrash', {
+          memo: `![](/api/images/${name})`,
+          publicAt: new Date(),
+          deletedAt: new Date(),
+        })
+
+        expect(await isPublicImageName(name)).toBe(false)
+      })
+
+      test('どのノートにも貼られていない画像は公開しない', async () => {
+        expect(
+          await isPublicImageName('0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e03.png'),
+        ).toBe(false)
+      })
+
+      // この DB では PGroonga が LIKE を乗っ取るため、部分一致は position() で
+      // 判定している。LIKE に戻すと全文検索の正規化 (全半角・大小) が効いて
+      // しまい、別名の画像まで一致しうる
+      test('部分一致は全文検索の正規化に引きずられない (position を使っている)', async () => {
+        const name = '0191f0c4-6f3b-7a1e-9c2d-4b5a6c7d8e04.png'
+        // 大文字違いの名前を本文に持つ公開ノート。position() は素の
+        // バイト比較なので一致しない
+        await makeNote('imgcase', {
+          memo: `![](/api/images/${name.toUpperCase()})`,
+          publicAt: new Date(),
+        })
+
+        expect(await isPublicImageName(name)).toBe(false)
       })
     })
   },

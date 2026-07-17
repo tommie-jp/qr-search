@@ -9,6 +9,8 @@
 
 import manifest from '@/app/manifest'
 import { LOGIN_PATH, LOGIN_REQUIRED_PATH } from './loginRedirect'
+import { isValidImageName } from './uploads'
+import { isValidItemNo } from './validation'
 
 // PWA: ブラウザは manifest とアイコンを Authorization ヘッダなしで取りに行く。
 // 閉じると 401 になり「インストール可能」と判定されない。
@@ -47,4 +49,43 @@ let pwaPathsCache: Set<string> | null = null
 export function isPublicPath(pathname: string): boolean {
   pwaPathsCache ??= pwaPaths()
   return LOGIN_PATHS.has(pathname) || pwaPathsCache.has(pathname) || DOCS_PATHS.has(pathname)
+}
+
+// --- 自前で判定する口 (docs/22-ノート公開計画.md §1) ---
+//
+// 公開かどうかが**パスではなくデータで決まる**もの。トグルを押すたびに
+// この一覧が書き換わる作りにはできないので、判定を二段に分ける。
+//
+//   isPublicPath      … 誰でも見てよい (静的に決まる)
+//   isSelfGuardedPath … proxy では決められない。読み取りだけ通し、ページと
+//                       route handler が isPublicItem() で確かめる
+//
+// **ここに載せる = 無条件公開ではない**。載せた口には必ず自前の判定が要る。
+// 逆に、一覧に書いてある口だけが素通しされるので、新しいページを足したときに
+// 黙って公開されることはない (既定が閉じている、は保たれる)。
+//
+// 素通しするのは GET/HEAD だけ (proxy.ts)。書き込み (Server Action の POST) は
+// 門番で止める。公開ノートは読み取り専用であって、誰でも書ける口にはしない。
+
+// パスの末尾に itemNo を取るもの。/item は本文、/print は QR シール
+// (公開ビューにも QR ボタンを出すため。docs/22 §5)
+const ITEM_NO_PREFIXES = ['/item/', '/print/']
+
+// メモに貼った画像。閉じたままだと公開ノートを開いた人に画像だけ割れて出る
+// (docs/22 §6)
+const IMAGE_PREFIX = '/api/images/'
+
+// 末尾は itemNo / 画像名の書式に**完全一致**すること。前方一致で通すと
+// '/item/4518/edit' のような、別のページを指すパスまで素通しする
+export function isSelfGuardedPath(pathname: string): boolean {
+  const itemNoPrefix = ITEM_NO_PREFIXES.find((prefix) => pathname.startsWith(prefix))
+  if (itemNoPrefix !== undefined) {
+    return isValidItemNo(pathname.slice(itemNoPrefix.length))
+  }
+
+  if (pathname.startsWith(IMAGE_PREFIX)) {
+    return isValidImageName(pathname.slice(IMAGE_PREFIX.length))
+  }
+
+  return false
 }

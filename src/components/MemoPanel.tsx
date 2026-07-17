@@ -8,7 +8,10 @@ interface MemoPanelProps {
   defaultMode: MemoMode;
   markdownView: ReactNode;
   textView: ReactNode;
-  editForm: ReactNode;
+  // 省略 = 読み取り専用 (公開ビュー。docs/22-ノート公開計画.md §4)。
+  // 編集タブごと出さない — /edit も Server Action も未ログインには閉じているので、
+  // 押しても何も起きないタブを見せない
+  editForm?: ReactNode;
 }
 
 const MODES: { key: MemoMode; label: string }[] = [
@@ -41,13 +44,20 @@ export function MemoPanel({
   const panels: { key: MemoMode; content: ReactNode }[] = [
     { key: "markdown", content: markdownView },
     { key: "text", content: textView },
-    { key: "edit", content: editForm },
+    ...(editForm === undefined
+      ? []
+      : [{ key: "edit" as const, content: editForm }]),
   ];
+
+  // 読み取り専用なら編集タブは出さない (editForm 省略時)
+  const modes = MODES.filter(
+    ({ key }) => key !== "edit" || editForm !== undefined,
+  );
 
   return (
     <div className="space-y-2">
       <div role="tablist" className="flex gap-1 text-sm">
-        {MODES.map(({ key, label }) => (
+        {modes.map(({ key, label }) => (
           <button
             key={key}
             type="button"

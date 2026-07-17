@@ -9,6 +9,7 @@ import {
   getItem,
   purgeItems,
   restoreItems,
+  setItemPublic,
   trashItems,
   upsertItem,
   upsertMemo,
@@ -76,6 +77,25 @@ export async function updateItemAction(formData: FormData): Promise<void> {
   await upsertItem(itemNo, { memo, url, mode })
   revalidatePath(`/item/${itemNo}`)
   redirect(savedHref(itemNo))
+}
+
+// --- 公開 (docs/22-ノート公開計画.md) ---
+
+// ノートを公開する / 公開をやめる。
+//
+// フォームは**望む状態** (public=1 / 0) を送る。「いまの状態を裏返す」に
+// すると、二重送信や戻るボタンで意図と逆に倒れる (docs/22 §7)。
+//
+// requireUser() は飾りではない。これは誰でも叩ける POST の口で、
+// もし通れば「他人が自分のノートを勝手に公開できる」ことになる。
+// proxy.ts も未ログインの POST は 401 にするが、それは楽観的な検査でしかない。
+export async function setItemPublicAction(formData: FormData): Promise<void> {
+  await requireUser()
+  const itemNo = readItemNo(formData)
+  // '1' だけを公開と読む。判らない値は非公開へ倒す (既定を閉じる側へ)
+  const isPublic = formData.get('public') === '1'
+  await setItemPublic(itemNo, isPublic)
+  revalidatePath(`/item/${itemNo}`)
 }
 
 // --- ゴミ箱 (二段階削除。docs/12-ゴミ箱計画.md) ---

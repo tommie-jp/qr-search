@@ -160,3 +160,49 @@ test("見出しの # はタグリンクにしない", () => {
   expect(html).toContain("<h1>見出し</h1>");
   expect(html).not.toContain("/?q=");
 });
+
+test("外部リンクは別タブで開く", () => {
+  const html = render("[例](https://example.com/x)");
+  expect(html).toContain('target="_blank"');
+});
+
+test("裸の URL の自動リンクも別タブで開く", () => {
+  const html = render("詳しくは https://example.com/x を参照");
+  expect(html).toContain('target="_blank"');
+});
+
+// 検索やメモへの遷移まで別タブになるとタブが増えて使いにくい
+test("アプリ内リンクは同じタブで開く", () => {
+  const html = render("[メモ](/items/42)");
+  expect(html).not.toContain('target="_blank"');
+});
+
+test("#タグ の検索リンクは同じタブで開く", () => {
+  const html = render("これは #抵抗 のメモ");
+  expect(html).not.toContain('target="_blank"');
+});
+
+// 別タブを開いてもメーラーが起動するだけで空タブが残る
+test("mailto リンクは別タブにしない", () => {
+  const html = render("[連絡](mailto:a@example.com)");
+  expect(html).not.toContain('target="_blank"');
+});
+
+// 公開ビュー (docs/22-ノート公開計画.md §4)。タグ検索は未ログインに閉じて
+// いるので、公開ノートの本文に「押すと案内に化けるリンク」を残さない。
+// タグの**文字は本文の一部なので消さない** — リンクにしないだけ
+test("linkTags=false で #タグ をリンクにしない (文字は残す)", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownView markdown="これは #抵抗 のメモ" linkTags={false} />,
+  );
+
+  expect(html).not.toContain("q=%23");
+  expect(html).not.toContain("<a ");
+  expect(html).toContain("#抵抗");
+});
+
+// 既定は従来どおり (持ち主の画面が壊れていないこと)
+test("既定では #タグ を検索リンクにする", () => {
+  const html = render("これは #抵抗 のメモ");
+  expect(html).toContain("q=%23");
+});
