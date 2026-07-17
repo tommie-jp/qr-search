@@ -113,9 +113,19 @@ export default async function RootLayout({
                 GitHub
               </a>
               {user ? (
-                <span className="text-sm text-gray-500" title="ログイン中">
-                  {user}
-                </span>
+                <>
+                  <span className="text-sm text-gray-500" title="ログイン中">
+                    {user}
+                  </span>
+                  {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
+                      見えても 401 だが、押せない物を見せない */}
+                  <Link
+                    href="/logs"
+                    className="text-sm text-gray-500 hover:text-gray-900"
+                  >
+                    ログ
+                  </Link>
+                </>
               ) : (
                 <LoginButton />
               )}
