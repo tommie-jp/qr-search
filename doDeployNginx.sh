@@ -5,8 +5,10 @@
 #   - リポジトリの deploy/nginx/qr.tommie.jp.conf が正
 #   - conf はコミット済みであること (下記「ドリフト検知」の前提)
 #   - vps2 の sudo は NOPASSWD (nginx -t / install / systemctl reload に使う)
-#   - /etc/nginx/.htpasswd-qr はリポジトリ管理外。再発行するときは vps2 で:
-#       sudo htpasswd -c /etc/nginx/.htpasswd-qr tommie
+#
+# 認証はもう nginx ではなくアプリが行う (docs/18-ログイン計画.md)。
+# /etc/nginx/.htpasswd-qr はもう読まれない。パスワードの変更は
+# vps2 の .env の BASIC_AUTH_HASH_B64 を差し替える (npm run hash-password)。
 #
 # 使い方:
 #   ./doDeployNginx.sh          反映する (差分がなければ何もしない)
@@ -22,10 +24,12 @@ REMOTE="${DEPLOY_REMOTE:-vps2}"
 SITE="${DEPLOY_SITE:-qr.tommie.jp}"
 LOCAL_CONF="deploy/nginx/qr.tommie.jp.conf"
 REMOTE_CONF="/etc/nginx/sites-available/qr.tommie.jp"
-# 認証必須のパス。未認証なら 401 になる
-AUTH_URL="https://${SITE}/"
-# 認証を外したパス。nginx 内で完結せず app まで到達するので、
-# proxy_pass が生きていることの確認に使える (app 側の実装次第で 200 / 404)
+# 保護されたパス。認証はもう nginx ではなくアプリが行う (docs/18-ログイン計画.md)
+# ため、未ログインでも 401 ではなく 200 + 案内が返るのが正。
+# 状態コードでは「守れているか」を判定できないので、本文の印で見る
+GATED_URL="https://${SITE}/"
+GATED_MARK="ログインが必要です"
+# ログイン不要にしたパス。app まで到達するので proxy_pass の確認に使える
 BACKEND_URL="https://${SITE}/manifest.webmanifest"
 
 CHECK_ONLY=0
@@ -117,14 +121,21 @@ fi
 log "5/5 reload + ヘルスチェック"
 ssh "$REMOTE" 'sudo systemctl reload nginx'
 
-# 認証: 401 は nginx 内で完結するので、これだけでは proxy_pass の健全性は分からない
-auth_status="$(http_status "$AUTH_URL")"
-if [ "$auth_status" != "401" ]; then
-  echo "$AUTH_URL: 想定 401 に対し $auth_status。Basic 認証が効いていない" >&2
+# 未ログインに中身を出していないこと。ここが今いちばん守りたい不変条件で、
+# nginx から auth_basic を外した以上、うっかり素通しになっていないかを
+# 反映のたびに確かめる。
+#
+# 状態コードでは判定できない (未ログインの正解は 401 ではなく 200 + 案内)。
+# 本文に案内の印があることを見る。app が落ちていれば 502 で印が無いので、
+# その場合もここで落ちる
+gated_body="$(curl -s "$GATED_URL")" || true
+if ! printf '%s' "$gated_body" | grep -q "$GATED_MARK"; then
+  echo "$GATED_URL: 未ログインなのに「$GATED_MARK」の案内が出ていない。" >&2
+  echo "中身が素通しになっているか、app へ到達できていない可能性がある。" >&2
   rollback
   die "ヘルスチェック失敗。ロールバックした"
 fi
-echo "OK: $AUTH_URL -> 401 (Basic 認証が有効)"
+echo "OK: $GATED_URL -> 未ログインには案内のみ (中身は出していない)"
 
 # バックエンド: 認証を外したパスは app まで到達するため、5xx なら proxy_pass が壊れている
 backend_status="$(http_status "$BACKEND_URL")"
