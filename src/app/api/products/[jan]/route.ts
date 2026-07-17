@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { lookupProduct } from '@/lib/productLookup'
 import { isJan } from '@/lib/scanRegister'
 
@@ -13,12 +13,16 @@ import { isJan } from '@/lib/scanRegister'
 // 見つからない (data: null) はエラーではない。キー未設定もここに落ちる
 // (yahooShopping.ts)。呼び出し側は事前入力のまま手で書けばよく、導線は止まらない。
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ jan: string }> },
 ): Promise<NextResponse> {
   // 開けておくと、こちらの Yahoo! の Client ID を使って誰でも商品検索でき、
-  // API の利用枠をよそに使われる (キーを隠している意味がなくなる)
-  const denied = await denyUnlessLoggedIn()
+  // API の利用枠をよそに使われる (キーを隠している意味がなくなる)。
+  //
+  // ログイン検査だけでは足りない。Basic 認証は SameSite が効かないので、
+  // ログイン済みのブラウザが第三者のページを開くと <img src> ひとつで
+  // ここが動き、Yahoo! の利用枠を焚かれる (docs/18 §9)
+  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }
