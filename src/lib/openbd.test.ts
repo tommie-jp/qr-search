@@ -97,4 +97,18 @@ test('文字列でない値は無視する (外部データを信用しない)',
   })
 })
 
+test('書影 (summary.cover) があれば書影 URL として取り出す', () => {
+  // 実測では cover が入るのはホワイトリスト版元だけ (11 冊中 1 冊)。
+  // 空のほうが多数派なので、あるときだけ付ける (docs/19-書影取得計画.md §1)
+  const json = response({ cover: 'https://cover.openbd.jp/9784861827754.jpg' })
+  expect(parseOpenBdResponse(json)?.coverUrl).toBe(
+    'https://cover.openbd.jp/9784861827754.jpg',
+  )
+})
+
+test('書影が空・文字列でないときは書影 URL を付けない', () => {
+  expect(parseOpenBdResponse(response())?.coverUrl).toBeUndefined()
+  expect(parseOpenBdResponse(response({ cover: 42 }))?.coverUrl).toBeUndefined()
+})
+
 // 刊行日の整形 (formatPubdate) は NDL と共通なので book.test.ts で見る

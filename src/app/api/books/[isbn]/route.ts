@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
-import { denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { lookupBook } from '@/lib/bookLookup'
+import { saveCoverImage } from '@/lib/coverImage'
 import { isIsbn } from '@/lib/scanRegister'
 
 // ISBN の書誌を返す (設計は docs/13-書誌自動取得計画.md)。
+// 書影も付ける (docs/19-書影取得計画.md)。
 //
 // スキャンした ISBN の書名・著者をエディタに事前入力するために、
 // 編集ページのクライアントから引かれる。
@@ -15,12 +17,16 @@ import { isIsbn } from '@/lib/scanRegister'
 // 見つからない (data: null) はエラーではない。呼び出し側は事前入力のまま
 // 手で書けばよく、導線は止まらない。
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ isbn: string }> },
 ): Promise<NextResponse> {
   // 中身は公開情報 (書誌) だが、この口は NDL を叩く踏み台でもある。
-  // 開けておくと、誰でもこのサーバ経由で外部 API を好きなだけ引ける
-  const denied = await denyUnlessLoggedIn()
+  // 開けておくと、誰でもこのサーバ経由で外部 API を好きなだけ引ける。
+  //
+  // ログイン検査だけでは足りない。この口は**書影を DB に書き、楽天の
+  // クォータを使う GET** なので、第三者のページの <img src> から動かされると
+  // 孤児の書影とクォータをいくらでも焚かれる (docs/18 §9 / docs/19 §3)
+  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }
@@ -37,7 +43,18 @@ export async function GET(
 
   try {
     const book = await lookupBook(isbn)
-    return NextResponse.json({ success: true, data: book, error: null })
+    // 書誌が無ければ書影も引かない。事前入力に載せる見出しごと無いので、
+    // 書影だけ取っても置き場所がない (外部 API を叩くだけ無駄になる)
+    const data = book
+      ? {
+          ...book,
+          // openBD の書影 URL はサーバの中だけの中継地点。本文に置くのは
+          // 保存後の /api/images/<uuid>.jpg なので、応答には載せない
+          coverUrl: undefined,
+          coverImageUrl: await saveCoverImage(isbn, book.coverUrl),
+        }
+      : null
+    return NextResponse.json({ success: true, data, error: null })
   } catch (err) {
     // 個々の API の失敗は lookupBook が警告に残して次を試す。ここに来るのは
     // 想定外の取りこぼしなので、中身は返さずログに残す

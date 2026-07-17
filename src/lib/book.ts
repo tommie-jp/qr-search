@@ -10,6 +10,14 @@ export interface BookSummary {
   publisher: string
   // 表示用に整形済みの刊行年月 ("2012.06")
   pubdate: string
+  // openBD が返す書影 CDN の URL (設計は docs/19-書影取得計画.md)。
+  // **サーバの中だけで使う**中継地点で、本文には置かない。外部 URL を本文に
+  // 置くと提供終了で消えるため、取得して DB に保存し直す (19 §2)。
+  // NDL サーチは書影を持たないので付かない
+  coverUrl?: string
+  // 保存した書影の URL ("/api/images/<uuid>.jpg")。本文に置くのはこちら。
+  // 書影が取れなければ付かない (実測では取れないほうが多数派)
+  coverImageUrl?: string
 }
 
 // 外部データの型を信用しないための入口 (JSON も XML も何でも来る)。

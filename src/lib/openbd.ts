@@ -55,6 +55,9 @@ export function parseOpenBdResponse(json: unknown): BookSummary | null {
       onixAuthors.length > 0 ? onixAuthors : summaryAuthor ? [summaryAuthor] : [],
     publisher: asString(summary.publisher),
     pubdate: formatPubdate(asString(summary.pubdate)),
+    // 書影の URL。JPRO の規約改定以降、ここが入るのはホワイトリスト版元だけで、
+    // 空のほうが多数派 (実測 1/11)。落ちたぶんは楽天が拾う (coverLookup.ts)
+    coverUrl: asString(summary.cover) || undefined,
   }
 }
 

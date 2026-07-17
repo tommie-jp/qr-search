@@ -56,11 +56,27 @@ export function isJan(code: string): boolean {
   return JAN_PATTERN.test(code) && !isIsbn(code) && hasEan13CheckDigit(code)
 }
 
-// 見出し部分。書籍は 書名 / 著者 / 出版社 (刊行年月)、商品は 商品名 / ブランド。
+// 書影の表示幅 (px)。原寸は 200x200 前後で、本文にそのまま出ると邪魔になる。
+// 画像自体は無改変で、表示幅だけを指定する (docs/19-書影取得計画.md §2)
+const COVER_WIDTH_PX = 120
+
+// 見出し部分。書籍は 書名 / 著者 / 出版社 (刊行年月) / 書影、
+// 商品は 商品名 / ブランド。
 // 欠けた項目は行ごと落とし、本文の頭に空行が生まれないようにする。
-function bookHeader({ title, authors, publisher, pubdate }: BookSummary): string {
+//
+// 書影は見出しの一番下。1 行目は書名のままにしないと、一覧の要約
+// (memoSummary) が画像の記法になってしまう。
+function bookHeader({
+  title,
+  authors,
+  publisher,
+  pubdate,
+  coverImageUrl,
+}: BookSummary): string {
   const imprint = publisher && pubdate ? `${publisher} (${pubdate})` : publisher || pubdate
-  return [title, authors.join(' / '), imprint].filter(Boolean).join('\n')
+  // alt が空だと読み上げで無名の画像になるので「書影」と入れる
+  const cover = coverImageUrl ? `![書影|${COVER_WIDTH_PX}](${coverImageUrl})` : ''
+  return [title, authors.join(' / '), imprint, cover].filter(Boolean).join('\n')
 }
 
 function productHeader({ title, brand }: ProductSummary): string {

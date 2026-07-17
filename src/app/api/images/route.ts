@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
-import { prisma } from '@/lib/db'
+import { saveImage } from '@/lib/imageStore'
 import {
   checkUploadRequest,
   extForMime,
@@ -55,12 +54,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return errorResponse(400, 'ファイルの中身が画像ではありません')
   }
 
-  const name = `${randomUUID()}.${ext}`
-  await prisma.image.create({ data: { name, mime: file.type, data: bytes } })
+  const url = await saveImage(bytes, file.type, ext)
 
-  return NextResponse.json({
-    success: true,
-    data: { url: `/api/images/${name}` },
-    error: null,
-  })
+  return NextResponse.json({ success: true, data: { url }, error: null })
 }

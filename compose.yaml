@@ -34,6 +34,12 @@ services:
       APP_ENV: ${APP_ENV:-}
       # JAN の商品情報取得 (docs/14)。未設定でも起動する (取得しないだけ)
       YAHOO_SHOPPING_APP_ID: ${YAHOO_SHOPPING_APP_ID:-}
+      # ISBN の書影取得 (docs/19)。未設定でも起動する (書影が入らないだけ)。
+      # .env に書くだけでは届かない — この列挙に無い変数はコンテナに渡らない
+      # (実際に .env だけ直して書影が出ない事故が起きた)
+      RAKUTEN_APP_ID: ${RAKUTEN_APP_ID:-}
+      RAKUTEN_ACCESS_KEY: ${RAKUTEN_ACCESS_KEY:-}
+      RAKUTEN_APP_ORIGIN: ${RAKUTEN_APP_ORIGIN:-}
       # ログイン (docs/18)。認証はエッジではなくアプリが行うので、app に渡す。
       # :? で必須にする — 空だと誰もログインできず、全ページが「ログインが
       # 必要です」になる。起動時に落として気づけるようにする。
