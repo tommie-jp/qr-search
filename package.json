@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "db:up": "docker compose up -d db",
     "db:migrate": "prisma migrate dev",
+    "hash-password": "node scripts/hashPassword.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

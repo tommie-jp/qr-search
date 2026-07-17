@@ -81,7 +81,7 @@ interface BasicAuthConfig {
 // base64 なら `$` を含まないので、.env・compose・Docker のどの経路でも
 // 同じ値がそのまま届く。これが「両方が壊れない」唯一の持ち方だった。
 //
-// 生成: docs/18-ログイン計画.md
+// 生成: npm run hash-password (docs/18-ログイン計画.md)
 function readBasicAuthConfig(): BasicAuthConfig | null {
   const user = process.env.BASIC_AUTH_USER
   const hashB64 = process.env.BASIC_AUTH_HASH_B64
@@ -100,9 +100,9 @@ function readBasicAuthConfig(): BasicAuthConfig | null {
   return { user, hash }
 }
 
-// 照合済みヘッダーの記憶。Caddy の `caddy hash-password` が作る bcrypt は
-// コスト 14 で、1 回の照合に 1 秒近くかかる。毎リクエスト回すと使い物に
-// ならないので、一度通ったヘッダーは覚える。
+// 照合済みヘッダーの記憶。bcrypt はわざと遅く、vps2 (非力) では
+// コスト 12 で約 1.75 秒かかる (コスト 14 だと実測 7 秒で、遅すぎたので下げた)。
+// 毎リクエスト回すと使い物にならないので、一度通ったヘッダーは覚える。
 //
 // 鍵に設定を含めるのは、パスワードを変えたとき古い資格情報がプロセス再起動まで
 // 通り続けるのを防ぐため。失敗は覚えない — 覚えると、当てずっぽうを送りつける

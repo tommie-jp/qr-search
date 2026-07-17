@@ -131,9 +131,9 @@ describe('verifyBasicAuthUser', () => {
     expect(await verifyBasicAuthUser(basicHeader(`tommie:${PASSWORD}`))).toBe(null)
   })
 
-  // Caddy の hash-password が作る bcrypt はコスト 14 (1 リクエストあたり
-  // 1 秒近い)。毎リクエスト照合し直すと実用にならないので、成功した
-  // ヘッダは覚える。「本当に省けているか」は compare の呼び出し回数で見る
+  // bcrypt はわざと遅く、vps2 ではコスト 12 で約 1.75 秒かかる。毎リクエスト
+  // 照合し直すと実用にならないので、成功したヘッダは覚える。
+  // 「本当に省けているか」は compare の呼び出し回数で見る
   test('runs bcrypt once for a repeated valid header', async () => {
     const header = basicHeader(`tommie:${PASSWORD}`)
     const compare = vi.spyOn(bcrypt, 'compare')
