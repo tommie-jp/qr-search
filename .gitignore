@@ -58,3 +58,6 @@ next-env.d.ts
 
 # スキャナの読み取りエンジン (scripts/copyZxingWasm.mjs が node_modules から複製する)
 /public/zxing
+
+# OCR 推論エンジンの wasm (scripts/copyOnnxWasm.mjs が node_modules から複製する)
+/public/onnxruntime

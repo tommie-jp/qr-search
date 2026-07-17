@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "npm run copy:assets && next dev",
     "build": "npm run copy:assets && prisma generate && next build",
-    "copy:assets": "node scripts/copyTikzFonts.mjs && node scripts/copyZxingWasm.mjs",
+    "copy:assets": "node scripts/copyTikzFonts.mjs && node scripts/copyZxingWasm.mjs && node scripts/copyOnnxWasm.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -35,6 +35,8 @@
     "mermaid": "^11.16.0",
     "next": "16.2.10",
     "node-tikzjax": "^1.0.5",
+    "onnxruntime-web": "^1.27.0",
+    "ppu-paddle-ocr": "^6.1.0",
     "prisma": "^7.8.0",
     "qrcode": "^1.5.4",
     "react": "19.2.4",

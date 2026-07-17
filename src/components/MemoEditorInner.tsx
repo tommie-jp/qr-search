@@ -6,8 +6,10 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { imageAtCursor, ocrInsertion, ocrPlaceholder } from "@/lib/ocr/ocrQuote";
 import { fenceLanguageCompletion } from "./fenceCompletion";
 import { fenceLanguageLinter } from "./fenceLinter";
+import { isOcrReady, ocrImageToQuote } from "./ocr/ocrService";
 import { SECONDARY_BUTTON_CLASS } from "./ui";
 
 export interface MemoEditorInnerProps {
@@ -62,6 +64,7 @@ function imageFiles(list: FileList | undefined | null): File[] {
 
 // プレースホルダの一意性のための連番 (インスタンス間で共有してよい)
 let uploadSeq = 0;
+let ocrSeq = 0;
 
 // markdown 用 CodeMirror エディタ本体 (制御コンポーネント)。
 // 画像はペースト / ドラッグ&ドロップ / 画像ボタンで /api/images へアップロードし、
@@ -74,6 +77,12 @@ export default function MemoEditorInner({
   minHeight = "14rem",
 }: MemoEditorInnerProps) {
   const [uploading, setUploading] = useState(false);
+  // 実行中の OCR の本数 (複数画像を続けて OCR できる)。0 より大きい間は
+  // 「OCR処理中」を出し、フォーム送信を止める (結果が本文に入る前に更新しない)。
+  const [ocrCount, setOcrCount] = useState(0);
+  // OCR の情報表示 (エラーではない「見つかりませんでした」など)。error は赤、
+  // こちらは灰で出す。
+  const [ocrNote, setOcrNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // undo / redo ボタンの活殺 (docs/11-アプリ的UIUX計画.md §2-4)。
   // 履歴自体は basicSetup が既定で持っている (Ctrl+Z も従来どおり効く)
@@ -88,10 +97,11 @@ export default function MemoEditorInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // アップロード完了前に送信すると画像リンクが memo に入らないため、
-  // アップロード中だけフォーム送信をブロックして知らせる
+  // アップロード / OCR 完了前に送信すると、画像リンクや OCR 結果が memo に
+  // 入らないため、処理中だけフォーム送信をブロックして知らせる
+  const busy = uploading || ocrCount > 0;
   useEffect(() => {
-    if (!uploading) {
+    if (!busy) {
       return;
     }
     const form = wrapperRef.current?.closest("form");
@@ -100,11 +110,43 @@ export default function MemoEditorInner({
     }
     const blockSubmit = (event: SubmitEvent) => {
       event.preventDefault();
-      setError("画像のアップロード中です。完了してから更新して下さい。");
+      setError(
+        uploading
+          ? "画像のアップロード中です。完了してから更新して下さい。"
+          : "OCR 処理中です。完了してから更新して下さい。",
+      );
     };
     form.addEventListener("submit", blockSubmit);
     return () => form.removeEventListener("submit", blockSubmit);
-  }, [uploading]);
+  }, [busy, uploading]);
+
+  // 画像 1 枚を OCR し、指定位置へ引用ブロックを差し込む。挿入時 OCR と
+  // 「後から OCR」ボタンの両方がこの 1 本を使う (docs/24-画像OCR計画.md §4)。
+  // 処理中はプレースホルダを置き、本文が編集されても文字列一致で差し替える。
+  const ocrIntoDoc = async (view: EditorView, blob: Blob, insertPos: number) => {
+    const placeholder = ocrPlaceholder(++ocrSeq);
+    const insertion = ocrInsertion(placeholder);
+    view.dispatch({ changes: { from: insertPos, insert: insertion } });
+    setOcrCount((n) => n + 1);
+    // 初回はモデルの読み込みが走る。処理中との区別を出す
+    setOcrNote(isOcrReady() ? null : "OCR モデルを準備しています（初回のみ）…");
+    try {
+      const quote = await ocrImageToQuote(blob);
+      if (quote) {
+        replaceToken(view, placeholder, quote);
+        setOcrNote(null);
+      } else {
+        // 0 文字は黙って消さない。プレースホルダごと除いて理由を出す
+        replaceToken(view, insertion, "");
+        setOcrNote("画像から文字が見つかりませんでした。");
+      }
+    } catch (e) {
+      replaceToken(view, insertion, "");
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOcrCount((n) => n - 1);
+    }
+  };
 
   const insertImages = async (view: EditorView, files: File[]) => {
     setUploading(true);
@@ -115,7 +157,14 @@ export default function MemoEditorInner({
         insertText(view, token);
         try {
           const url = await uploadImage(file);
-          replaceToken(view, token, `![](${url})`);
+          const markup = `![](${url})`;
+          replaceToken(view, token, markup);
+          // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
+          // アップロードの流れは止めない (url は UUID で一意なので位置を引ける)。
+          const pos = view.state.doc.toString().indexOf(markup);
+          if (pos >= 0) {
+            void ocrIntoDoc(view, file, pos + markup.length);
+          }
         } catch (e) {
           replaceToken(view, token, "");
           throw e;
@@ -180,6 +229,35 @@ export default function MemoEditorInner({
     if (view) {
       command(view);
       view.focus();
+    }
+  };
+
+  // 「後から OCR」: カーソル位置にいちばん近い自前画像を取り直して OCR する。
+  // 既にある画像 (過去にアップロード済み) を後から検索対象にできる (docs/24 §4)。
+  const runOcrAtCursor = async () => {
+    const view = editorRef.current?.view;
+    if (!view) {
+      return;
+    }
+    setError(null);
+    setOcrNote(null);
+    const doc = view.state.doc.toString();
+    const hit = imageAtCursor(doc, view.state.selection.main.head);
+    if (!hit) {
+      setOcrNote(
+        "カーソルの近くに画像が見つかりません。画像の上を選んでから押して下さい。",
+      );
+      return;
+    }
+    try {
+      const res = await fetch(hit.url);
+      if (!res.ok) {
+        throw new Error(`画像を取得できませんでした (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      await ocrIntoDoc(view, blob, hit.insertAt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -252,6 +330,14 @@ export default function MemoEditorInner({
         >
           {uploading ? "アップロード中…" : "画像を挿入"}
         </button>
+        <button
+          type="button"
+          onClick={() => void runOcrAtCursor()}
+          disabled={busy}
+          className={SECONDARY_BUTTON_CLASS}
+        >
+          {ocrCount > 0 ? "OCR処理中…" : "画像をOCR"}
+        </button>
         {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
             幅が狭いときは畳んでボタンの場所を空ける */}
         <span className="hidden text-gray-400 sm:inline">
@@ -270,6 +356,21 @@ export default function MemoEditorInner({
       {error && (
         <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </p>
+      )}
+      {ocrNote && (
+        <p
+          aria-live="polite"
+          aria-busy={ocrCount > 0}
+          className="flex items-center gap-2 rounded bg-gray-50 px-3 py-2 text-sm text-gray-600"
+        >
+          {ocrCount > 0 && (
+            <span
+              aria-hidden
+              className="size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-500"
+            />
+          )}
+          {ocrNote}
         </p>
       )}
       <input
