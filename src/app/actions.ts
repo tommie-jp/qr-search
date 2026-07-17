@@ -13,6 +13,7 @@ import {
   upsertMemo,
 } from '@/lib/items'
 import { parseBackUrl, parseSelectedItemNos } from '@/lib/itemSelection'
+import { requireUser } from '@/lib/session'
 import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
 import { isValidItemNo, parseMode } from '@/lib/validation'
 
@@ -44,8 +45,14 @@ function savedHref(itemNo: string): string {
   return `/item/${itemNo}?saved=${Date.now()}`
 }
 
+// Server Action は「画面に置いたボタン」ではなく、誰でも叩ける POST の口
+// (id さえ判れば画面を通さず呼べる)。proxy.ts も未ログインの POST は 401 に
+// するが、それは楽観的な検査でしかないので、書き込む側でも必ず確かめる
+// (docs/18-ログイン計画.md)。
+
 // Ver1 の /item/:itemNo POST 相当: memo だけをその場で更新 (未登録なら作成)
 export async function updateMemoAction(formData: FormData): Promise<void> {
+  await requireUser()
   const itemNo = readItemNo(formData)
   const memo = readText(formData, 'memo')
   await upsertMemo(itemNo, memo)
@@ -55,6 +62,7 @@ export async function updateMemoAction(formData: FormData): Promise<void> {
 
 // Ver1 の /edit/:itemNo POST 相当: mode / memo / url を更新 (未登録なら作成)
 export async function updateItemAction(formData: FormData): Promise<void> {
+  await requireUser()
   const itemNo = readItemNo(formData)
   const memo = readText(formData, 'memo')
   const url = readText(formData, 'url')
@@ -69,6 +77,7 @@ export async function updateItemAction(formData: FormData): Promise<void> {
 // 検索結果で選択したノートをゴミ箱へ入れる (復元できるので confirm は出さない)。
 // 一括タグと同じフォームから formAction で分岐して呼ばれる。
 export async function trashItemsAction(formData: FormData): Promise<void> {
+  await requireUser()
   const itemNos = parseSelectedItemNos(formData)
   const back = parseBackUrl(formData)
 
@@ -85,6 +94,7 @@ export async function trashItemsAction(formData: FormData): Promise<void> {
 // どちらも同じルートを revalidate すれば呼び出し元がそのまま描き直される
 // (Next.js は revalidatePath で現在のルートを再レンダリングして返す)。
 export async function restoreItemsAction(formData: FormData): Promise<void> {
+  await requireUser()
   const itemNos = parseSelectedItemNos(formData)
   if (itemNos.length === 0) {
     return
@@ -101,6 +111,7 @@ export async function restoreItemsAction(formData: FormData): Promise<void> {
 // 永久削除。ゴミ箱にある行しか消せないことは items.ts の purgeItems が保証する
 // (UI の confirm は最後の一押しで、防護そのものではない)。
 export async function purgeItemsAction(formData: FormData): Promise<void> {
+  await requireUser()
   const itemNos = parseSelectedItemNos(formData)
   if (itemNos.length === 0) {
     return
@@ -112,6 +123,7 @@ export async function purgeItemsAction(formData: FormData): Promise<void> {
 }
 
 export async function emptyTrashAction(): Promise<void> {
+  await requireUser()
   await emptyTrash()
   revalidatePath('/')
   revalidatePath('/trash')
@@ -122,6 +134,7 @@ export async function emptyTrashAction(): Promise<void> {
 // items.tags を再計算させる (tagEdit.ts 参照)。実際に本文が変わったノートだけ
 // 保存するので、文章中にしかないタグの削除など「効かない」操作では更新しない。
 export async function bulkTagAction(formData: FormData): Promise<void> {
+  await requireUser()
   const { mode, itemNos, tags, back } = parseBulkTagForm(formData)
 
   if (itemNos.length > 0 && tags.length > 0) {

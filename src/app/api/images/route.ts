@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
+import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { prisma } from '@/lib/db'
 import {
   checkUploadRequest,
@@ -16,6 +17,13 @@ function errorResponse(status: number, error: string): NextResponse {
 // memo エディタからの画像アップロード。UUID 名で images テーブルに保存し、
 // 参照用の URL (/api/images/<name>) を返す
 export async function POST(request: Request): Promise<NextResponse> {
+  // 一番先に見る。ログインしていない相手のために本文を読む理由はない
+  // (12MB まで受け取ってから断るのは、断り方として無駄が大きい)
+  const denied = await denyUnlessLoggedIn()
+  if (denied) {
+    return denied
+  }
+
   const rejection = checkUploadRequest(request)
   if (rejection) {
     return errorResponse(rejection.status, rejection.error)

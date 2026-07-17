@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { lookupProduct } from '@/lib/productLookup'
 import { isJan } from '@/lib/scanRegister'
 
@@ -15,6 +16,13 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ jan: string }> },
 ): Promise<NextResponse> {
+  // 開けておくと、こちらの Yahoo! の Client ID を使って誰でも商品検索でき、
+  // API の利用枠をよそに使われる (キーを隠している意味がなくなる)
+  const denied = await denyUnlessLoggedIn()
+  if (denied) {
+    return denied
+  }
+
   const { jan } = await params
   // 外から来る値なので必ず検算する。13 桁の数字だけを外部 API の URL に
   // 載せることになり、ISBN は書籍側 (/api/books/) にしか行かない

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { lookupBook } from '@/lib/bookLookup'
 import { isIsbn } from '@/lib/scanRegister'
 
@@ -17,6 +18,13 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ isbn: string }> },
 ): Promise<NextResponse> {
+  // 中身は公開情報 (書誌) だが、この口は NDL を叩く踏み台でもある。
+  // 開けておくと、誰でもこのサーバ経由で外部 API を好きなだけ引ける
+  const denied = await denyUnlessLoggedIn()
+  if (denied) {
+    return denied
+  }
+
   const { isbn } = await params
   // 外から来る値なので必ず検算する。13 桁の数字だけを外部 API の URL に
   // 載せることになり、書籍以外のコードで NDL を叩くこともなくなる

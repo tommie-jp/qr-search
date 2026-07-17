@@ -4,29 +4,19 @@
 #
 # 注意: 本番 (vps2) が使うのはこの Caddy ではなく既存の nginx (+ certbot)。
 # ここは compose の proxy プロファイル専用で、本番の構成をローカルで再現するためのもの。
-# 認証まわりを変えたら vps2 の nginx にも同じ設定を入れること (docs/05-PWA計画.md)。
+# 設定を変えたら vps2 の nginx にも同じ設定を入れること (deploy/nginx/qr.tommie.jp.conf)。
+#
+# 認証はここではやらない (docs/18-ログイン計画.md)。ログインしなくても
+# ヘッダの帯を出すため、Basic 認証はアプリへ移した (src/proxy.ts と src/lib/auth.ts)。
+# ここに basic_auth を戻すと、どのページを開いてもいきなり認証ダイアログが出る
+# 昔の挙動に戻る。公開してよいパスの一覧も src/lib/publicPaths.ts が正本
+# (かつてここにあった @pwa_public の移設先)。
 {$SITE_ADDRESS:localhost} {
 	# 画像アップロード (10MB) + multipart オーバーヘッドを許容しつつ、
-	# 巨大ボディによるメモリ枯渇をエッジで遮断する。
-	# handle の外に置いて全パスに効かせる: 下の @pwa_public は認証を外すため、
-	# ここが handle の内側だと未認証のまま無制限のボディを投げ込めてしまう
+	# 巨大ボディによるメモリ枯渇をエッジで遮断する
 	request_body {
 		max_size 12MB
 	}
 
-	# PWA: ブラウザは manifest とアイコンを Authorization ヘッダなしで取得するため、
-	# ここを認証下に置くと 401 になり「インストール可能」と判定されない。
-	# どちらも秘密情報を含まないので公開してよい
-	# icon-*.png は PWA 用、icon.svg はブラウザタブ用 (favicon)
-	@pwa_public path /manifest.webmanifest /icon-*.png /icon.svg /apple-icon.png
-	handle @pwa_public {
-		reverse_proxy app:3000
-	}
-
-	handle {
-		basic_auth {
-			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-		}
-		reverse_proxy app:3000
-	}
+	reverse_proxy app:3000
 }

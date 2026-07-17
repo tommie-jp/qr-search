@@ -1,7 +1,35 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import bcrypt from 'bcryptjs'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { POST as PostFn } from './route'
 import type { GET as GetFn } from './[name]/route'
 import type { PrismaClient } from '@/generated/prisma/client'
+
+// route を関数として直接呼ぶため、Next.js のリクエストスコープが無く headers() が
+// 投げる。ログイン検査 (lib/session.ts) が headers() を読むので、そこだけ差し替える。
+// 検査そのもの (bcrypt 照合) は本物を通す — モックすると、認証が壊れていても
+// 拒否系のテストが緑のままになる
+const mocks = vi.hoisted(() => ({ authorization: null as string | null }))
+vi.mock('next/headers', () => ({
+  headers: async () =>
+    new Headers(mocks.authorization ? { authorization: mocks.authorization } : {}),
+}))
+
+const PASSWORD = 'test-password'
+// コスト 4 で生成する (既定の 10 より速い。検算はハッシュ内のコストに従うため結果は同じ)
+const HASH = bcrypt.hashSync(PASSWORD, 4)
+const AUTH_HEADER = `Basic ${Buffer.from(`tommie:${PASSWORD}`, 'utf8').toString('base64')}`
+
+// 既定はログイン済み。拒否系が見たいのは「ログインの先にある検査」なので、
+// ログインで落ちてしまうと何も検査できない
+beforeEach(() => {
+  vi.stubEnv('BASIC_AUTH_USER', 'tommie')
+  vi.stubEnv('BASIC_AUTH_HASH_B64', Buffer.from(HASH, 'utf8').toString('base64'))
+  mocks.authorization = AUTH_HEADER
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 // 画像は DB (images テーブル) に格納するため、往復の検証には実 DB が要る。
 // DATABASE_URL があり かつ RUN_DB_TESTS=1 のときだけ実行する。
@@ -115,6 +143,33 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
     const [req, ctx] = getRequest('..%2F..%2Fetc%2Fpasswd')
     const res = await GET(req, ctx)
     expect(res.status).toBe(400)
+  })
+
+  // ログイン検査 (docs/18-ログイン計画.md)。proxy.ts も未ログインを 401 にするが、
+  // それは楽観的な検査でしかないので、route 自身が断れることをここで確かめる
+  describe('未ログイン', () => {
+    beforeEach(() => {
+      mocks.authorization = null
+    })
+
+    test('POST は 401 を返す', async () => {
+      const res = await POST(uploadRequest(pngFile()))
+      expect(res.status).toBe(401)
+    })
+
+    test('GET は 401 を返す (画像はメモの中身そのもの)', async () => {
+      const [req, ctx] = getRequest('00000000-0000-4000-8000-000000000000.png')
+      const res = await GET(req, ctx)
+      expect(res.status).toBe(401)
+    })
+
+    test('POST はファイル名の検査より先に断る (本文を読ませない)', async () => {
+      // 中身が不正でも 400 ではなく 401。ログインしていない相手のために
+      // 12MB のボディを読む理由はない
+      const bad = new File(['<svg onload=alert(1)>'], 'x.svg', { type: 'image/svg+xml' })
+      const res = await POST(uploadRequest(bad))
+      expect(res.status).toBe(401)
+    })
   })
 })
 

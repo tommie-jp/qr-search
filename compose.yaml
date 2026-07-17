@@ -34,6 +34,15 @@ services:
       APP_ENV: ${APP_ENV:-}
       # JAN の商品情報取得 (docs/14)。未設定でも起動する (取得しないだけ)
       YAHOO_SHOPPING_APP_ID: ${YAHOO_SHOPPING_APP_ID:-}
+      # ログイン (docs/18)。認証はエッジではなくアプリが行うので、app に渡す。
+      # :? で必須にする — 空だと誰もログインできず、全ページが「ログインが
+      # 必要です」になる。起動時に落として気づけるようにする。
+      #
+      # ハッシュを base64 で持つのは `$` 対策 (src/lib/auth.ts に理由を書いた)。
+      # 生 bcrypt を .env に置くと Next.js の env 展開が `$2b$10$…` を
+      # 変数参照とみなして値を壊す
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?BASIC_AUTH_USER is required}
+      BASIC_AUTH_HASH_B64: ${BASIC_AUTH_HASH_B64:?BASIC_AUTH_HASH_B64 is required}
     ports:
       # ローカル: tailscale serve 用 / vps2: nginx のプロキシ先 (loopback のみ)
       - "127.0.0.1:${APP_PORT:-3000}:3000"
@@ -55,10 +64,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      # proxy プロファイル使用時は .env での設定が必須 (空だと Caddy が起動時に失敗する)
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
-      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
-      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

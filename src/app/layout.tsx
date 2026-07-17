@@ -1,24 +1,24 @@
 import type { Metadata, Viewport } from "next";
-import { headers } from "next/headers";
 import Link from "next/link";
 import QRCode from "qrcode";
 import pkg from "../../package.json";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
+import { LoginButton } from "@/components/LoginButton";
 import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import {
   isProductionEnv,
   LOCAL_THEME_COLOR,
   PROD_THEME_COLOR,
 } from "@/lib/appEnv";
-import { parseBasicAuthUser } from "@/lib/auth";
+import { currentUser } from "@/lib/session";
 import { qrBaseUrl, SITE_DESCRIPTION, SITE_NAME, siteTitle } from "@/lib/site";
 import "./globals.css";
 
 // 静的な metadata / viewport オブジェクトではなく関数で出す。静的オブジェクトは
 // モジュール読み込み時に一度だけ評価されるため、prerender されるルートができた
 // 瞬間にビルド時 (APP_ENV なし = 非本番) の値が焼き付く。いまは layout が
-// headers() を呼ぶので全ルートが動的だが、それは APP_ENV とは無関係な事情であり、
-// 目印の正しさをその偶然に預けたくない
+// currentUser() 経由で headers() を呼ぶので全ルートが動的だが、それは APP_ENV とは
+// 無関係な事情であり、目印の正しさをその偶然に預けたくない
 export function generateMetadata(): Metadata {
   const title = siteTitle();
 
@@ -62,9 +62,10 @@ export default async function RootLayout({
     errorCorrectionLevel: "M",
   });
 
-  // Basic 認証は Caddy 側で行うため、直接 next dev を叩く開発時は
-  // Authorization ヘッダーがなく null になる。その場合は何も出さない
-  const user = parseBasicAuthUser((await headers()).get("authorization"));
+  // ヘッダの帯はログインしていなくても出す (docs/18-ログイン計画.md)。
+  // 未ログインならユーザー名の代わりにログインボタンを置く。
+  // 中身を守るのは proxy.ts と requireUser() の役目で、この帯ではない
+  const user = await currentUser();
 
   // 非本番は画面全体をピンクに塗る。Tailwind はソース中のクラス名を文字列として
   // 探すため、`bg-${color}-50` のような組み立てをすると CSS が生成されない。
@@ -111,10 +112,12 @@ export default async function RootLayout({
               >
                 GitHub
               </a>
-              {user && (
+              {user ? (
                 <span className="text-sm text-gray-500" title="ログイン中">
                   {user}
                 </span>
+              ) : (
+                <LoginButton />
               )}
             </div>
           </div>

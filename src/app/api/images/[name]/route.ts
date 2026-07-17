@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { prisma } from '@/lib/db'
 import { extForMime, isValidImageName } from '@/lib/uploads'
 
@@ -12,6 +13,13 @@ export async function GET(
   _request: Request,
   { params }: RouteContext,
 ): Promise<NextResponse> {
+  // 画像はメモの中身そのもの (メモに貼った写真) なので、ノート本文と同じく守る。
+  // 名前は UUID で当てられないが、当てにくさは認証の代わりにならない
+  const denied = await denyUnlessLoggedIn()
+  if (denied) {
+    return denied
+  }
+
   const { name } = await params
 
   if (!isValidImageName(name)) {
