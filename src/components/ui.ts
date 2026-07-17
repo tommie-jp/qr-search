@@ -26,6 +26,25 @@ export const ACTION_LINK_CLASS =
 export const DANGER_BUTTON_CLASS =
   "inline-flex min-h-11 items-center justify-center gap-1 rounded px-3 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 active:bg-red-100 disabled:opacity-50 disabled:hover:bg-transparent";
 
+// カード表示のとき、検索結果エリアだけを画面の広い側へはみ出させる
+// (docs/23-検索結果表示モード計画.md §1)。
+//
+// アプリの器は main の max-w-2xl (672px) で、これはメモの本文が読める行長に
+// 収めるための意図的な設計。だがカードのグリッドはその制約の対象ではなく、
+// 672px のままだと 320px 幅のカードが 2 つ入らず、PC でも永久に 1 カラムになる
+// (実測: ul は 640px で、2 カラムに 8px 足りない)。
+//
+// 仕組み: left-1/2 で親の中心まで送り、-translate-x-1/2 で自分の幅の半分だけ
+// 戻す。親と自分の幅を知らなくても中心が揃うので、main の幅を変えても壊れない。
+//
+// 100vw ではなく calc(100vw-4rem) なのは、100vw が縦スクロールバーの幅を含み、
+// そのままだと横スクロールバーが出るため。4rem の余白がそれを吸収する。
+//
+// lg: 以上に限るのは、狭い画面でこれをやる意味がないから。スマホは元から
+// 1 カラムで、はみ出させる余白も無い
+export const WIDE_RESULTS_CLASS =
+  "lg:relative lg:left-1/2 lg:w-[calc(100vw-4rem)] lg:max-w-6xl lg:-translate-x-1/2";
+
 // 編集フォームの下端に貼り付くボタン行 (docs/11-アプリ的UIUX計画.md §2-1)。
 // 長い本文でも一番下までスクロールせずに保存できる。
 // bottom-0 は画面の下端なので、ホームバーに潜らないよう自前で余白を持つ

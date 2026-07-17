@@ -9,11 +9,18 @@
 
 import { randomUUID } from 'node:crypto'
 import { prisma } from './db'
+import { makeThumbnail } from './thumbnail'
 
 // 画像を保存し、本文から参照する URL を返す。
 //
 // 名前は「サーバが生成した UUID + 対応拡張子」のみ。クライアント由来の
 // 文字列をパスに使わない (uploads.ts の isValidImageName と対になっている)。
+//
+// 一覧用のサムネもここで作る。画像を作る経路はこの関数しかないので
+// (docs/20-画像GC計画.md §1)、ここに置けばどの経路で入った画像にもサムネが付く。
+// 作れなかった場合は thumb が null のまま保存する — 画像そのものは正しく
+// 保存されており、一覧が原寸へフォールバックして遅くなるだけなので、
+// アップロードを失敗させる理由にはならない (thumbnail.ts のコメント参照)。
 export async function saveImage(
   // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける
   // (SharedArrayBuffer 由来のものは渡せない)
@@ -22,6 +29,7 @@ export async function saveImage(
   ext: string,
 ): Promise<string> {
   const name = `${randomUUID()}.${ext}`
-  await prisma.image.create({ data: { name, mime, data: bytes } })
+  const thumb = await makeThumbnail(bytes, name)
+  await prisma.image.create({ data: { name, mime, data: bytes, thumb } })
   return `/api/images/${name}`
 }

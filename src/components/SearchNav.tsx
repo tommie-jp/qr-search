@@ -61,14 +61,23 @@ export function SearchNavProvider({
 }
 
 // 反映待ちの間、結果を薄くして「今出ているのは古い結果」と伝える。
-// 中身 (件数・特性表・一覧・ページ送り) は Server Component のまま children で受ける
-export function SearchResults({ children }: { children: ReactNode }) {
+// 中身 (件数・特性表・一覧・ページ送り) は Server Component のまま children で受ける。
+//
+// className … カード表示のとき結果エリアだけを広げるため (WIDE_RESULTS_CLASS)。
+// 件数・特性表・一覧・ページ送りが揃って広がらないと、幅が食い違って見える
+export function SearchResults({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   const { isPending } = useSearchNav();
 
   return (
     <div
       aria-busy={isPending}
-      className={`space-y-4 transition-opacity ${isPending ? "opacity-50" : ""}`}
+      className={`space-y-4 transition-opacity ${isPending ? "opacity-50" : ""} ${className}`}
     >
       {children}
     </div>

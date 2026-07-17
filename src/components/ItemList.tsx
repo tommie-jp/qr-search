@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Item } from "@/generated/prisma/client";
 import type { Sort } from "@/lib/validation";
+import { DEFAULT_VIEW_MODE, type ViewMode } from "@/lib/viewMode";
 import { BulkTagToolbar } from "./BulkTagToolbar";
 import { ItemRow } from "./ItemRow";
+import { ViewModeToggle } from "./ViewModeToggle";
 import { ACTION_LINK_CLASS, PRIMARY_BUTTON_CLASS } from "./ui";
 
 // bulkTagAction をそのまま import すると db.ts (DATABASE_URL 必須) まで巻き込み
@@ -19,6 +21,10 @@ interface ItemListProps {
   page: number;
   sort: Sort;
   action: BulkTagAction;
+  // 表示モードと、その切替 (cookie を書くので prop で受け取る)。
+  // docs/23-検索結果表示モード計画.md
+  view?: ViewMode;
+  viewAction: BulkTagAction;
   // 選択したノートをゴミ箱へ入れる (docs/12-ゴミ箱計画.md §5)
   trashAction: BulkTagAction;
   // 0 件の検索語をタグにした新規ノートの編集ページ。タグにできない語
@@ -34,12 +40,19 @@ function emptyState(
   query: string,
   registerHref: string | null,
   trashedMatches: number,
+  view: ViewMode,
 ) {
   if (items.length > 0) {
     return null;
   }
   return (
-    <li className="space-y-3 px-4 py-6 text-center text-gray-500">
+    // カード表示では ul が枠を持たない (グリッドの器でしかない) ので、
+    // 案内は自前で枠を張り、全カラムに渡す
+    <li
+      className={`space-y-3 px-4 py-6 text-center text-gray-500 ${
+        view === "card" ? "col-span-full rounded border border-gray-200 bg-white" : ""
+      }`}
+    >
       <p>該当する部品がありません</p>
       {trashedMatches > 0 && (
         // 消したノートを探して 0 件のときと、ゴミ箱のノートと同じコードを
@@ -80,6 +93,8 @@ export function ItemList({
   page,
   sort,
   action,
+  view = DEFAULT_VIEW_MODE,
+  viewAction,
   trashAction,
   registerHref,
   trashedMatches,
@@ -103,13 +118,26 @@ export function ItemList({
     setSelected(new Set());
   };
 
+  // 小 … 今までどおりの 1 カラムの一覧 (区切り線で仕切る)。
+  // 大 … カードを敷き詰めるグリッド。**カラム数は指定しない**。auto-fill に
+  //      任せることで、スマホは 1 列・タブレット/PC は 2 列以上と画面が決める。
+  //      20rem を下限にするのは、これより狭いカードではタイトルも本文 3 行も
+  //      読めず、密度を上げた意味が無くなるため。
+  //
+  //      下限が min(20rem, 100%) なのは必須。素の minmax(20rem, 1fr) だと、
+  //      器が 20rem より狭い画面 (実測: 320px 端末で器は 273px) でも列が 20rem に
+  //      広がり、横スクロールが出る。100% との min を取ることで、狭い画面では
+  //      「器いっぱいの 1 列」に畳まれる
   const listClass =
-    "divide-y divide-gray-200 rounded border border-gray-200 bg-white";
+    view === "card"
+      ? "grid gap-2 grid-cols-[repeat(auto-fill,minmax(min(20rem,100%),1fr))]"
+      : "divide-y divide-gray-200 rounded border border-gray-200 bg-white";
 
   if (!selectMode) {
     return (
       <div className="space-y-2">
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <ViewModeToggle view={view} action={viewAction} />
           <button
             type="button"
             onClick={() => setSelectMode(true)}
@@ -120,9 +148,9 @@ export function ItemList({
         </div>
         <ul className={listClass}>
           {items.map((item) => (
-            <ItemRow key={item.itemNo} item={item} />
+            <ItemRow key={item.itemNo} item={item} view={view} />
           ))}
-          {emptyState(items, query, registerHref, trashedMatches)}
+          {emptyState(items, query, registerHref, trashedMatches, view)}
         </ul>
       </div>
     );
@@ -146,6 +174,7 @@ export function ItemList({
           <ItemRow
             key={item.itemNo}
             item={item}
+            view={view}
             checkbox={
               <input
                 type="checkbox"
@@ -159,7 +188,7 @@ export function ItemList({
             }
           />
         ))}
-        {emptyState(items, query, null, 0)}
+        {emptyState(items, query, null, 0, view)}
       </ul>
     </form>
   );

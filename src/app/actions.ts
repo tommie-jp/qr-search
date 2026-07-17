@@ -1,5 +1,6 @@
 'use server'
 
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { parseBulkTagForm } from '@/lib/bulkTags'
@@ -16,6 +17,11 @@ import { parseBackUrl, parseSelectedItemNos } from '@/lib/itemSelection'
 import { requireUser } from '@/lib/session'
 import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
 import { isValidItemNo, parseMode } from '@/lib/validation'
+import {
+  parseViewMode,
+  VIEW_MODE_COOKIE,
+  VIEW_MODE_COOKIE_MAX_AGE,
+} from '@/lib/viewMode'
 
 const MAX_TEXT_LENGTH = 10000
 
@@ -127,6 +133,49 @@ export async function emptyTrashAction(): Promise<void> {
   await emptyTrash()
   revalidatePath('/')
   revalidatePath('/trash')
+}
+
+// 検索結果の表示モード (小/大) を切り替える (docs/23-検索結果表示モード計画.md §5)。
+//
+// cookie を書くのでサーバアクションにする。Server Component の描画中は
+// Set-Cookie を出せない (next/headers の cookies.md)。フォームの action に
+// 置けば、書き換えたあと同じページが描き直されるので、クライアント JS は要らない。
+//
+// 他のアクションと違い requireUser() を呼ばない。書き換わるのは呼び手自身の
+// ブラウザに載る「見た目の好み」だけで、DB にも他人にも触れないため。
+// (未ログインでも開ける公開ノートの一覧はないが、あっても実害はない)
+export async function setViewModeAction(formData: FormData): Promise<void> {
+  const mode = parseViewMode(formData.get(VIEW_MODE_COOKIE))
+
+  const store = await cookies()
+  store.set(VIEW_MODE_COOKIE, mode, {
+    // サーバしか読まない (描画前に読めることがこの方式の要)。
+    // クライアント JS へ見せる理由がないので閉じておく
+    httpOnly: true,
+    // HTTPS でだけ送る。ローカル開発は http なので付けない
+    // (付けるとローカルで cookie が保存されず、切り替えが効かなくなる)
+    secure: process.env.NODE_ENV === 'production',
+    // 他サイトからの遷移で好みが飛ばない程度に緩く。strict にすると
+    // 外部リンクから戻ったときだけ既定に見え、消えたと誤解される
+    sameSite: 'lax',
+    path: '/',
+    maxAge: VIEW_MODE_COOKIE_MAX_AGE,
+  })
+
+  // **revalidatePath は呼ばない。**
+  //
+  // 一度 revalidatePath('/', 'layout') を置いていたが、これは `/` 配下の
+  // *全ルート* を無効にする。静的な /manifest.webmanifest まで再生成対象になり、
+  // Next がその prerender キャッシュを書き直そうとする。ところがコンテナは
+  // node ユーザーで動くのに .next は root 所有 (Dockerfile の COPY) なので
+  // 書けず、切り替えるたびにサーバログへ警告が出た。
+  //
+  //   Failed to update prerender cache for /manifest.webmanifest
+  //   EACCES: permission denied, open '/app/.next/server/app/manifest.webmanifest.body'
+  //
+  // そもそも不要だった。一覧は force-dynamic でサーバ側にキャッシュが無く、
+  // フォームの action から呼ばれたサーバアクションは、その場のページを
+  // Next が描き直す (Router Cache も一緒に更新される)。
 }
 
 // 検索結果で選択した複数ノートへ、タグをまとめて追加/削除する。

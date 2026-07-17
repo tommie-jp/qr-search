@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import type { Item } from "@/generated/prisma/client";
+import type { ViewMode } from "@/lib/viewMode";
 import { ItemList } from "./ItemList";
 
 function makeItem(overrides: Partial<Item> = {}): Item {
@@ -26,6 +27,7 @@ const render = (
   query = "",
   registerHref: string | null = null,
   trashedMatches = 0,
+  view: ViewMode = "compact",
 ) =>
   renderToStaticMarkup(
     <ItemList
@@ -34,6 +36,8 @@ const render = (
       page={1}
       sort="updated"
       action={noop}
+      view={view}
+      viewAction={noop}
       trashAction={noop}
       registerHref={registerHref}
       trashedMatches={trashedMatches}
@@ -108,4 +112,41 @@ test("ゴミ箱の案内と「新規登録」は共存する (復元か新規か
   const html = render([], "9784873115658", "/edit/4952?code=9784873115658", 1);
   expect(html).toContain("ゴミ箱に 1 件");
   expect(html).toContain("新規登録");
+});
+
+// 表示モード (docs/23-検索結果表示モード計画.md)
+
+test("表示モードの切替を出し、いま選ばれている側が判る", () => {
+  const html = render([makeItem()], "", null, 0, "compact");
+  expect(html).toContain("表示");
+  expect(html).toContain('value="compact"');
+  expect(html).toContain('value="card"');
+  // 押さなくても現在のモードが見える (ドロップダウンにしない理由)
+  expect(html).toContain('value="compact" aria-pressed="true"');
+});
+
+test("カード表示はカラム数を指定せず画面幅に任せる", () => {
+  // スマホ 1 列 / PC 2 列以上は auto-fill が決める。モードでカラム数を
+  // 固定すると、狭い画面で 2 列になり何も読めなくなる
+  const html = render([makeItem()], "", null, 0, "card");
+  expect(html).toContain("auto-fill");
+});
+
+test("カードの下限幅は器の幅で頭打ちにする (狭い画面で横スクロールを出さない)", () => {
+  // 素の minmax(20rem,1fr) だと、器が 20rem より狭い画面 (実測: 320px 端末で
+  // 器は 273px) でも列が 20rem に広がり横スクロールが出た
+  const html = render([makeItem()], "", null, 0, "card");
+  expect(html).toContain("minmax(min(20rem,100%),1fr)");
+});
+
+test("小表示は今までどおりの 1 カラムの一覧 (グリッドにしない)", () => {
+  const html = render([makeItem()], "", null, 0, "compact");
+  expect(html).toContain("divide-y");
+  expect(html).not.toContain("auto-fill");
+});
+
+test("0 件の案内はカード表示でも全カラムに渡す", () => {
+  const html = render([], "", null, 0, "card");
+  expect(html).toContain("該当する部品がありません");
+  expect(html).toContain("col-span-full");
 });

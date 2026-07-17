@@ -1,12 +1,17 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
-import { bulkTagAction, trashItemsAction } from "@/app/actions";
+import {
+  bulkTagAction,
+  setViewModeAction,
+  trashItemsAction,
+} from "@/app/actions";
 import { ItemList } from "@/components/ItemList";
 import { PageTransition } from "@/components/PageTransition";
 import { PendingLink } from "@/components/PendingLink";
 import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
-import { ACTION_LINK_CLASS } from "@/components/ui";
+import { ACTION_LINK_CLASS, WIDE_RESULTS_CLASS } from "@/components/ui";
 import {
   countTrashedItems,
   countTrashedMatches,
@@ -20,6 +25,7 @@ import { queryHasTagTerm } from "@/lib/search";
 import { buildSearchUrl } from "@/lib/searchUrl";
 import { qrStickerHost } from "@/lib/site";
 import { parseSort } from "@/lib/validation";
+import { parseViewMode, VIEW_MODE_COOKIE } from "@/lib/viewMode";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +37,10 @@ export default async function Home({ searchParams }: HomeProps) {
   const { q = "", page = "1", sort: sortParam } = await searchParams;
   const query = q.trim();
   const sort = parseSort(sortParam);
+  // 表示モードは検索状態ではなく端末ごとの好みなので URL ではなく cookie。
+  // ここ (サーバ) で読めるから初回描画から正しい見た目で出る
+  // (docs/23-検索結果表示モード計画.md §5)
+  const view = parseViewMode((await cookies()).get(VIEW_MODE_COOKIE)?.value);
   // 特性表はタグ検索のときだけ出す。表は「同族の部品を並べて比べる」ビューで、
   // タグ検索がまさにその族の指定だから (docs/08-プロパティ計画.md §4)。
   const showProps = queryHasTagTerm(query);
@@ -73,7 +83,10 @@ export default async function Home({ searchParams }: HomeProps) {
             stickerHost={qrStickerHost()}
           />
 
-          <SearchResults>
+          {/* カード表示のときだけ結果エリアを画面の広い側へ広げる。
+              器 (main) は 672px で、そのままでは 320px のカードが 2 つ入らず
+              PC でも 1 カラムのままになる (docs/23 §1 / ui.ts) */}
+          <SearchResults className={view === "card" ? WIDE_RESULTS_CLASS : ""}>
             <div className="flex items-center justify-between text-sm">
               <p className="flex items-baseline gap-2 text-gray-600">
                 <span>
@@ -139,6 +152,8 @@ export default async function Home({ searchParams }: HomeProps) {
               page={result.page}
               sort={sort}
               action={bulkTagAction}
+              view={view}
+              viewAction={setViewModeAction}
               trashAction={trashItemsAction}
               registerHref={registerHref}
               trashedMatches={trashedMatches}

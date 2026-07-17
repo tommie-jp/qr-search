@@ -113,6 +113,13 @@ function parsePropLine(line: string): PropEntry[] | null {
   return entries
 }
 
+// 1 行がプロパティ行 (全トークンが key=value) か。
+// 一覧の本文プレビュー (memoPreview) が「特性表に出る行」を落とすのに使う。
+// 線引きを 2 か所に書き分けないよう、判定はこの 1 つに寄せる。
+export function isPropLine(line: string): boolean {
+  return parsePropLine(stripNonProse(line)) !== null
+}
+
 // メモ本文からプロパティを抽出する (初出順・キー重複は先勝ち)。
 export function extractProps(memo: string): PropEntry[] {
   const seen = new Set<string>()
