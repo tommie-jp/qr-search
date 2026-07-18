@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/components/ui";
+import {
+  BUSY_NOTICE_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  SECONDARY_BUTTON_CLASS,
+} from "@/components/ui";
 import { rankItems, type ImageVectorEntry, type ItemMatch } from "@/lib/imageSearch";
 import { thumbUrl } from "@/lib/memoImages";
 import { captureSquareBitmap } from "./imageSearch/capture";
@@ -307,7 +311,7 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
               // 初回は数十 MB のモデル取得で待ちが長いので、赤背景で明示する
               <p
                 aria-live="polite"
-                className="absolute inset-x-2 bottom-2 rounded bg-red-600/90 px-3 py-2 text-center text-sm font-medium text-white"
+                className={`${BUSY_NOTICE_CLASS} absolute inset-x-2 bottom-2 text-center`}
               >
                 モデルを準備しています (初回のみ)…
               </p>

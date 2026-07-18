@@ -10,7 +10,11 @@ import { imageAtCursor, ocrInsertion, ocrPlaceholder } from "@/lib/ocr/ocrQuote"
 import { fenceLanguageCompletion } from "./fenceCompletion";
 import { fenceLanguageLinter } from "./fenceLinter";
 import { isOcrReady, ocrImageToQuote } from "./ocr/ocrService";
-import { SECONDARY_BUTTON_CLASS } from "./ui";
+import {
+  BUSY_NOTICE_CLASS,
+  BUSY_SPINNER_CLASS,
+  SECONDARY_BUTTON_CLASS,
+} from "./ui";
 
 export interface MemoEditorInnerProps {
   value: string;
@@ -104,8 +108,9 @@ export default function MemoEditorInner({
   // 実行中の OCR の本数 (複数画像を続けて OCR できる)。0 より大きい間は
   // 「OCR処理中」を出し、フォーム送信を止める (結果が本文に入る前に更新しない)。
   const [ocrCount, setOcrCount] = useState(0);
-  // OCR の情報表示 (エラーではない「見つかりませんでした」など)。error は赤、
-  // こちらは灰で出す。
+  // OCR の情報表示 (エラーではない「準備中」「見つかりませんでした」など)。
+  // 初回はモデル取得で待ちが長く、灰色だと埋もれて「固まった」と誤解される
+  // ため、画像検索の準備中バナーと同じ赤背景で目立たせる (ImageSearchModal)。
   const [ocrNote, setOcrNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // undo / redo ボタンの活殺 (docs/11-アプリ的UIUX計画.md §2-4)。
@@ -403,14 +408,9 @@ export default function MemoEditorInner({
         <p
           aria-live="polite"
           aria-busy={ocrCount > 0}
-          className="flex items-center gap-2 rounded bg-gray-50 px-3 py-2 text-sm text-gray-600"
+          className={`${BUSY_NOTICE_CLASS} flex items-center gap-2`}
         >
-          {ocrCount > 0 && (
-            <span
-              aria-hidden
-              className="size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-500"
-            />
-          )}
+          {ocrCount > 0 && <span aria-hidden className={BUSY_SPINNER_CLASS} />}
           {ocrNote}
         </p>
       )}

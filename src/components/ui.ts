@@ -21,6 +21,16 @@ export const SECONDARY_BUTTON_CLASS =
 export const ACTION_LINK_CLASS =
   "inline-flex min-h-11 items-center gap-1.5 rounded px-2 text-sm text-blue-600 transition-colors active:bg-blue-50";
 
+// 時間のかかる準備・処理中の知らせ (OCR、画像検索のモデル準備、書誌取得など)。
+// 灰色の小さな文字だと埋もれて「固まった」と誤解されるため、赤背景で統一して
+// 目立たせる。置き場所ごとのレイアウト (flex / absolute) は使う側で足す
+export const BUSY_NOTICE_CLASS =
+  "rounded bg-red-600/90 px-3 py-2 text-sm font-medium text-white";
+
+// BUSY_NOTICE_CLASS の中に置くスピナー (赤背景に合わせた白系)
+export const BUSY_SPINNER_CLASS =
+  "size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white";
+
 // 破壊的な操作 (ゴミ箱へ / 永久削除)。赤は「戻せないかもしれない」の合図で、
 // 押す前に一拍置かせる。枠は持たせない (主ボタンと同格に見せない)
 export const DANGER_BUTTON_CLASS =

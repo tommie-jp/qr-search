@@ -3,7 +3,12 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { draftStorageKey, loadDraft, persistDraft } from "@/lib/memoDraft";
-import { MEMO_INPUT_CLASS, SECONDARY_BUTTON_CLASS } from "./ui";
+import {
+  BUSY_NOTICE_CLASS,
+  BUSY_SPINNER_CLASS,
+  MEMO_INPUT_CLASS,
+  SECONDARY_BUTTON_CLASS,
+} from "./ui";
 import {
   type PrefillKind,
   type PrefillStatus,
@@ -41,24 +46,26 @@ function prefillMessage(kind: PrefillKind, status: PrefillStatus): string {
 }
 
 // 取得の状況。min-h で 1 行ぶんの高さを確保し、文言が消えるときに
-// エディタが動かないようにする (打っている最中に入力欄がずれない)
+// エディタが動かないようにする (打っている最中に入力欄がずれない)。
+// 取得中 (= 時間のかかる準備) だけは赤背景バナーで目立たせる。取得は
+// ページを開いた直後に走るので、解消時の高さ変化が打鍵とぶつかることはない
 function PrefillNotice({ kind, status }: { kind: PrefillKind; status: PrefillStatus }) {
   const message = prefillMessage(kind, status);
+  const isLoading = status === "loading";
   return (
     <p
       // 後から届く知らせなので、読み上げにも伝える
       aria-live="polite"
-      aria-busy={status === "loading"}
-      className={`flex min-h-5 items-center gap-2 text-sm ${
-        status === "error" ? "text-red-700" : "text-gray-500"
-      }`}
+      aria-busy={isLoading}
+      className={
+        isLoading
+          ? `${BUSY_NOTICE_CLASS} flex items-center gap-2`
+          : `flex min-h-5 items-center gap-2 text-sm ${
+              status === "error" ? "text-red-700" : "text-gray-500"
+            }`
+      }
     >
-      {status === "loading" && (
-        <span
-          aria-hidden
-          className="size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-500"
-        />
-      )}
+      {isLoading && <span aria-hidden className={BUSY_SPINNER_CLASS} />}
       {message}
     </p>
   );
