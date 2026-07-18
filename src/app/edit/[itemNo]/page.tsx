@@ -90,7 +90,12 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
             </label>
           </fieldset>
 
-          <MemoEditor defaultValue={defaultMemo} autoFocus prefill={prefill} />
+          <MemoEditor
+            defaultValue={defaultMemo}
+            autoFocus
+            prefill={prefill}
+            draftKey={itemNo}
+          />
           <textarea
             name="url"
             rows={3}

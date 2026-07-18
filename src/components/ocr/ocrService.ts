@@ -34,6 +34,14 @@ const DET_MODEL_NAME = 'PP-OCRv5_mobile_det'
 const REC_MODEL_NAME = 'PP-OCRv5_mobile_rec'
 const MODEL_BASE_PATH = '/paddle-ocr/'
 
+// OCR に渡す画像の長辺の上限。アップロード保存は実質原寸 (webp の上限
+// 16383px のみ) なので、iPhone の 12〜48MP 写真がそのまま入り得る。
+// OpenCV の行列は「幅×高さ×4 バイト」を何面も持つため、原寸のまま通すと
+// iOS WebKit のタブ上限を超えて**ページごと再起動**する (エディタの内容が
+// 消えたように見える)。長辺 2048px なら行列 1 面 16MB 程度で、ラベル・
+// 書籍ページの印刷文字には足りる
+const MAX_OCR_SIDE = 2048
+
 type SdkModule = typeof import('@paddleocr/paddleocr-js')
 type OcrService = Awaited<ReturnType<SdkModule['PaddleOCR']['create']>>
 
@@ -50,8 +58,11 @@ async function createService(): Promise<OcrService> {
     textRecognitionModelName: REC_MODEL_NAME,
     textRecognitionModelAsset: { url: `${MODEL_BASE_PATH}${REC_MODEL_NAME}.tar` },
     ortOptions: {
-      // WebGPU が使える端末では速い。使えなければ SDK 側で wasm に落ちる。
-      backend: 'auto',
+      // wasm に固定する。'auto' は WebGPU が見えると WebGPU を選ぶが、
+      // iOS WebKit の WebGPU はメモリを余分に食い、挙動もまだ枯れていない。
+      // 画像検索の embedder と同じ「WASM で動くのが基準性能」の方針に合わせ、
+      // 全端末で同じ経路を踏む (PC の高速化は必要になってから戻す)
+      backend: 'wasm',
       wasmPaths: WASM_BASE_PATH,
     },
   })
@@ -73,6 +84,23 @@ export function preloadOcr(): void {
   }
 }
 
+// 大きすぎる画像を OCR 用に縮める。上限以下ならそのまま返す。
+async function toOcrBitmap(blob: Blob): Promise<ImageBitmap> {
+  const bitmap = await createImageBitmap(blob)
+  const side = Math.max(bitmap.width, bitmap.height)
+  if (side <= MAX_OCR_SIDE) {
+    return bitmap
+  }
+  const scale = MAX_OCR_SIDE / side
+  const resized = await createImageBitmap(bitmap, {
+    resizeWidth: Math.round(bitmap.width * scale),
+    resizeHeight: Math.round(bitmap.height * scale),
+    resizeQuality: 'high',
+  })
+  bitmap.close()
+  return resized
+}
+
 // 画像 1 枚を OCR し、日本語優先で整えた引用ブロックを返す。
 // 文字が取れなければ空文字を返す (呼び手はこれを「見つからなかった」に使う)。
 export async function ocrImageToQuote(blob: Blob): Promise<string> {
@@ -81,13 +109,27 @@ export async function ocrImageToQuote(blob: Blob): Promise<string> {
   }
   const service = await servicePromise
 
-  // predict は Blob をそのまま受け取れる。返るのは入力 1 枚につき 1 要素の配列。
-  const [result] = await service.predict(blob)
-  if (!result) {
-    return ''
-  }
+  // 原寸ではなく縮小した ImageBitmap を渡す (MAX_OCR_SIDE の理由を参照)。
+  // 返るのは入力 1 枚につき 1 要素の配列。
+  //
+  // 検出段はさらに長辺 960 まで縮めて掛ける (PP-OCR の伝統的な既定)。
+  // SDK の既定 (短辺 64 以上・上限 4000) は大きな文字で検出が細切れになる
+  // (拡大画像の実測: 1 文字が複数の断片に割れて読み順も壊れた)。
+  // 認識段は縮小前の切り抜きを使うので、小さな文字の画質は落ちない
+  const bitmap = await toOcrBitmap(blob)
+  try {
+    const [result] = await service.predict(bitmap, {
+      text_det_limit_side_len: 960,
+      text_det_limit_type: 'max',
+    })
+    if (!result) {
+      return ''
+    }
 
-  // items は検出器の出力順なので、読み順 (縦書きなら右→左) に並べ替えてから
-  // 引用ブロックへ整形する。
-  return formatOcrQuote(orderOcrItems(result.items))
+    // items は検出器の出力順なので、読み順 (縦書きなら右→左) に並べ替えてから
+    // 引用ブロックへ整形する。
+    return formatOcrQuote(orderOcrItems(result.items))
+  } finally {
+    bitmap.close()
+  }
 }
