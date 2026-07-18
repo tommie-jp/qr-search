@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { Suspense } from "react";
 import {
   bulkTagAction,
   setViewModeAction,
@@ -11,7 +12,12 @@ import { PendingLink } from "@/components/PendingLink";
 import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
-import { ACTION_LINK_CLASS, WIDE_RESULTS_CLASS } from "@/components/ui";
+import {
+  ACTION_LINK_CLASS,
+  BUSY_NOTICE_CLASS,
+  BUSY_SPINNER_CLASS,
+  WIDE_RESULTS_CLASS,
+} from "@/components/ui";
 import {
   countTrashedItems,
   countTrashedMatches,
@@ -41,12 +47,70 @@ export default async function Home({ searchParams }: HomeProps) {
   // ここ (サーバ) で読めるから初回描画から正しい見た目で出る
   // (docs/23-検索結果表示モード計画.md §5)
   const view = parseViewMode((await cookies()).get(VIEW_MODE_COOKIE)?.value);
+  // 検索窓のタグ補完だけは固定部と一緒に引く (小さな表 1 つで速い)。
+  // 重い検索本体は HomeResults に隔離して Suspense で後から流す —
+  // ログイン直後や直リンクの初回表示で、固定部 (検索窓) を先に出すため
+  const tags = await listTags();
+
+  return (
+    // 検索窓と結果をまとめて包み、打つそばからの URL 書き換えと待ち状態を
+    // 共有する (docs/11-アプリ的UIUX計画.md §3)。
+    // 以前ここにあった key={query} は外した。1 文字ごとの書き換えで
+    // 作り直されるとフォーカスもキャレットも飛んでしまうため。外からの遷移
+    // (スキャン・タグリンク) での窓の追従は SearchForm 側で面倒を見る。
+    // stickerHost … シールに焼かれたホストは QR_BASE_URL 固定で、
+    // アプリを開いているホスト (localhost 等) とは食い違いうる
+    <SearchNavProvider sort={sort}>
+      <PageTransition>
+        <div className="space-y-4">
+          <SearchForm
+            initialQuery={query}
+            tags={tags.map((t) => t.tag)}
+            stickerHost={qrStickerHost()}
+          />
+
+          {/* 検索本体は Suspense で後送り。初回のドキュメント読み込み
+              (ログイン直後など) は固定部が先に出て、結果は届き次第差し替わる。
+              クライアント遷移 (打鍵での URL 書き換え・ページ送り) では
+              このフォールバックは出ない (App Router は表示済みの内容を保つ)
+              ので、既存の PendingLink のスピナーはそのまま生きる */}
+          <Suspense
+            fallback={
+              <p
+                role="status"
+                className={`${BUSY_NOTICE_CLASS} flex items-center gap-2`}
+              >
+                <span aria-hidden className={BUSY_SPINNER_CLASS} />
+                検索結果を読み込み中…
+              </p>
+            }
+          >
+            <HomeResults query={query} page={page} sort={sort} view={view} />
+          </Suspense>
+        </div>
+      </PageTransition>
+    </SearchNavProvider>
+  );
+}
+
+// 検索の重い部分 (DB 問い合わせと結果表示) をまとめた非公開のサーバ
+// コンポーネント。Home 本体はここを await しないので、固定部が先に流れる
+async function HomeResults({
+  query,
+  page,
+  sort,
+  view,
+}: {
+  query: string;
+  page: string;
+  sort: ReturnType<typeof parseSort>;
+  view: ReturnType<typeof parseViewMode>;
+}) {
   // 特性表はタグ検索のときだけ出す。表は「同族の部品を並べて比べる」ビューで、
   // タグ検索がまさにその族の指定だから (docs/08-プロパティ計画.md §4)。
   const showProps = queryHasTagTerm(query);
-  const [result, tags, props, trashCount] = await Promise.all([
+  const [result, props, trashCount] = await Promise.all([
     searchItems(query, Number(page) || 1, sort),
-    listTags(),
     showProps
       ? searchItemProps(query, sort)
       : Promise.resolve({ rows: [], omitted: 0 }),
@@ -67,126 +131,97 @@ export default async function Home({ searchParams }: HomeProps) {
   const registerHref = nextNo === null ? null : scanRegisterHref(nextNo, query);
 
   return (
-    // 検索窓と結果をまとめて包み、打つそばからの URL 書き換えと待ち状態を
-    // 共有する (docs/11-アプリ的UIUX計画.md §3)。
-    // 以前ここにあった key={query} は外した。1 文字ごとの書き換えで
-    // 作り直されるとフォーカスもキャレットも飛んでしまうため。外からの遷移
-    // (スキャン・タグリンク) での窓の追従は SearchForm 側で面倒を見る。
-    // stickerHost … シールに焼かれたホストは QR_BASE_URL 固定で、
-    // アプリを開いているホスト (localhost 等) とは食い違いうる
-    <SearchNavProvider sort={sort}>
-      <PageTransition>
-        <div className="space-y-4">
-          <SearchForm
-            initialQuery={query}
-            tags={tags.map((t) => t.tag)}
-            stickerHost={qrStickerHost()}
-          />
-
-          {/* カード表示のときだけ結果エリアを画面の広い側へ広げる。
-              器 (main) は 672px で、そのままでは 320px のカードが 2 つ入らず
-              PC でも 1 カラムのままになる (docs/23 §1 / ui.ts) */}
-          <SearchResults className={view === "card" ? WIDE_RESULTS_CLASS : ""}>
-            <div className="flex items-center justify-between text-sm">
-              <p className="flex items-baseline gap-2 text-gray-600">
-                <span>
-                  {query ? `「${query}」の検索結果: ` : "すべて: "}
-                  {result.total} 件
-                </span>
-                <Link
-                  href="/docs/search"
-                  className="text-xs text-blue-600 underline"
-                >
-                  検索ヘルプ
-                </Link>
-                {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
-                {trashCount > 0 && (
-                  <Link
-                    href="/trash"
-                    transitionTypes={["nav-forward"]}
-                    className="text-xs text-blue-600 underline"
-                  >
-                    ゴミ箱 ({trashCount})
-                  </Link>
-                )}
-              </p>
-              {/* 並び替え・ページ送りは同じルートの searchParams だけを変える
+    <SearchResults className={view === "card" ? WIDE_RESULTS_CLASS : ""}>
+      <div className="flex items-center justify-between text-sm">
+        <p className="flex items-baseline gap-2 text-gray-600">
+          <span>
+            {query ? `「${query}」の検索結果: ` : "すべて: "}
+            {result.total} 件
+          </span>
+          <Link href="/docs/search" className="text-xs text-blue-600 underline">
+            検索ヘルプ
+          </Link>
+          {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
+          {trashCount > 0 && (
+            <Link
+              href="/trash"
+              transitionTypes={["nav-forward"]}
+              className="text-xs text-blue-600 underline"
+            >
+              ゴミ箱 ({trashCount})
+            </Link>
+          )}
+        </p>
+        {/* 並び替え・ページ送りは同じルートの searchParams だけを変える
                 遷移で loading.tsx の骨組みが出ないため、リンク側でスピナーを出す */}
-              <p className="flex gap-1">
-                {sort === "itemNo" ? (
-                  <span
-                    className={`${ACTION_LINK_CLASS} font-bold text-gray-900`}
-                  >
-                    番号順
-                  </span>
-                ) : (
-                  <PendingLink
-                    href={buildSearchUrl(query, 1, "itemNo")}
-                    className={ACTION_LINK_CLASS}
-                  >
-                    番号順
-                  </PendingLink>
-                )}
-                {sort === "updated" ? (
-                  <span
-                    className={`${ACTION_LINK_CLASS} font-bold text-gray-900`}
-                  >
-                    更新順
-                  </span>
-                ) : (
-                  <PendingLink
-                    href={buildSearchUrl(query, 1, "updated")}
-                    className={ACTION_LINK_CLASS}
-                  >
-                    更新順
-                  </PendingLink>
-                )}
-              </p>
-            </div>
+        <p className="flex gap-1">
+          {sort === "itemNo" ? (
+            <span className={`${ACTION_LINK_CLASS} font-bold text-gray-900`}>
+              番号順
+            </span>
+          ) : (
+            <PendingLink
+              href={buildSearchUrl(query, 1, "itemNo")}
+              className={ACTION_LINK_CLASS}
+            >
+              番号順
+            </PendingLink>
+          )}
+          {sort === "updated" ? (
+            <span className={`${ACTION_LINK_CLASS} font-bold text-gray-900`}>
+              更新順
+            </span>
+          ) : (
+            <PendingLink
+              href={buildSearchUrl(query, 1, "updated")}
+              className={ACTION_LINK_CLASS}
+            >
+              更新順
+            </PendingLink>
+          )}
+        </p>
+      </div>
 
-            <PropsTable rows={props.rows} omitted={props.omitted} />
+      <PropsTable rows={props.rows} omitted={props.omitted} />
 
-            <ItemList
-              items={result.items}
-              query={query}
-              page={result.page}
-              sort={sort}
-              action={bulkTagAction}
-              view={view}
-              viewAction={setViewModeAction}
-              trashAction={trashItemsAction}
-              registerHref={registerHref}
-              trashedMatches={trashedMatches}
-            />
+      <ItemList
+        items={result.items}
+        query={query}
+        page={result.page}
+        sort={sort}
+        action={bulkTagAction}
+        view={view}
+        viewAction={setViewModeAction}
+        trashAction={trashItemsAction}
+        registerHref={registerHref}
+        trashedMatches={trashedMatches}
+      />
 
-            <div className="flex items-center justify-between text-sm">
-              {result.page > 1 ? (
-                <PendingLink
-                  href={buildSearchUrl(query, result.page - 1, sort)}
-                  className={ACTION_LINK_CLASS}
-                >
-                  ← 前へ
-                </PendingLink>
-              ) : (
-                <span />
-              )}
-              <span className="text-gray-500">
-                {result.page} / {result.pageCount} ページ
-              </span>
-              {result.page < result.pageCount ? (
-                <PendingLink
-                  href={buildSearchUrl(query, result.page + 1, sort)}
-                  className={ACTION_LINK_CLASS}
-                >
-                  次へ →
-                </PendingLink>
-              ) : (
-                <span />
-              )}
-            </div>
-          </SearchResults>
-        </div>
-      </PageTransition>
-    </SearchNavProvider>
+      <div className="flex items-center justify-between text-sm">
+        {result.page > 1 ? (
+          <PendingLink
+            href={buildSearchUrl(query, result.page - 1, sort)}
+            className={ACTION_LINK_CLASS}
+          >
+            ← 前へ
+          </PendingLink>
+        ) : (
+          <span />
+        )}
+        <span className="text-gray-500">
+          {result.page} / {result.pageCount} ページ
+        </span>
+        {result.page < result.pageCount ? (
+          <PendingLink
+            href={buildSearchUrl(query, result.page + 1, sort)}
+            className={ACTION_LINK_CLASS}
+          >
+            次へ →
+          </PendingLink>
+        ) : (
+          <span />
+        )}
+      </div>
+    </SearchResults>
   );
 }
