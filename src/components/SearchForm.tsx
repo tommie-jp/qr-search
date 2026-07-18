@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
+import { PendingLink } from "@/components/PendingLink";
 import { useSearchNav } from "@/components/SearchNav";
 import {
   BOX_CLASS,
@@ -205,8 +206,17 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
   };
 
   return (
-    <form method="GET" action="/" onSubmit={handleSubmit} className="relative flex gap-2">
-      <div className="relative w-full">
+    // ボタンが 4 つに増えて (スキャン・画像検索・検索・+)、狭い画面では
+    // 一列に収まらなくなった。flex-wrap + 入力窓の min-w で「入りきらなければ
+    // ボタン列を次の行へ送る」ようにする。折り返さないままだと入力窓が
+    // 潰されて (375px で実測 26px)、横スクロールまで出る
+    <form
+      method="GET"
+      action="/"
+      onSubmit={handleSubmit}
+      className="relative flex flex-wrap items-start gap-2"
+    >
+      <div className="relative min-w-40 flex-1">
         <input
           ref={inputRef}
           type="search"
@@ -265,28 +275,53 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
           </ul>
         )}
       </div>
-      {/* カメラ非対応の環境でも隠さない。押したとき理由を出す方が原因を追える
-          (docs/09-スキャン計画.md §6) */}
-      <button
-        type="button"
-        onClick={() => setIsScanning(true)}
-        className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
-      >
-        スキャン
-      </button>
-      {/* 部品を映して登録済みの写真と照合する (docs/25-画像検索計画.md) */}
-      <button
-        type="button"
-        onClick={() => setIsImageSearching(true)}
-        className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
-      >
-        画像検索
-      </button>
-      {/* 打つそばから検索するので普段は押さなくてよいが、JS 無効時の唯一の
-          検索手段であり、確定の合図としても残す */}
-      <button type="submit" className={`whitespace-nowrap ${PRIMARY_BUTTON_CLASS} px-4`}>
-        検索
-      </button>
+      {/* ボタンは 1 つの塊にまとめる。塊にしないと狭い画面で
+          「スキャンだけ入力窓と同じ行に残る」散らかった並びになる。
+          塊の中でも折り返すのは、320px ではボタン 4 つが一列に収まらず、
+          折り返せないと横スクロールが出るため (実測 53px はみ出す) */}
+      <div className="flex flex-wrap gap-2">
+        {/* カメラ非対応の環境でも隠さない。押したとき理由を出す方が原因を追える
+            (docs/09-スキャン計画.md §6) */}
+        <button
+          type="button"
+          onClick={() => setIsScanning(true)}
+          className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
+        >
+          スキャン
+        </button>
+        {/* 部品を映して登録済みの写真と照合する (docs/25-画像検索計画.md) */}
+        <button
+          type="button"
+          onClick={() => setIsImageSearching(true)}
+          className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
+        >
+          画像検索
+        </button>
+        {/* 打つそばから検索するので普段は押さなくてよいが、JS 無効時の唯一の
+            検索手段であり、確定の合図としても残す */}
+        <button type="submit" className={`whitespace-nowrap ${PRIMARY_BUTTON_CLASS} px-4`}>
+          検索
+        </button>
+        {/* 空ノートを作る (docs/27-新規ノート追加計画.md)。
+            遷移先の /new は押した瞬間に採番して /edit/<番号> へ送るので、
+            prefetch は切る。切らないと画面に入っただけで採番クエリが飛び、
+            先読みした古い番号へ飛んでしまう (App Router の prefetch={false} は
+            hover でも発火しない)。
+            /new は force-dynamic で loading.tsx を持たない = 押してから画面が
+            変わるまで何も起きないので、素の Link ではなく PendingLink で
+            スピナーを出す (docs/11-アプリ的UIUX計画.md §1-2)。
+            ラベルが「+」だけなのは幅を詰めるため。意味は aria-label / title で補う */}
+        <PendingLink
+          href="/new"
+          prefetch={false}
+          aria-label="新規ノート"
+          title="新規ノート"
+          transitionTypes={["nav-forward"]}
+          className={`text-xl ${SECONDARY_BUTTON_CLASS}`}
+        >
+          +
+        </PendingLink>
+      </div>
       {isScanning && (
         <ScannerModal
           stickerHost={stickerHost}
