@@ -12,6 +12,7 @@
 
 import { EMBEDDING_DTYPE, EMBEDDING_MODEL_ID } from './model'
 import { extractEmbedding, type TensorLike } from './extractEmbedding'
+import { resolveDevice, type EmbeddingDevice } from './device'
 
 // RawImage.read が受け付ける入力。ブラウザは canvas/Blob、Node は Blob を渡す。
 export type EmbedInput =
@@ -31,6 +32,9 @@ type Extractor = (image: unknown) => Promise<TensorLike>
 let libPromise: Promise<Transformers> | null = null
 let extractorPromise: Promise<Extractor> | null = null
 let ready = false
+// どのデバイスで組もうとしたか。失敗を報せるとき「WebGPU で落ちたのか」を
+// 呼び手が知る必要がある (WASM で作り直す価値があるかの判断材料)。
+let attemptedDevice: EmbeddingDevice | 'unknown' = 'unknown'
 
 // Node (サーバ・バックフィル) かどうか。Node 21+ はブラウザ互換の global
 // navigator を持つため navigator の有無では判別できない。process.versions.node で
@@ -41,19 +45,10 @@ function isNodeRuntime(): boolean {
   )
 }
 
-// ブラウザ (メインスレッド/Worker) では WebGPU が**実際に使えれば**使う
-// (iOS 26+/Safari 26)、駄目なら WASM。Node では undefined を返し、
-// transformers.js に onnxruntime-node (native cpu) を選ばせる
-// (Node は 'wasm' を受け付けない)。
-//
-// navigator.gpu の有無だけで決めてはいけない。WSL2 やソフトウェア描画の環境は
-// API を生やしておきながらアダプタを返さず、'webgpu' を指定すると
-// 「Failed to get GPU adapter」で読み込みごと落ちる。実際に requestAdapter して
-// 確かめる (WASM で動くのが基準性能、WebGPU は加速ボーナス、が設計方針)。
-async function pickDevice(): Promise<'webgpu' | 'wasm' | undefined> {
-  if (isNodeRuntime()) {
-    return undefined
-  }
+// WebGPU のアダプタが実際に取れるか。API の有無だけで決めてはいけない
+// (WSL2 やソフトウェア描画の環境は navigator.gpu を生やしておきながらアダプタを
+// 返さない)。判定の分岐そのものは device.ts の純関数に置く。
+async function probeWebGpuAdapter(): Promise<boolean> {
   // TS の lib.dom はまだ navigator.gpu を持たないので、使う分だけ型を当てる
   // (@webgpu/types を足すほどの用ではない)
   type GpuLike = { requestAdapter: () => Promise<unknown> }
@@ -62,14 +57,23 @@ async function pickDevice(): Promise<'webgpu' | 'wasm' | undefined> {
       ? (navigator as Navigator & { gpu?: GpuLike }).gpu
       : undefined
   if (!gpu) {
-    return 'wasm'
+    return false
   }
   try {
-    return (await gpu.requestAdapter()) ? 'webgpu' : 'wasm'
+    return (await gpu.requestAdapter()) != null
   } catch {
     // アダプタ取得自体が投げる環境もある。WASM に落ちれば動く
-    return 'wasm'
+    return false
   }
+}
+
+async function pickDevice(forceWasm: boolean): Promise<EmbeddingDevice> {
+  const isNode = isNodeRuntime()
+  // WASM 強制なら WebGPU の問い合わせ自体が無駄 (かつ落ちた直後の環境で
+  // 触りたくない)。Node でも requestAdapter は無いので聞かない
+  const hasWebGpuAdapter =
+    isNode || forceWasm ? false : await probeWebGpuAdapter()
+  return resolveDevice({ isNode, hasWebGpuAdapter, forceWasm })
 }
 
 async function loadLib(): Promise<Transformers> {
@@ -94,37 +98,43 @@ async function loadLib(): Promise<Transformers> {
   return lib
 }
 
-async function getExtractor(): Promise<Extractor> {
+// 注意: **同じ Worker (realm) の中で WASM に組み直してはいけない**。
+// 効きそうに見えるが必ず失敗する (docs/11-画像検索調査メモ.md):
+//   1. transformers.js は Web 環境のセッション生成を
+//      `webInitChain = webInitChain.then(load)` で直列化しており、鎖が 1 度
+//      reject すると catch でリセットされない。2 回目は load を実行すらせず
+//      1 回目のエラーをそのまま再送出する (4.2.0・上流 main とも同じ)。
+//   2. その下の onnxruntime-web も initializeWebAssembly()/initWasm() の失敗を
+//      フラグでラッチし、以後は "previous call to ... failed" で即死する。
+// どちらも realm 単位なので、フォールバックは Worker を作り直して行う
+// (useImageEmbedder が forceWasm 付きで起こし直す)。
+async function getExtractor(forceWasm = false): Promise<Extractor> {
   if (!extractorPromise) {
     extractorPromise = (async () => {
       if (!libPromise) {
         libPromise = loadLib()
       }
       const lib = await libPromise
-      const build = (device: 'webgpu' | 'wasm' | undefined) =>
-        lib.pipeline('image-feature-extraction', EMBEDDING_MODEL_ID, {
-          dtype: EMBEDDING_DTYPE,
-          device,
-        })
-
-      const device = await pickDevice()
-      let extractor
-      try {
-        extractor = await build(device)
-      } catch (err) {
-        // アダプタが取れても WebGPU の初期化はまだ落ちうる (ドライバ差)。
-        // 加速に失敗しただけで機能ごと死なせない。WASM で組み直す
-        if (device !== 'webgpu') {
-          throw err
-        }
-        console.warn('WebGPU で初期化できなかったため WASM に切り替えます', err)
-        extractor = await build('wasm')
-      }
+      const device = await pickDevice(forceWasm)
+      attemptedDevice = device
+      const extractor = await lib.pipeline(
+        'image-feature-extraction',
+        EMBEDDING_MODEL_ID,
+        { dtype: EMBEDDING_DTYPE, device },
+      )
       ready = true
       return extractor as unknown as Extractor
     })()
   }
   return extractorPromise
+}
+
+// 読み込みを試みた (または試みている) デバイス。失敗を報せるときに添える。
+// Node は undefined を選ぶので 'unknown' に丸める (ブラウザ専用の情報)。
+export function getAttemptedDevice(): 'webgpu' | 'wasm' | 'unknown' {
+  return attemptedDevice === 'webgpu' || attemptedDevice === 'wasm'
+    ? attemptedDevice
+    : 'unknown'
 }
 
 // 初回のモデル読み込みが済んでいるか。UI が「準備中(初回)」を出すのに使う。
@@ -133,13 +143,14 @@ export function isEmbedderReady(): boolean {
 }
 
 // 初回ロードを前もって温める (画像検索モーダルを開いた時点で呼ぶ)。
+// forceWasm は WebGPU で落ちた後の作り直しで立てる (getExtractor のコメント)。
 //
 // 失敗を握りつぶすと、モデルを用意できなかった理由がコンソールの unhandled
 // rejection にしか出ず、UI には当てずっぽうの案内しか出せない (自前配布した
 // ort の wasm が 1 バリアント欠けていたのを、これで長く見落とした)。
 // 呼び手が catch して理由を表示できるよう Promise を返す。
-export async function preloadEmbedder(): Promise<void> {
-  await getExtractor()
+export async function preloadEmbedder(forceWasm = false): Promise<void> {
+  await getExtractor(forceWasm)
 }
 
 // 画像 1 枚 → 正規化済み埋め込みベクトル。

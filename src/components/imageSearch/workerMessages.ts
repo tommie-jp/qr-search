@@ -4,8 +4,9 @@
 
 // メイン → Worker
 export type ToEmbedWorker =
-  // 初回モデル読み込みを前もって温める (モーダルを開いた時点で送る)
-  | { type: 'preload' }
+  // 初回モデル読み込みを前もって温める (モーダルを開いた時点で送る)。
+  // forceWasm は WebGPU で落ちた後の作り直しで立てる (embedderLoadState)
+  | { type: 'preload'; forceWasm: boolean }
   // このフレームを埋め込む。id で応答を対応づける。bitmap は transfer で渡す
   | { type: 'embed'; id: number; bitmap: ImageBitmap }
 
@@ -18,5 +19,6 @@ export type FromEmbedWorker =
   // 埋め込み失敗 (壊れたフレーム・モデル不調など)
   | { type: 'error'; id: number; message: string }
   // モデルの初回読み込みそのものに失敗した (preload 由来なので id を持たない)。
-  // フレーム 1 枚の失敗と違い復帰しないので、理由をそのまま UI に出す
-  | { type: 'load-error'; message: string }
+  // この Worker ではもう復帰しない。WebGPU で落ちたのなら呼び手が WASM 強制の
+  // Worker を起こし直す (device は「どちらで落ちたか」を UI・ログに残すため)
+  | { type: 'load-error'; message: string; device: 'webgpu' | 'wasm' | 'unknown' }

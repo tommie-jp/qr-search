@@ -10,7 +10,7 @@
 
 /// <reference lib="webworker" />
 
-import { embed, preloadEmbedder } from '@/lib/embedding/embedder'
+import { embed, getAttemptedDevice, preloadEmbedder } from '@/lib/embedding/embedder'
 import type { FromEmbedWorker, ToEmbedWorker } from './workerMessages'
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope
@@ -46,9 +46,15 @@ ctx.onmessage = async (event: MessageEvent<ToEmbedWorker>) => {
 
   if (msg.type === 'preload') {
     // 読み込めたら即 ready (最初のフレームを待たなくてよい)。落ちたら理由を
-    // そのまま返す。ここを握りつぶすと UI が原因を言えなくなる
-    preloadEmbedder().then(announceReadyOnce, (err: unknown) => {
-      post({ type: 'load-error', message: String(err) })
+    // そのまま返す。ここを握りつぶすと UI が原因を言えなくなる。
+    // この Worker では再試行しない (同一 realm では必ず失敗する。embedder.ts の
+    // getExtractor 参照)。作り直すかどうかはメイン側が決める
+    preloadEmbedder(msg.forceWasm).then(announceReadyOnce, (err: unknown) => {
+      post({
+        type: 'load-error',
+        message: String(err),
+        device: getAttemptedDevice(),
+      })
     })
     return
   }

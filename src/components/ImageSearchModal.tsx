@@ -245,7 +245,10 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
     }
   };
 
-  const preparing = !modelReady && (busy || (live && cameraReady && indexLoaded));
+  // 読み込みに失敗したら準備バナーは畳む (エラーと「準備しています」が並ぶと
+  // まだ待てば直ると誤解される)
+  const preparing =
+    !modelReady && !modelFailed && (busy || (live && cameraReady && indexLoaded));
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-black/90 text-white">
@@ -283,9 +286,10 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
             role="alert"
             className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center"
           >
-            画像検索モデルを読み込めませんでした。通信環境を確認して開き直してください。
-            {/* 通信以外の原因 (配布アセットの欠落など) もあるので理由を添える。
-                英語のままで読みにくいが、無いと原因に辿り着けない */}
+            画像検索モデルを読み込めませんでした。通信環境を確認するか、端末のメモリが
+            足りていない可能性があるので他のタブ・アプリを閉じて開き直してください。
+            {/* 通信以外の原因 (端末のメモリ不足、配布アセットの欠落など) もあるので
+                理由を添える。英語のままで読みにくいが、無いと原因に辿り着けない */}
             {modelFailureMessage && (
               <span className="mt-1 block break-all text-sm text-white/70">
                 {modelFailureMessage}
