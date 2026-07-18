@@ -17,3 +17,6 @@ export type FromEmbedWorker =
   | { type: 'result'; id: number; vector: Float32Array }
   // 埋め込み失敗 (壊れたフレーム・モデル不調など)
   | { type: 'error'; id: number; message: string }
+  // モデルの初回読み込みそのものに失敗した (preload 由来なので id を持たない)。
+  // フレーム 1 枚の失敗と違い復帰しないので、理由をそのまま UI に出す
+  | { type: 'load-error'; message: string }

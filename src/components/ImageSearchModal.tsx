@@ -58,7 +58,12 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
   // 埋め込みが 1 枚処理中か (ライブ中はフレームを間引くのに使う)
   const inFlightRef = useRef(false);
 
-  const { ready: modelReady, failed: modelFailed, embed } = useImageEmbedder();
+  const {
+    ready: modelReady,
+    failed: modelFailed,
+    failureMessage: modelFailureMessage,
+    embed,
+  } = useImageEmbedder();
 
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -275,6 +280,13 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
             className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-sm"
           >
             画像検索モデルを読み込めませんでした。通信環境を確認して開き直してください。
+            {/* 通信以外の原因 (配布アセットの欠落など) もあるので理由を添える。
+                英語のままで読みにくいが、無いと原因に辿り着けない */}
+            {modelFailureMessage && (
+              <span className="mt-1 block break-all text-xs text-white/70">
+                {modelFailureMessage}
+              </span>
+            )}
           </p>
         )}
 

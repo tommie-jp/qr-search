@@ -25,8 +25,13 @@ const srcDir = path.join(
 const destDir = path.join(projectRoot, 'public', 'embedding-onnx')
 
 // WASM 実行 (simd+threads) と WebGPU (jsep) のフォールバックで使う wasm と、
-// それを読むグルー (.mjs)。どれが選ばれるかは実行時に決まるので両方運ぶ。
-const NEEDED = /^ort-wasm-simd-threaded(\.jsep)?\.(wasm|mjs)$/
+// WASM 実行と WebGPU で使う wasm と、それを読むグルー (.mjs)。
+// バリアントは素 (WASM 実行) のほか .jsep / .jspi / .asyncify があり、
+// **どれが選ばれるかは実行時のブラウザ能力で決まる** (WebGPU が有効な Chrome は
+// .asyncify を取りに行く)。決め打ちで絞ると取りこぼした端末だけ
+// 「no available backend found」で落ちるので、バリアントは列挙せず全部運ぶ。
+// 実際に fetch されるのは 1 つだけなので、置いておく費用はディスクだけ。
+const NEEDED = /^ort-wasm-simd-threaded[.\w]*\.(wasm|mjs)$/
 
 const entries = await readdir(srcDir)
 const targets = entries.filter((name) => NEEDED.test(name))

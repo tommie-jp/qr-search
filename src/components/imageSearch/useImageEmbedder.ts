@@ -12,11 +12,14 @@ interface Pending {
 export interface ImageEmbedder {
   // 初回モデル読み込みが完了したか (UI の「準備中(初回)」を畳むのに使う)
   ready: boolean
-  // モデルの初回読み込みに失敗したか。1 度も ready にならないまま埋め込みが
-  // エラーになった = モデルを用意できなかった、とみなす。ライブ検索は失敗を
+  // モデルの初回読み込みに失敗したか。preload の失敗 (load-error) か、
+  // 1 度も ready にならないまま埋め込みがエラーになった場合。ライブ検索は失敗を
   // 握りつぶすので、これを UI に出さないと「カメラは映るが何も出ない」原因が
   // 分からなくなる (HF Hub からのモデル取得は現実に失敗しうる)。
   failed: boolean
+  // 失敗したときの生の理由。「通信環境を確認して」だけでは通信以外の原因
+  // (自前配布アセットの欠落など) に辿り着けないので、そのまま添えて出す。
+  failureMessage: string | null
   // フレーム 1 枚 → 正規化済みベクトル。bitmap は Worker へ transfer される
   embed: (bitmap: ImageBitmap) => Promise<Float32Array>
 }
@@ -30,6 +33,7 @@ export function useImageEmbedder(): ImageEmbedder {
   const hasBeenReadyRef = useRef(false)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [failureMessage, setFailureMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const worker = new Worker(new URL('./embedWorker.ts', import.meta.url), {
@@ -45,6 +49,12 @@ export function useImageEmbedder(): ImageEmbedder {
         setReady(true)
         return
       }
+      if (msg.type === 'load-error') {
+        // モデルが用意できなかった。以後どのフレームも埋め込めない
+        setFailed(true)
+        setFailureMessage(msg.message)
+        return
+      }
       const entry = pending.get(msg.id)
       if (!entry) {
         return
@@ -56,6 +66,7 @@ export function useImageEmbedder(): ImageEmbedder {
         // 1 度も ready にならないままのエラー = モデルを用意できなかった
         if (!hasBeenReadyRef.current) {
           setFailed(true)
+          setFailureMessage(msg.message)
         }
         entry.reject(new Error(msg.message))
       }
@@ -90,5 +101,5 @@ export function useImageEmbedder(): ImageEmbedder {
     })
   }, [])
 
-  return { ready, failed, embed }
+  return { ready, failed, failureMessage, embed }
 }

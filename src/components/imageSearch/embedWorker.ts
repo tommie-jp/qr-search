@@ -45,7 +45,11 @@ ctx.onmessage = async (event: MessageEvent<ToEmbedWorker>) => {
   const msg = event.data
 
   if (msg.type === 'preload') {
-    preloadEmbedder()
+    // 読み込めたら即 ready (最初のフレームを待たなくてよい)。落ちたら理由を
+    // そのまま返す。ここを握りつぶすと UI が原因を言えなくなる
+    preloadEmbedder().then(announceReadyOnce, (err: unknown) => {
+      post({ type: 'load-error', message: String(err) })
+    })
     return
   }
 

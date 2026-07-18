@@ -13,9 +13,12 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const srcDir = path.join(projectRoot, 'node_modules', 'onnxruntime-web', 'dist')
 const destDir = path.join(projectRoot, 'public', 'onnxruntime')
 
-// スレッド版 SIMD の wasm と、それを読むグルー。webgpu(jsep)/wasm 双方の
-// フォールバックで使われるものを丸ごと運ぶ (どれが選ばれるかは実行時に決まる)。
-const NEEDED = /^ort-wasm-simd-threaded\.(wasm|mjs|jsep\.(wasm|mjs))$/
+// スレッド版 SIMD の wasm と、それを読むグルー。バリアントは素 (WASM 実行) の
+// ほか .jsep / .jspi / .asyncify があり、**どれが選ばれるかは実行時のブラウザ
+// 能力で決まる**。決め打ちで絞ると取りこぼした端末だけ
+// 「no available backend found」で落ちるので、列挙せず全部運ぶ
+// (画像検索で実際に踏んだ。copyEmbeddingWasm.mjs と同じ)。
+const NEEDED = /^ort-wasm-simd-threaded[.\w]*\.(wasm|mjs)$/
 
 const entries = await readdir(srcDir)
 const targets = entries.filter((name) => NEEDED.test(name))

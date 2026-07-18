@@ -41,16 +41,35 @@ function isNodeRuntime(): boolean {
   )
 }
 
-// ブラウザ (メインスレッド/Worker) では WebGPU があれば使う (iOS 26+/Safari 26)、
-// 無ければ WASM。Node では undefined を返し、transformers.js に
-// onnxruntime-node (native cpu) を選ばせる (Node は 'wasm' を受け付けない)。
-function pickDevice(): 'webgpu' | 'wasm' | undefined {
+// ブラウザ (メインスレッド/Worker) では WebGPU が**実際に使えれば**使う
+// (iOS 26+/Safari 26)、駄目なら WASM。Node では undefined を返し、
+// transformers.js に onnxruntime-node (native cpu) を選ばせる
+// (Node は 'wasm' を受け付けない)。
+//
+// navigator.gpu の有無だけで決めてはいけない。WSL2 やソフトウェア描画の環境は
+// API を生やしておきながらアダプタを返さず、'webgpu' を指定すると
+// 「Failed to get GPU adapter」で読み込みごと落ちる。実際に requestAdapter して
+// 確かめる (WASM で動くのが基準性能、WebGPU は加速ボーナス、が設計方針)。
+async function pickDevice(): Promise<'webgpu' | 'wasm' | undefined> {
   if (isNodeRuntime()) {
     return undefined
   }
-  return typeof navigator !== 'undefined' && 'gpu' in navigator && navigator.gpu
-    ? 'webgpu'
-    : 'wasm'
+  // TS の lib.dom はまだ navigator.gpu を持たないので、使う分だけ型を当てる
+  // (@webgpu/types を足すほどの用ではない)
+  type GpuLike = { requestAdapter: () => Promise<unknown> }
+  const gpu =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { gpu?: GpuLike }).gpu
+      : undefined
+  if (!gpu) {
+    return 'wasm'
+  }
+  try {
+    return (await gpu.requestAdapter()) ? 'webgpu' : 'wasm'
+  } catch {
+    // アダプタ取得自体が投げる環境もある。WASM に落ちれば動く
+    return 'wasm'
+  }
 }
 
 async function loadLib(): Promise<Transformers> {
@@ -74,11 +93,25 @@ async function getExtractor(): Promise<Extractor> {
         libPromise = loadLib()
       }
       const lib = await libPromise
-      const extractor = await lib.pipeline(
-        'image-feature-extraction',
-        EMBEDDING_MODEL_ID,
-        { dtype: EMBEDDING_DTYPE, device: pickDevice() },
-      )
+      const build = (device: 'webgpu' | 'wasm' | undefined) =>
+        lib.pipeline('image-feature-extraction', EMBEDDING_MODEL_ID, {
+          dtype: EMBEDDING_DTYPE,
+          device,
+        })
+
+      const device = await pickDevice()
+      let extractor
+      try {
+        extractor = await build(device)
+      } catch (err) {
+        // アダプタが取れても WebGPU の初期化はまだ落ちうる (ドライバ差)。
+        // 加速に失敗しただけで機能ごと死なせない。WASM で組み直す
+        if (device !== 'webgpu') {
+          throw err
+        }
+        console.warn('WebGPU で初期化できなかったため WASM に切り替えます', err)
+        extractor = await build('wasm')
+      }
       ready = true
       return extractor as unknown as Extractor
     })()
@@ -92,8 +125,13 @@ export function isEmbedderReady(): boolean {
 }
 
 // 初回ロードを前もって温める (画像検索モーダルを開いた時点で呼ぶ)。
-export function preloadEmbedder(): void {
-  void getExtractor()
+//
+// 失敗を握りつぶすと、モデルを用意できなかった理由がコンソールの unhandled
+// rejection にしか出ず、UI には当てずっぽうの案内しか出せない (自前配布した
+// ort の wasm が 1 バリアント欠けていたのを、これで長く見落とした)。
+// 呼び手が catch して理由を表示できるよう Promise を返す。
+export async function preloadEmbedder(): Promise<void> {
+  await getExtractor()
 }
 
 // 画像 1 枚 → 正規化済み埋め込みベクトル。
