@@ -303,7 +303,12 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
               <div className="aspect-square h-auto w-3/4 rounded-lg border-2 border-white/80" />
             </div>
             {preparing && (
-              <p className="absolute inset-x-0 bottom-2 text-center text-xs text-white/80">
+              // カメラ映像の上に白文字だけだと埋もれて「固まった」と誤解される。
+              // 初回は数十 MB のモデル取得で待ちが長いので、赤背景で明示する
+              <p
+                aria-live="polite"
+                className="absolute inset-x-2 bottom-2 rounded bg-red-600/90 px-3 py-2 text-center text-sm font-medium text-white"
+              >
                 モデルを準備しています (初回のみ)…
               </p>
             )}
