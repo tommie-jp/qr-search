@@ -16,6 +16,8 @@
 
 import { formatOcrQuote } from '@/lib/ocr/ocrQuote'
 import { orderOcrItems } from '@/lib/ocr/orderOcrItems'
+import { aggregatePercent } from '@/lib/progress'
+import { createProgressFetch } from '@/lib/progressFetch'
 
 // onnxruntime-web は既定で .wasm を CDN から取りに行く。自前配布した
 // public/onnxruntime/ を指して外部依存を断つ (scripts/copyOnnxWasm.mjs)。
@@ -34,6 +36,16 @@ const DET_MODEL_NAME = 'PP-OCRv5_mobile_det'
 const REC_MODEL_NAME = 'PP-OCRv5_mobile_rec'
 const MODEL_BASE_PATH = '/paddle-ocr/'
 
+// モデル tar 2 本の合計バイト数 (det 4,843,520 + rec 16,701,440)。
+// Content-Length が取れないときの進捗 % の分母に使う。モデルを差し替える
+// ときは scripts/fetchPaddleOcrModels.mjs と対でここも更新する
+// (ずれても % の見た目が狂うだけで動作には影響しない)
+const MODEL_TOTAL_BYTES_FALLBACK = 21_544_960
+
+// 「モデルの準備が終わった」の合図。バイト計は 99 で頭打ちにしてあるので、
+// この値だけが完了 (成功・失敗を問わず購読者が表示を畳んでよい) を意味する
+export const MODEL_READY_PERCENT = 100
+
 // OCR に渡す画像の長辺の上限。アップロード保存は実質原寸 (webp の上限
 // 16383px のみ) なので、iPhone の 12〜48MP 写真がそのまま入り得る。
 // OpenCV の行列は「幅×高さ×4 バイト」を何面も持つため、原寸のまま通すと
@@ -49,7 +61,48 @@ type OcrService = Awaited<ReturnType<SdkModule['PaddleOCR']['create']>>
 let servicePromise: Promise<OcrService> | null = null
 let ready = false
 
+// モデルダウンロードの進捗 % の購読者 (バナー表示用)。service が singleton
+// なので進捗のチャネルもモジュールに 1 本でよい
+let modelProgressListeners: readonly ((percent: number) => void)[] = []
+
+// 直前に通知した %。チャンク到着ごとに同じ整数を流すと購読者 (React state)
+// が無駄に再描画されるため、値が変わったときだけ通知する
+let lastNotifiedPercent: number | null = null
+
+// モデル DL の % を購読する。戻り値で解除。MODEL_READY_PERCENT が
+// 「準備終了」の合図 (DL 完了後の展開・ORT 初期化が残るため、
+// バイト数だけでは 100 にしない)
+export function subscribeModelProgress(
+  listener: (percent: number) => void,
+): () => void {
+  modelProgressListeners = [...modelProgressListeners, listener]
+  return () => {
+    modelProgressListeners = modelProgressListeners.filter((l) => l !== listener)
+  }
+}
+
+function notifyModelProgress(percent: number): void {
+  if (percent === lastNotifiedPercent) {
+    return
+  }
+  lastNotifiedPercent = percent
+  for (const listener of modelProgressListeners) {
+    listener(percent)
+  }
+}
+
 async function createService(): Promise<OcrService> {
+  try {
+    return await initService()
+  } catch (e) {
+    // 失敗したことも購読者へ伝える。伝えないと「準備しています… 47%」の
+    // バナーが永久に残る (バイト計は 99 止まりで完了に届かないため)
+    notifyModelProgress(MODEL_READY_PERCENT)
+    throw e
+  }
+}
+
+async function initService(): Promise<OcrService> {
   const { PaddleOCR } = await import('@paddleocr/paddleocr-js')
 
   const service = await PaddleOCR.create({
@@ -57,6 +110,11 @@ async function createService(): Promise<OcrService> {
     textDetectionModelAsset: { url: `${MODEL_BASE_PATH}${DET_MODEL_NAME}.tar` },
     textRecognitionModelName: REC_MODEL_NAME,
     textRecognitionModelAsset: { url: `${MODEL_BASE_PATH}${REC_MODEL_NAME}.tar` },
+    // モデル tar の受信バイトを数えて DL 進捗 % を流す。aggregatePercent は
+    // 99 で頭打ちし、create の解決 (下の notifyModelProgress(100)) が真の完了
+    fetch: createProgressFetch((downloads) =>
+      notifyModelProgress(aggregatePercent(downloads, MODEL_TOTAL_BYTES_FALLBACK)),
+    ),
     ortOptions: {
       // wasm に固定する。'auto' は WebGPU が見えると WebGPU を選ぶが、
       // iOS WebKit の WebGPU はメモリを余分に食い、挙動もまだ枯れていない。
@@ -67,6 +125,7 @@ async function createService(): Promise<OcrService> {
     },
   })
   ready = true
+  notifyModelProgress(MODEL_READY_PERCENT)
   return service
 }
 
@@ -103,11 +162,26 @@ async function toOcrBitmap(blob: Blob): Promise<ImageBitmap> {
 
 // 画像 1 枚を OCR し、日本語優先で整えた引用ブロックを返す。
 // 文字が取れなければ空文字を返す (呼び手はこれを「見つからなかった」に使う)。
+//
+// **認識中の進捗 % は出せない**: SDK が進捗を通知しないうえ、onnxruntime-web
+// の推論はメインスレッドを同期的に占有するため、経過時間から擬似進捗を作って
+// setInterval で流しても 1 度も発火しない (実測: 1.8 秒の認識中にティック 0 回。
+// state を変えても再描画自体が走らない)。% を出すには OCR を Web Worker へ
+// 移す必要があり、SDK の worker モードは自前 fetch と併用できない
+// = モデル DL の進捗 % と両立しない。ここでは進捗の通知はしない。
 export async function ocrImageToQuote(blob: Blob): Promise<string> {
   if (!servicePromise) {
     servicePromise = createService()
   }
-  const service = await servicePromise
+  let service: OcrService
+  try {
+    service = await servicePromise
+  } catch (e) {
+    // 失敗した promise を握り続けると以後の OCR が全部即失敗する。
+    // 捨てておけば次回は取り直せる (回線が戻れば読める)
+    servicePromise = null
+    throw e
+  }
 
   // 原寸ではなく縮小した ImageBitmap を渡す (MAX_OCR_SIDE の理由を参照)。
   // 返るのは入力 1 枚につき 1 要素の配列。

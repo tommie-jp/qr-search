@@ -7,9 +7,20 @@ import { EditorView } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { imageAtCursor, ocrInsertion, ocrPlaceholder } from "@/lib/ocr/ocrQuote";
+import {
+  ocrButtonLabel,
+  uploadButtonLabel,
+  type UploadProgress,
+} from "@/lib/progressLabels";
 import { fenceLanguageCompletion } from "./fenceCompletion";
 import { fenceLanguageLinter } from "./fenceLinter";
-import { isOcrReady, ocrImageToQuote } from "./ocr/ocrService";
+import {
+  isOcrReady,
+  MODEL_READY_PERCENT,
+  ocrImageToQuote,
+  subscribeModelProgress,
+} from "./ocr/ocrService";
+import { uploadImageWithProgress } from "./uploadImageXhr";
 import {
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
@@ -48,19 +59,6 @@ async function fetchImageBlob(url: string): Promise<Blob | null> {
   } catch {
     return null;
   }
-}
-
-async function uploadImage(file: File): Promise<string> {
-  const formData = new FormData();
-  formData.set("file", file);
-  const res = await fetch("/api/images", { method: "POST", body: formData });
-  const body = await res.json().catch(() => null);
-  if (!res.ok || !body?.success) {
-    throw new Error(
-      body?.error ?? `アップロードに失敗しました (HTTP ${res.status})`,
-    );
-  }
-  return body.data.url as string;
 }
 
 function insertText(view: EditorView, text: string): void {
@@ -104,10 +102,15 @@ export default function MemoEditorInner({
   autoFocus = false,
   minHeight = "14rem",
 }: MemoEditorInnerProps) {
-  const [uploading, setUploading] = useState(false);
+  // 進行中アップロードの表示用スナップショット (何枚目 / 全何枚 / 送信 %)。
+  // null なら待機中。busy 判定は従来の uploading boolean と同じ意味を保つ
+  const [upload, setUpload] = useState<UploadProgress | null>(null);
+  const uploading = upload !== null;
   // 実行中の OCR の本数 (複数画像を続けて OCR できる)。0 より大きい間は
   // 「OCR処理中」を出し、フォーム送信を止める (結果が本文に入る前に更新しない)。
   const [ocrCount, setOcrCount] = useState(0);
+  // 初回のモデルダウンロードの実測 % (完了・待機中は null)
+  const [modelPercent, setModelPercent] = useState<number | null>(null);
   // OCR の情報表示 (エラーではない「準備中」「見つかりませんでした」など)。
   // 初回はモデル取得で待ちが長く、灰色だと埋もれて「固まった」と誤解される
   // ため、画像検索の準備中バナーと同じ赤背景で目立たせる (ImageSearchModal)。
@@ -124,6 +127,13 @@ export default function MemoEditorInner({
     onReady();
     // マウント時に一度だけ通知する
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // モデルダウンロードの % をバナーに流す。100 (初期化完了) でクリアする
+  useEffect(() => {
+    return subscribeModelProgress((percent) => {
+      setModelPercent(percent >= MODEL_READY_PERCENT ? null : percent);
+    });
   }, []);
 
   // アップロード / OCR 完了前に送信すると、画像リンクや OCR 結果が memo に
@@ -160,7 +170,8 @@ export default function MemoEditorInner({
     source: Blob | Promise<Blob | null>,
     insertPos: number,
   ) => {
-    const placeholder = ocrPlaceholder(++ocrSeq);
+    const seq = ++ocrSeq;
+    const placeholder = ocrPlaceholder(seq);
     const insertion = ocrInsertion(placeholder);
     view.dispatch({ changes: { from: insertPos, insert: insertion } });
     setOcrCount((n) => n + 1);
@@ -193,14 +204,19 @@ export default function MemoEditorInner({
   };
 
   const insertImages = async (view: EditorView, files: File[]) => {
-    setUploading(true);
     setError(null);
     try {
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         const token = `![アップロード中 ${++uploadSeq}]()`;
         insertText(view, token);
+        setUpload({ current: index + 1, total: files.length, percent: 0 });
         try {
-          const url = await uploadImage(file);
+          // 送信 % はボタンラベル (React state) だけに出す。本文トークンを
+          // % で書き換えると undo が壊れる (ocrIntoDoc の同旨コメント参照)。
+          // アップロードは直列なので、ボタンの % が常に今のファイルの %
+          const url = await uploadImageWithProgress(file, (percent) => {
+            setUpload({ current: index + 1, total: files.length, percent });
+          });
           const markup = `![](${url})`;
           replaceToken(view, token, markup);
           // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
@@ -219,7 +235,7 @@ export default function MemoEditorInner({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setUploading(false);
+      setUpload(null);
     }
   };
 
@@ -374,7 +390,7 @@ export default function MemoEditorInner({
           disabled={uploading}
           className={SECONDARY_BUTTON_CLASS}
         >
-          {uploading ? "アップロード中…" : "画像を挿入"}
+          {uploadButtonLabel(upload)}
         </button>
         <button
           type="button"
@@ -382,7 +398,7 @@ export default function MemoEditorInner({
           disabled={busy}
           className={SECONDARY_BUTTON_CLASS}
         >
-          {ocrCount > 0 ? "OCR処理中…" : "画像をOCR"}
+          {ocrButtonLabel(ocrCount)}
         </button>
         {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
             幅が狭いときは畳んでボタンの場所を空ける */}
@@ -412,6 +428,8 @@ export default function MemoEditorInner({
         >
           {ocrCount > 0 && <span aria-hidden className={BUSY_SPINNER_CLASS} />}
           {ocrNote}
+          {/* % は aria-hidden で足す: aria-live が毎ティック読み上げないように */}
+          {modelPercent !== null && <span aria-hidden> {modelPercent}%</span>}
         </p>
       )}
       <input
