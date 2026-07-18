@@ -28,7 +28,7 @@ export function ViewModeToggle({ view, action }: ViewModeToggleProps) {
   return (
     <form
       action={action}
-      className="flex items-center gap-1 text-sm"
+      className="flex items-center gap-1"
       aria-label="表示"
     >
       <span className="text-gray-500">表示</span>

@@ -56,15 +56,15 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
   if (state && "error" in state) {
     return (
-      <div className="mermaid-diagram rounded border border-red-300 bg-red-50 p-3 text-sm">
+      <div className="mermaid-diagram rounded border border-red-300 bg-red-50 p-3">
         <p className="text-red-700">mermaid の構文エラー: {state.error}</p>
-        <pre className="mt-2 overflow-x-auto text-xs text-gray-700">{code}</pre>
+        <pre className="mt-2 overflow-x-auto text-sm text-gray-700">{code}</pre>
       </div>
     );
   }
 
   if (!state) {
-    return <div className="mermaid-diagram text-sm text-gray-500">図を描画中…</div>;
+    return <div className="mermaid-diagram text-gray-500">図を描画中…</div>;
   }
 
   // mermaid が生成した SVG (securityLevel: strict でサニタイズ済み) を埋め込む

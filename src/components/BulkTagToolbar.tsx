@@ -35,7 +35,7 @@ export function BulkTagToolbar({
   const disabled = count === 0;
 
   return (
-    <div className="space-y-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+    <div className="space-y-2 rounded border border-blue-200 bg-blue-50 px-3 py-2">
       <div className="flex items-center justify-between">
         <span className="font-medium">{count} 件を選択中</span>
         <div className="flex gap-3">

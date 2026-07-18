@@ -37,7 +37,7 @@ export function LoginButton({ variant = "header" }: LoginButtonProps) {
 
   const className =
     variant === "header"
-      ? "inline-flex min-h-11 items-center rounded px-2 text-sm font-medium text-blue-600 transition-colors active:bg-blue-50"
+      ? "inline-flex min-h-11 items-center rounded px-2 font-medium text-blue-600 transition-colors active:bg-blue-50"
       : "inline-flex min-h-11 items-center justify-center gap-2 rounded bg-blue-600 px-6 font-medium text-white transition-transform active:scale-95";
 
   return (

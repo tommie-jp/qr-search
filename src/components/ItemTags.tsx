@@ -9,7 +9,7 @@ interface ItemTagsProps {
   linked?: boolean;
 }
 
-const TAG_CLASS = "inline-flex min-h-9 items-center rounded-full px-3 text-sm";
+const TAG_CLASS = "inline-flex min-h-9 items-center rounded-full px-3";
 
 export function ItemTags({ tags, linked = true }: ItemTagsProps) {
   if (tags.length === 0) {

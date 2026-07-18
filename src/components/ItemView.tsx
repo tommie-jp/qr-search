@@ -50,7 +50,7 @@ export async function ItemView({ itemNo, item, saved }: ItemViewProps) {
         <h1 className="text-xl font-bold">
           item <span className="font-mono">#{itemNo}</span>
         </h1>
-        <div className="flex gap-1 text-sm">
+        <div className="flex gap-1">
           <Link
             href={`/edit/${itemNo}`}
             className={ACTION_LINK_CLASS}
@@ -80,7 +80,7 @@ export async function ItemView({ itemNo, item, saved }: ItemViewProps) {
       {saved && <SavedToast key={saved} />}
 
       {!item && (
-        <p className="rounded bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+        <p className="rounded bg-yellow-50 px-3 py-2 text-yellow-800">
           未登録の部品番号です。メモを保存すると新規登録されます。
         </p>
       )}

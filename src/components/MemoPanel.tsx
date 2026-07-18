@@ -56,7 +56,7 @@ export function MemoPanel({
 
   return (
     <div className="space-y-2">
-      <div role="tablist" className="flex gap-1 text-sm">
+      <div role="tablist" className="flex gap-1">
         {modes.map(({ key, label }) => (
           <button
             key={key}

@@ -13,7 +13,7 @@ interface TrashedBannerProps {
 // 検索へ戻すにはこのボタンを押す必要がある = 復元は明示的な操作だけ。
 export function TrashedBanner({ itemNo, restoreAction }: TrashedBannerProps) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded bg-yellow-50 px-3 py-2 text-yellow-800">
       <p className="flex-1">
         このノートはゴミ箱にあります (検索には出ません)。
       </p>

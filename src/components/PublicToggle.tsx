@@ -32,7 +32,7 @@ export function PublicToggle({
 
   return (
     <div
-      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded border px-3 py-2 text-sm ${boxClass}`}
+      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded border px-3 py-2 ${boxClass}`}
     >
       <p className="flex-1">
         {isPublic ? (

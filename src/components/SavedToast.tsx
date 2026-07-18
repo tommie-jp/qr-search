@@ -35,7 +35,7 @@ export function SavedToast({ message = "保存しました" }: { message?: strin
       role="status"
       className="pointer-events-none fixed inset-x-0 bottom-[max(1.5rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-4 print:hidden"
     >
-      <p className="rounded-full bg-gray-900/90 px-4 py-2 text-sm text-white shadow-lg">
+      <p className="rounded-full bg-gray-900/90 px-4 py-2 text-white shadow-lg">
         {message}
       </p>
     </div>

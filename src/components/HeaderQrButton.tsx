@@ -30,7 +30,7 @@ export function HeaderQrButton({ qrDataUrl, url }: HeaderQrButtonProps) {
     <>
       <button
         type="button"
-        className="text-sm text-gray-500 hover:text-gray-900"
+        className="text-gray-500 hover:text-gray-900"
         onClick={() => setIsOpen(true)}
       >
         QR
@@ -44,7 +44,7 @@ export function HeaderQrButton({ qrDataUrl, url }: HeaderQrButtonProps) {
             <div className="border border-gray-300 bg-white p-3 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={qrDataUrl} alt={`QR: ${url}`} width={240} height={240} />
-              <div className="mt-1 break-all font-mono text-sm text-gray-600">
+              <div className="mt-1 break-all font-mono text-gray-600">
                 {url}
               </div>
             </div>

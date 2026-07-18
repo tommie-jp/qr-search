@@ -70,7 +70,7 @@ export function ItemRow({
           href={tagSearchHref(tag)}
           // relative … タイトルの当たり判定 (STRETCHED_LINK_CLASS) の上に出す。
           // 敷いた膜の下に居ると、タグを押してもノートが開いてしまう
-          className="relative z-10 text-xs text-blue-700 hover:underline"
+          className="relative z-10 text-sm text-blue-700 hover:underline"
         >
           #{tag}
         </Link>
@@ -113,7 +113,7 @@ export function ItemRow({
               <Link
                 href={`/item/${item.itemNo}`}
                 transitionTypes={["nav-forward"]}
-                className={`truncate text-sm text-gray-600 ${stretchedLink}`}
+                className={`truncate text-gray-600 ${stretchedLink}`}
               >
                 {title}
               </Link>
@@ -124,7 +124,7 @@ export function ItemRow({
             {preview && (
               // 行数は CSS で決める。Markdown 上の 1 行は折り返して 2 行にも
               // なるため、抽出側で数えても画面の行数とは一致しない
-              <p className="mt-1 line-clamp-3 text-xs text-gray-500">
+              <p className="mt-1 line-clamp-3 text-sm text-gray-500">
                 {preview}
               </p>
             )}
@@ -151,7 +151,7 @@ export function ItemRow({
           <Link
             href={`/item/${item.itemNo}`}
             transitionTypes={["nav-forward"]}
-            className={`block truncate text-sm text-gray-600 ${stretchedLink}`}
+            className={`block truncate text-gray-600 ${stretchedLink}`}
           >
             {title}
           </Link>

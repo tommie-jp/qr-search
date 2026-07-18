@@ -36,7 +36,7 @@ export function TrashList({
     <div className="space-y-3">
       {/* 永久削除は itemNo を解放する。古いシールが別の部品を指しうるので、
           「部品もシールも処分済み」のときだけ押す操作だと明示する (§4) */}
-      <p className="rounded bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+      <p className="rounded bg-yellow-50 px-3 py-2 text-yellow-800">
         永久削除すると元に戻せません。その番号は新しいノートに再利用されるため、
         貼ってあるシールも処分してから削除してください。
       </p>
@@ -68,11 +68,11 @@ export function TrashList({
               <Link
                 href={`/item/${row.itemNo}`}
                 transitionTypes={["nav-forward"]}
-                className="block truncate text-sm text-gray-600"
+                className="block truncate text-gray-600"
               >
                 {row.summary || "(空のノート)"}
               </Link>
-              <p className="mt-0.5 font-mono text-xs text-gray-500">
+              <p className="mt-0.5 font-mono text-sm text-gray-500">
                 削除: {formatJstDateTime(row.deletedAt)}
               </p>
             </div>

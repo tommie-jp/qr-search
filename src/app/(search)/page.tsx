@@ -132,13 +132,13 @@ async function HomeResults({
 
   return (
     <SearchResults className={view === "card" ? WIDE_RESULTS_CLASS : ""}>
-      <div className="flex items-center justify-between text-sm">
+      <div className="flex items-center justify-between">
         <p className="flex items-baseline gap-2 text-gray-600">
           <span>
             {query ? `「${query}」の検索結果: ` : "すべて: "}
             {result.total} 件
           </span>
-          <Link href="/docs/search" className="text-xs text-blue-600 underline">
+          <Link href="/docs/search" className="text-sm text-blue-600 underline">
             検索ヘルプ
           </Link>
           {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
@@ -146,7 +146,7 @@ async function HomeResults({
             <Link
               href="/trash"
               transitionTypes={["nav-forward"]}
-              className="text-xs text-blue-600 underline"
+              className="text-sm text-blue-600 underline"
             >
               ゴミ箱 ({trashCount})
             </Link>
@@ -197,7 +197,7 @@ async function HomeResults({
         trashedMatches={trashedMatches}
       />
 
-      <div className="flex items-center justify-between text-sm">
+      <div className="flex items-center justify-between">
         {result.page > 1 ? (
           <PendingLink
             href={buildSearchUrl(query, result.page - 1, sort)}

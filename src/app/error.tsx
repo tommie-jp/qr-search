@@ -11,7 +11,7 @@ export default function ErrorPage({
   return (
     <div className="space-y-4 py-8 text-center">
       <h1 className="text-xl font-bold">エラーが発生しました</h1>
-      <p className="text-sm text-gray-600">
+      <p className="text-gray-600">
         操作をやり直してください。繰り返し発生する場合はサーバログを確認してください。
       </p>
       <button

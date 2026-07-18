@@ -44,12 +44,12 @@ export default function LogsPage() {
             検索へ
           </Link>
         </div>
-        <p className="text-sm text-gray-500">
+        <p className="text-gray-500">
           直近の警告・エラー (新しい順、最大 200 件)。サーバが再起動すると消えます。
         </p>
         {logs.length === 0 ? (
           // 「壊れて出ない」と見分けが付く文言にする (docs/21 §3)
-          <p className="text-sm text-gray-500">
+          <p className="text-gray-500">
             ログはありません (起動後、サーバ側の警告・エラーはまだ発生していません)。
           </p>
         ) : (
@@ -59,7 +59,7 @@ export default function LogsPage() {
                 key={`${log.at}-${i}`}
                 className="rounded border border-gray-300 bg-white px-3 py-2"
               >
-                <div className="mb-1 flex items-center gap-2 text-xs text-gray-500">
+                <div className="mb-1 flex items-center gap-2 text-sm text-gray-500">
                   <span
                     className={`rounded px-1.5 py-0.5 font-bold ${LEVEL_BADGE[log.level]}`}
                   >
@@ -67,7 +67,7 @@ export default function LogsPage() {
                   </span>
                   <time>{TIME_FORMAT.format(log.at)}</time>
                 </div>
-                <pre className="whitespace-pre-wrap break-all font-mono text-xs">
+                <pre className="whitespace-pre-wrap break-all font-mono text-sm">
                   {log.text}
                 </pre>
               </li>

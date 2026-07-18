@@ -112,7 +112,7 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
 
         <ItemTimestamps item={item} />
 
-        <div className="flex gap-1 text-sm">
+        <div className="flex gap-1">
           <Link
             href={`/item/${itemNo}`}
             className={ACTION_LINK_CLASS}

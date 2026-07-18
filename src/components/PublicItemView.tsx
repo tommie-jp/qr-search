@@ -39,7 +39,7 @@ export async function PublicItemView({ itemNo, item }: PublicItemViewProps) {
         <h1 className="text-xl font-bold">
           item <span className="font-mono">#{itemNo}</span>
         </h1>
-        <div className="flex gap-1 text-sm">
+        <div className="flex gap-1">
           <PendingLink
             href={`/print/${itemNo}`}
             className={ACTION_LINK_CLASS}
@@ -53,7 +53,7 @@ export async function PublicItemView({ itemNo, item }: PublicItemViewProps) {
       {/* 持ち主が自分のノートを未ログインのブラウザで開くことはある
           (ログアウトが無いので確認はプライベートウィンドウになる。docs/18 §3)。
           そこから編集へ入れるよう、ログインの導線だけは残す */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-900">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-green-300 bg-green-50 px-3 py-2 text-green-900">
         <p className="flex-1">
           <span aria-hidden>🌐 </span>
           <span className="font-medium">公開ノート</span> —

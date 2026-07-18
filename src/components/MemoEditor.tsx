@@ -60,7 +60,7 @@ function PrefillNotice({ kind, status }: { kind: PrefillKind; status: PrefillSta
       className={
         isLoading
           ? `${BUSY_NOTICE_CLASS} flex items-center gap-2`
-          : `flex min-h-5 items-center gap-2 text-sm ${
+          : `flex min-h-6 items-center gap-2 ${
               status === "error" ? "text-red-700" : "text-gray-500"
             }`
       }
@@ -184,7 +184,7 @@ export function MemoEditor({
       {restoredDraft && (
         <p
           aria-live="polite"
-          className="flex flex-wrap items-center gap-2 rounded bg-amber-50 px-3 py-2 text-sm text-amber-800"
+          className="flex flex-wrap items-center gap-2 rounded bg-amber-50 px-3 py-2 text-amber-800"
         >
           保存前の下書きを復元しました。「更新」を押すまで保存はされていません。
           <button

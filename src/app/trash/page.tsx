@@ -30,7 +30,7 @@ export default async function TrashPage() {
           </Link>
         </div>
 
-        <p className="text-sm text-gray-600">
+        <p className="text-gray-600">
           ゴミ箱のノートは検索に出ません。復元すると元どおり検索できます。
         </p>
 

@@ -250,11 +250,11 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-black/90 text-white">
       <div className="flex items-center justify-between p-3">
-        <span className="text-sm">部品をかざして画像検索</span>
+        <span>部品をかざして画像検索</span>
         <button
           type="button"
           onClick={onClose}
-          className="rounded bg-white/20 px-4 py-2 text-sm font-medium"
+          className="rounded bg-white/20 px-4 py-2 font-medium"
           aria-label="画像検索を閉じる"
         >
           閉じる
@@ -265,7 +265,7 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
         {error && (
           <p
             role="alert"
-            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-sm"
+            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center"
           >
             {error}
           </p>
@@ -273,7 +273,7 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
         {indexError && (
           <p
             role="alert"
-            className="max-w-sm rounded bg-amber-900/80 px-3 py-2 text-center text-sm"
+            className="max-w-sm rounded bg-amber-900/80 px-3 py-2 text-center"
           >
             {indexError}
           </p>
@@ -281,13 +281,13 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
         {modelFailed && (
           <p
             role="alert"
-            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-sm"
+            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center"
           >
             画像検索モデルを読み込めませんでした。通信環境を確認して開き直してください。
             {/* 通信以外の原因 (配布アセットの欠落など) もあるので理由を添える。
                 英語のままで読みにくいが、無いと原因に辿り着けない */}
             {modelFailureMessage && (
-              <span className="mt-1 block break-all text-xs text-white/70">
+              <span className="mt-1 block break-all text-sm text-white/70">
                 {modelFailureMessage}
               </span>
             )}
@@ -360,7 +360,7 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
           {/* ライブ中はフレームごとに結果が入れ替わるので「見つからず」を出すと
               チラつく。シャッター/写真での確定検索のときだけ出す */}
           {searched && !live && matches.length === 0 && (
-            <p className="py-4 text-center text-sm text-white/70">
+            <p className="py-4 text-center text-white/70">
               似ているノートが見つかりませんでした。
             </p>
           )}
@@ -380,8 +380,8 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
                     className="h-14 w-14 flex-shrink-0 rounded object-cover"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm">{m.title}</span>
-                    <span className="block text-xs text-white/60">
+                    <span className="block truncate">{m.title}</span>
+                    <span className="block text-sm text-white/60">
                       {m.itemNo}・一致度 {Math.round(m.score * 100)}%
                     </span>
                   </span>

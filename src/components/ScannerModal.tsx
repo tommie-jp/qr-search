@@ -94,11 +94,11 @@ export function ScannerModal({ stickerHost, onClose }: ScannerModalProps) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-black/90">
       <div className="flex items-center justify-between p-3 text-white">
-        <span className="text-sm">QR・バーコードをかざす</span>
+        <span>QR・バーコードをかざす</span>
         <button
           type="button"
           onClick={onClose}
-          className="rounded bg-white/20 px-4 py-2 text-sm font-medium"
+          className="rounded bg-white/20 px-4 py-2 font-medium"
           aria-label="スキャンを閉じる"
         >
           閉じる
@@ -113,7 +113,7 @@ export function ScannerModal({ stickerHost, onClose }: ScannerModalProps) {
         {error && (
           <p
             role="alert"
-            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-sm text-white"
+            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-white"
           >
             {error}
           </p>

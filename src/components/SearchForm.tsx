@@ -263,7 +263,7 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
                   e.preventDefault();
                   accept(tag, dropdown.ctx);
                 }}
-                className={`flex min-h-10 cursor-pointer items-center px-3 text-sm ${
+                className={`flex min-h-10 cursor-pointer items-center px-3 ${
                   i === dropdown.active
                     ? "bg-blue-600 text-white"
                     : "text-gray-700 hover:bg-gray-100"

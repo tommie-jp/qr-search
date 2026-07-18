@@ -12,12 +12,12 @@ interface CircuitDiagramProps {
 export function CircuitDiagram({ result, code }: CircuitDiagramProps) {
   if ("error" in result) {
     return (
-      <div className="circuit-diagram rounded border border-red-300 bg-red-50 p-3 text-sm">
+      <div className="circuit-diagram rounded border border-red-300 bg-red-50 p-3">
         <p className="text-red-700">回路図のエラー: {result.error}</p>
         {result.texLog && (
-          <pre className="mt-2 overflow-x-auto text-xs text-red-900">{result.texLog}</pre>
+          <pre className="mt-2 overflow-x-auto text-sm text-red-900">{result.texLog}</pre>
         )}
-        <pre className="mt-2 overflow-x-auto text-xs text-gray-700">{code}</pre>
+        <pre className="mt-2 overflow-x-auto text-sm text-gray-700">{code}</pre>
       </div>
     );
   }

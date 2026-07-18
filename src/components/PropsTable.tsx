@@ -43,7 +43,7 @@ export function PropsTable({ rows, omitted = 0 }: PropsTableProps) {
 
   return (
     <div className="overflow-x-auto rounded border border-gray-200 bg-white">
-      <table className="w-full text-sm">
+      <table className="w-full">
         <thead>
           <tr className="border-b border-gray-200 text-left text-gray-600">
             <th scope="col" className="px-4 py-1.5 font-normal">
@@ -99,7 +99,7 @@ export function PropsTable({ rows, omitted = 0 }: PropsTableProps) {
       {omitted > 0 && (
         // 黙って打ち切ると「これで全部」と読めてしまう。表は並べて比べるための
         // ものなので、載っていない部品があることは必ず知らせる。
-        <p className="border-t border-gray-200 px-4 py-1.5 text-xs text-gray-500">
+        <p className="border-t border-gray-200 px-4 py-1.5 text-sm text-gray-500">
           他 {omitted} 件は表に載せていません(絞り込むと表示されます)
         </p>
       )}

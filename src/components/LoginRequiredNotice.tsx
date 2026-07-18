@@ -17,7 +17,7 @@ export function LoginRequiredNotice() {
     <div className={`${BOX_CLASS} flex flex-col items-start gap-4 py-6`}>
       <div className="space-y-1">
         <h1 className="text-lg font-bold">ログインが必要です</h1>
-        <p className="text-sm text-gray-600">
+        <p className="text-gray-600">
           このページを見るにはログインしてください。
         </p>
       </div>
