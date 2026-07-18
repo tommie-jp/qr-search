@@ -65,3 +65,6 @@ next-env.d.ts
 # 画像検索 (transformers.js) の onnxruntime-web wasm
 # (scripts/copyEmbeddingWasm.mjs が node_modules から複製する)
 /public/embedding-onnx
+
+# OCR の認識モデル (scripts/fetchPaddleOcrModels.mjs がネットから落とす)
+/public/paddle-ocr

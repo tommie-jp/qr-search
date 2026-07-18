@@ -9,6 +9,21 @@ const nextConfig: NextConfig = {
   experimental: {
     viewTransition: true,
   },
+  turbopack: {
+    // OCR の公式 SDK (@paddleocr/paddleocr-js) には、ブラウザでは通らない分岐が
+    // 残っている:
+    //   - 同梱の OpenCV.js (Emscripten) が Node 判定の中で require("fs")
+    //   - 同梱の worker 用アセットが onnxruntime の proxy worker
+    //     (ort.bundle.min.mjs) を import.meta.url 相対で探す
+    // どちらも実行時には踏まない (ブラウザで動かし、worker モードも使わない。
+    // ocrService.ts は worker 未指定) が、Turbopack は静的解析で追いかけて
+    // 解決できずにビルドを落とす。SDK 配下に限って未解決を無視する。
+    //
+    // 範囲を dist/assets/ だけに絞ると OpenCV.js 側 (SDK の node_modules に
+    // ネストしている) が漏れてビルドが落ちる。SDK 全体を対象にする必要がある。
+    // path は glob だとマッチしなかったため RegExp で書く。
+    ignoreIssue: [{ path: /paddleocr-js/ }],
+  },
   // node-tikzjax は TeX の core dump などを __dirname 相対で読むため、
   // バンドルせず素のパッケージのまま standalone へ運ばせる。
   // src/lib/circuitikz.ts の _traceNodeTikzjax がこれと対で効く。

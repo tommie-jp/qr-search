@@ -1,7 +1,7 @@
-// OCR (ppu-paddle-ocr) の推論エンジン onnxruntime-web は、既定で .wasm を
+// OCR (@paddleocr/paddleocr-js) の推論エンジン onnxruntime-web は、既定で .wasm を
 // jsDelivr の CDN から取りに行く。zxing (copyZxingWasm.mjs) と同じく外部依存を
 // 作りたくないので、node_modules から public/ へ複製して自前で配る。
-// OCR サービス側で ort.env.wasm.wasmPaths = '/onnxruntime/' を指す。
+// OCR サービス側で ortOptions.wasmPaths = '/onnxruntime/' を指す。
 //
 // JS グルー (.mjs) と .wasm はバージョンがペアなので、node_modules から複製する
 // 形ならパッケージ更新でも両者がずれない。
