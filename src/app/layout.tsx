@@ -4,13 +4,16 @@ import QRCode from "qrcode";
 import pkg from "../../package.json";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { LoginButton } from "@/components/LoginButton";
+import { LogoutButton } from "@/components/LogoutButton";
+import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import {
   isProductionEnv,
   LOCAL_THEME_COLOR,
   PROD_THEME_COLOR,
 } from "@/lib/appEnv";
-import { currentUser } from "@/lib/session";
+import { PASSKEY_SETTINGS_PATH } from "@/lib/authPaths";
+import { canLogOut, currentUser } from "@/lib/session";
 import { qrBaseUrl, SITE_DESCRIPTION, SITE_NAME, siteTitle } from "@/lib/site";
 import "./globals.css";
 
@@ -66,6 +69,10 @@ export default async function RootLayout({
   // 未ログインならユーザー名の代わりにログインボタンを置く。
   // 中身を守るのは proxy.ts と requireUser() の役目で、この帯ではない
   const user = await currentUser();
+
+  // ログアウトはセッション (パスキー) で入っているときだけ出す。
+  // Basic 認証には忘れさせる手段がない (docs/29-パスキー計画.md §4)
+  const showLogout = user !== null && (await canLogOut());
 
   // 非本番は画面全体をピンクに塗る。Tailwind はソース中のクラス名を文字列として
   // 探すため、`bg-${color}-50` のような組み立てをすると CSS が生成されない。
@@ -125,9 +132,21 @@ export default async function RootLayout({
                   >
                     ログ
                   </Link>
+                  {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
+                      ここが登録への唯一の導線なので、ログイン中は常に出す */}
+                  <Link
+                    href={PASSKEY_SETTINGS_PATH}
+                    className="text-gray-500 hover:text-gray-900"
+                  >
+                    パスキー
+                  </Link>
+                  {showLogout && <LogoutButton />}
                 </>
               ) : (
-                <LoginButton />
+                <>
+                  <PasskeyLoginButton />
+                  <LoginButton label="パスワード" />
+                </>
               )}
             </div>
           </div>

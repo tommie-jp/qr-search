@@ -49,6 +49,15 @@ services:
       # 変数参照とみなして値を壊す
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:?BASIC_AUTH_USER is required}
       BASIC_AUTH_HASH_B64: ${BASIC_AUTH_HASH_B64:?BASIC_AUTH_HASH_B64 is required}
+      #
+      # パスキー (docs/29-パスキー計画.md §7)。**:? を付けない** —
+      # 欠けてもパスキーが無効になるだけで、パスワードでは今までどおり
+      # 入れる。ログインそのものを止める理由がない。
+      #
+      # リクエストからは組み立てられない値なので env で渡す (アプリは
+      # nginx の内側に居て http://0.0.0.0:3100 しか見えていない)
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-}
     ports:
       # ローカル: tailscale serve 用 / vps2: nginx のプロキシ先 (loopback のみ)
       - "127.0.0.1:${APP_PORT:-3000}:3000"

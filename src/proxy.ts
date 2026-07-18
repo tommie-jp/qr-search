@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { verifyBasicAuthUser } from '@/lib/auth'
 import { LOGIN_REQUIRED_PATH } from '@/lib/loginRedirect'
 import { isPublicPath, isSelfGuardedPath } from '@/lib/publicPaths'
+import { resolveAuth } from '@/lib/requestAuth'
+import { renewSession } from '@/lib/sessionStore'
+import {
+  SESSION_COOKIE_NAME,
+  sessionCookieOptions,
+  shouldRenewSession,
+} from '@/lib/sessionToken'
 
 // ログインの門番 (docs/18-ログイン計画.md)。
 //
@@ -39,9 +45,14 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next()
   }
 
-  const user = await verifyBasicAuthUser(request.headers.get('authorization'))
-  if (user !== null) {
-    return NextResponse.next()
+  // 判定の順番 (Cookie が先、Basic が後) は requestAuth.ts が持つ。
+  // ここと session.ts の二か所に書くと、片方だけ直して穴が開く
+  const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? null
+  const auth = await resolveAuth(sessionToken, request.headers.get('authorization'))
+  if (auth !== null) {
+    return auth.via === 'session' && sessionToken !== null
+      ? withRenewedSession(sessionToken, auth.expiresAt)
+      : NextResponse.next()
   }
 
   // 画面の取得は、URL をそのままに案内へ差し替える (redirect ではなく rewrite)。
@@ -61,6 +72,36 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     { success: false, data: null, error: 'ログインが必要です' },
     { status: 401, headers: { 'Cache-Control': 'no-store' } },
   )
+}
+
+// セッションの期限を延ばす (docs/29-パスキー計画.md §4)。
+//
+// **延長をここでしか行わないのは、Cookie を貼り直せる場所がここだけだから**。
+// Server Component (session.ts の currentUser) からは Cookie を書けない。
+//
+// 延ばすのは 1 日に 1 回まで (shouldRenewSession)。毎リクエスト書き換えると、
+// ページを開くたびに UPDATE と Set-Cookie が飛ぶ。
+//
+// 失敗しても素通しする。延長は「90 日が 90 日に戻らなかった」だけの話で、
+// そのためにログイン済みの人を締め出す理由はない
+async function withRenewedSession(token: string, expiresAt: Date): Promise<NextResponse> {
+  const response = NextResponse.next()
+
+  if (!shouldRenewSession(expiresAt, new Date())) {
+    return response
+  }
+
+  try {
+    await renewSession(token)
+  } catch (error) {
+    console.error('セッションの期限延長に失敗しました', error)
+    return response
+  }
+
+  // DB を延ばしただけでは足りない。Cookie の Max-Age も貼り直さないと、
+  // ブラウザ側が先に捨ててしまう
+  response.cookies.set(SESSION_COOKIE_NAME, token, sessionCookieOptions())
+  return response
 }
 
 // 読み取りだけの要求か。isPageRequest と違って /api/ も含む

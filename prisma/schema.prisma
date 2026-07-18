@@ -70,6 +70,52 @@ model Image {
   @@map("images")
 }
 
+// 登録済みパスキー (docs/29-パスキー計画.md §5)。
+// 持つのは**公開鍵だけ**で、秘密鍵は端末 (Secure Enclave / iCloud キーチェーン)
+// から出てこない。この表が漏れても成りすませない。
+model WebAuthnCredential {
+  // credential ID。認証器が振る識別子で、base64url 文字列のまま持つ
+  id         String   @id
+  // 登録した時点の利用者名。いまは 1 名だけ (docs/29 §11) だが、ログイン後に
+  // ヘッダの帯へ出す名前をここから取ることで、env を後から変えても
+  // 発行済みのパスキーが誰のものか分からなくなることがない
+  userName   String   @map("user_name")
+  publicKey  Bytes    @map("public_key")
+  // 認証器が「何回使われたか」を申告する値。クローン検知に使うが、
+  // 巻き戻りで即失効はさせない (docs/29 §9)。WebAuthn の仕様上 uint32 なので
+  // Int (符号付き 32bit) では上半分が入らない。BigInt で持ち、
+  // SimpleWebAuthn へ渡すときだけ Number() に落とす
+  counter    BigInt   @default(0)
+  // 認証器の接続手段 ('internal', 'hybrid' など)。次回ログイン時に
+  // ブラウザへ返すと、どの手段で聞きに行くかの案内が正確になる
+  transports String[] @default([])
+  // 一覧で見分けるための名前 (「iPhone」など)。人が付ける
+  label      String
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  @@map("webauthn_credentials")
+}
+
+// ログイン中の端末 (docs/29-パスキー計画.md §4)。
+//
+// 生のトークンはブラウザの Cookie にしか存在せず、ここには sha256 だけを置く。
+// pg_dump が漏れてもセッションを乗っ取れないようにするため
+// (パスワードのハッシュを env に持つのと同じ考え方)。
+model Session {
+  tokenHash String   @id @map("token_hash")
+  // 利用者名。いまは BASIC_AUTH_USER の 1 名だけだが、ヘッダの帯に出す名前は
+  // セッション自身が持つ (env を後から変えても、発行済みの帯が化けない)
+  userName  String   @map("user_name")
+  createdAt DateTime @default(now()) @map("created_at")
+  // 90 日のスライディング。使うたびに延びる (延長は 1 日 1 回まで。docs/29 §4)
+  expiresAt DateTime @map("expires_at")
+
+  // 期限切れの掃除で範囲削除するため
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
 // memo の ```circuitikz フェンスから描いた SVG のキャッシュ。
 // 描画は TeX (WASM) の起動込みで 1 秒強かかる一方、memo は何度も表示され
 // 内容はめったに変わらないため、本文のハッシュで引けるようにする。

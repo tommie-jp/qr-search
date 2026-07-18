@@ -76,6 +76,27 @@ describe('isSelfGuardedPath', () => {
     expect(isSelfGuardedPath(path)).toBe(true)
   })
 
+  // パスキー (docs/29-パスキー計画.md §6)。ログインするための口なので開ける
+  test.each([
+    '/api/auth/passkey/login-options',
+    '/api/auth/passkey/login-verify',
+  ])('%s is public so that logging in is possible at all', (path) => {
+    expect(isPublicPath(path)).toBe(true)
+  })
+
+  // **登録の口は絶対に開けない**。開くと誰でも自分のパスキーを足せてしまい、
+  // ログインを通り抜ける鍵を自分で配ることになる
+  test.each([
+    '/api/auth/passkey/register-options',
+    '/api/auth/passkey/register-verify',
+    '/api/auth/passkeys',
+    '/api/auth/passkeys/abc123',
+    '/api/auth/logout',
+    '/settings/passkeys',
+  ])('%s stays behind the login', (path) => {
+    expect(isPublicPath(path)).toBe(false)
+  })
+
   // 自前判定 = 無条件公開ではない。両者を混同すると、公開ノート専用の
   // 判定を書き忘れたページが素通しになる
   test.each(['/item/4518', '/print/4518'])('%s is not unconditionally public', (path) => {

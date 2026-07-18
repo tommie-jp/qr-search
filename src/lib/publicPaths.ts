@@ -8,6 +8,7 @@
 // '/docs' で始まるものを通すと '/docsecret' まで開いてしまう。
 
 import manifest from '@/app/manifest'
+import { PUBLIC_AUTH_PATHS } from './authPaths'
 import { LOGIN_PATH, LOGIN_REQUIRED_PATH } from './loginRedirect'
 import { isValidImageName } from './uploads'
 import { isValidItemNo } from './validation'
@@ -39,8 +40,12 @@ function pwaPaths(): Set<string> {
 // 表示しているだけなので公開してよい (app/docs/*/page.tsx)
 const DOCS_PATHS = new Set(['/docs/search', '/docs/memo'])
 
-// ログインの入口そのもの。閉じるとログインできない
-const LOGIN_PATHS = new Set([LOGIN_PATH, LOGIN_REQUIRED_PATH])
+// ログインの入口そのもの。閉じるとログインできない。
+//
+// パスキーのログイン 2 口もここに入る (docs/29-パスキー計画.md §6)。
+// **登録の口は入らない** — 一覧は authPaths.ts の PUBLIC_AUTH_PATHS が正本で、
+// あちらに「登録側を入れてはいけない」理由を書いた
+const LOGIN_PATHS = new Set([LOGIN_PATH, LOGIN_REQUIRED_PATH, ...PUBLIC_AUTH_PATHS])
 
 // manifest() は APP_ENV を読む (色を変えるため) が、パスの一覧は環境で
 // 変わらない。毎リクエスト組み直す必要はないので一度だけ作る

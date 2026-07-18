@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({ authorization: null as string | null }))
 vi.mock('next/headers', () => ({
   headers: async () =>
     new Headers(mocks.authorization ? { authorization: mocks.authorization } : {}),
+  // パスキー (docs/29-パスキー計画.md) で認証が Cookie も見るようになった。
+  // ここで扱うのは Basic 認証の口なので、セッションは常に「無い」を返す
+  cookies: async () => ({ get: () => undefined }),
 }))
 
 const PASSWORD = 'test-password'

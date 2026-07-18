@@ -93,7 +93,33 @@ Basic 認証のパスワードファイル `/etc/nginx/.htpasswd-qr` は
 | `/item/:itemNo` | 部品表示 + メモ更新(QR の飛び先。未登録なら新規作成) |
 | `/edit/:itemNo` | mode / memo / url の編集 |
 | `/print/:itemNo` | QR コード印刷 |
+| `/settings/passkeys` | パスキーの登録・削除 |
 | `/manifest.webmanifest` | PWA の manifest(`src/app/manifest.ts` が生成) |
+
+## ログイン
+
+認証はエッジ (nginx / Caddy) ではなく**アプリが行う**
+([docs/18-ログイン計画.md](docs/18-ログイン計画.md))。ログインしなくても
+画面上部の帯は出て、中身だけがログインの内側にある。
+
+手段は 2 つ([docs/29-パスキー計画.md](docs/29-パスキー計画.md)):
+
+- **パスキー (WebAuthn)** … 普段のログイン。Face ID / Touch ID だけで入れる。
+  設定は `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN`
+- **パスワード (Basic)** … パスキーの**登録**と、全端末のパスキーを失った
+  ときの復旧。設定は `BASIC_AUTH_USER` / `BASIC_AUTH_HASH_B64`
+
+パスキーは `/settings/passkeys` から登録する。開くにはログインが必要なので、
+**初回はパスワードで入ってから登録する**。以後はパスキーで入ったまま
+2 台目以降を追加できる。
+
+`WEBAUTHN_*` が未設定ならパスキーの導線が出ないだけで、パスワードでは
+今までどおり入れる。ローカルは `localhost` を使うこと
+(WebAuthn の特例で HTTP でも動く。**`127.0.0.1` では動かない**)。
+
+パスワードのハッシュは `npm run hash-password` で作る。生の bcrypt ハッシュを
+`.env` に書くと `$` が変数展開されて壊れるため、base64 で持つ(理由は
+`src/lib/auth.ts` のコメント)。
 
 ## PWA (ホーム画面へのインストール)
 

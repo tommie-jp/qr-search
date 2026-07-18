@@ -1,4 +1,5 @@
 import { LoginButton } from "@/components/LoginButton";
+import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { BOX_CLASS } from "@/components/ui";
 
 // 「ログインが必要です」の案内 (docs/18-ログイン計画.md, docs/22-ノート公開計画.md §4)。
@@ -21,7 +22,13 @@ export function LoginRequiredNotice() {
           このページを見るにはログインしてください。
         </p>
       </div>
-      <LoginButton variant="primary" />
+      {/* パスキーを主、パスワードを副にする (docs/29-パスキー計画.md §8)。
+          パスワード側を消さないのは、まだパスキーを登録していない端末と、
+          全端末のパスキーを失ったときの復旧経路になるため (docs/29 §2) */}
+      <div className="flex flex-col items-start gap-2">
+        <PasskeyLoginButton variant="primary" />
+        <LoginButton variant="header" label="パスワードでログイン" />
+      </div>
     </div>
   );
 }

@@ -7,6 +7,10 @@ import { BUSY_NOTICE_CLASS, BUSY_SPINNER_CLASS } from "@/components/ui";
 interface LoginButtonProps {
   // ヘッダの中に置くか (小さい文字リンク)、案内の本文に置くか (主ボタン)
   variant?: "header" | "primary";
+  // パスキーが主になった画面 (docs/29-パスキー計画.md §8) では
+  // 「パスワードでログイン」と書き分ける。ボタンが 2 つ並ぶので、
+  // どちらも「ログイン」だと選べない
+  label?: string;
 }
 
 // ログインボタン (docs/18-ログイン計画.md)。
@@ -21,7 +25,10 @@ interface LoginButtonProps {
 // href は最初から /login で描いておき、JS が載ったら戻り先を足す —
 // こうすると描き直しでずれない (hydration mismatch にならない) し、
 // JS が無くてもログインだけはできる (行き先が / になるだけ)。
-export function LoginButton({ variant = "header" }: LoginButtonProps) {
+export function LoginButton({
+  variant = "header",
+  label = "ログイン",
+}: LoginButtonProps) {
   // 押した後の「ログイン処理中」表示。/login への遷移 → 認証ダイアログ →
   // 初期画面が届くまでこのページは表示されたままなので、その間ずっと
   // 覆いが出続ける (認証ダイアログの背景にも見える)。無反応に見せない
@@ -53,7 +60,7 @@ export function LoginButton({ variant = "header" }: LoginButtonProps) {
           window.location.href = loginHref(here);
         }}
       >
-        ログイン
+        {label}
       </a>
       {isLoggingIn && (
         <span
