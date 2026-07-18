@@ -6,7 +6,7 @@ const OPENBD_COVER = 'https://cover.openbd.jp/9784861827754.jpg'
 const RAKUTEN_COVER =
   'https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/5658/9784873115658.jpg?_ex=200x200'
 
-// 先頭バイトが JPEG の署名になっている中身 (matchesMagicBytes を通る)
+// 先頭バイトが JPEG の署名になっている中身 (sniffImageFormat が jpg と判定する)
 const jpegBytes = (size = 64) => {
   const bytes = new Uint8Array(size)
   bytes.set([0xff, 0xd8, 0xff])
@@ -156,11 +156,16 @@ test('200 でも中身が画像でなければ書影なし', async () => {
 })
 
 test('対応していない画像形式は書影なし', async () => {
+  // Content-Type ではなく中身で判定する。image/jpeg を名乗る SVG の実体を
+  // 送っても、先頭バイトが SVG (=非対応) なら書影にしない
   vi.stubEnv('RAKUTEN_APP_ID', '')
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.stubGlobal('fetch', () =>
     Promise.resolve(
-      new Response(jpegBytes(), { status: 200, headers: { 'content-type': 'image/svg+xml' } }),
+      new Response(new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      }),
     ),
   )
   await expect(lookupCover('9784873115658', OPENBD_COVER)).resolves.toBeNull()

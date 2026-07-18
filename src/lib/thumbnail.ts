@@ -33,8 +33,9 @@ export const THUMB_MAX_PX = 320
 //
 // この上限は今回はじめて必要になった。sharp はこれまで devDependency で
 // アイコン生成にしか使っておらず、ユーザーが投げたバイト列を渡す経路が
-// 無かったため
-const MAX_INPUT_PIXELS = 50_000_000
+// 無かったため。
+// HEIC/TIFF → WebP 変換 (normalizeImage) も同じ解凍爆弾よけを共有する
+export const MAX_INPUT_PIXELS = 50_000_000
 
 // 原寸のバイト列からサムネイルを作る。作れなければ null。
 //

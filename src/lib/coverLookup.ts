@@ -10,9 +10,10 @@
 // throw しない (bookLookup とわざと違う)。書影が載らないだけで、書名・著者は
 // 今までどおり入る。
 
+import { normalizeImage } from './normalizeImage'
 import { fetchCoverUrl as fetchRakutenCoverUrl } from './rakutenBooks'
 import { withSourceTimeout } from './sourceTimeout'
-import { extForMime, matchesMagicBytes, MAX_IMAGE_BYTES } from './uploads'
+import { MAX_IMAGE_BYTES, sniffImageFormat } from './uploads'
 
 export interface CoverImage {
   // 保存 (imageStore) にそのまま渡せる形で持つ
@@ -110,12 +111,6 @@ async function downloadCover(
     throw new Error(`書影が HTTP ${res.status} で返りました`)
   }
 
-  const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim()
-  const ext = extForMime(mime)
-  if (!ext) {
-    return null // 対応していない画像形式 (SVG や HTML のエラーページ)
-  }
-
   // メモリ枯渇対策: 申告が大きすぎるなら読む前に諦める。
   // ただしこれは早く諦めるためだけのもので、防御はこの下の readWithLimit が持つ
   if (Number(res.headers.get('content-length') ?? 0) > MAX_IMAGE_BYTES) {
@@ -126,11 +121,18 @@ async function downloadCover(
   if (!bytes) {
     return null // 上限超過。書影として扱わない
   }
-  // 申告された MIME を信用せず、実際の中身と一致するか確認する
-  // (アップロード経路と同じ検査。サーバが取ってきた画像でも水準を下げない)
-  if (!matchesMagicBytes(bytes, ext)) {
-    return null
+
+  // 申告された Content-Type を信用せず、実際の中身から形式を決める
+  // (アップロード経路と同じ検査。サーバが取ってきた画像でも水準を下げない)。
+  // 書影 API は jpg/png しか返さないので、要変換の HEIC/TIFF や非対応は捨てる
+  // — 書影のためだけに変換器 (heic-decode/sharp) を呼びたくない
+  const format = sniffImageFormat(bytes)
+  if (!format || format === 'heic' || format === 'tiff') {
+    return null // 非対応・要変換の形式は書影に使わない (SVG や HTML のエラーページも)
   }
+  // 無変換形式なので normalizeImage はバイト列をそのまま返し、mime/ext だけ
+  // アップロード経路と同一の規則で決まる (対応表を二重に持たない)
+  const { mime, ext } = await normalizeImage(bytes, format)
   return { bytes, mime, ext }
 }
 

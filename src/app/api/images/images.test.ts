@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import bcrypt from 'bcryptjs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { POST as PostFn } from './route'
@@ -83,6 +85,13 @@ function thumbRequest(name: string): [Request, { params: Promise<{ name: string 
 
 function pngFile(): File {
   return new File([PNG_BYTES], 'photo.png', { type: 'image/png' })
+}
+
+// HEIC フィクスチャ (src/lib/__fixtures__)。iOS が MIME を空で送る経路も
+// 兼ねて確かめるため type は空にする — 形式判定は中身の先頭バイトで行う
+const HEIC_FIXTURE = join(__dirname, '..', '..', '..', 'lib', '__fixtures__', 'sample.heic')
+function heicFile(): File {
+  return new File([readFileSync(HEIC_FIXTURE)], 'photo.heic', { type: '' })
 }
 
 // db.ts は import 時に DATABASE_URL を読むため、routes の import は
@@ -247,6 +256,29 @@ describe.skipIf(!runDbTests)(
       const bytes = Buffer.from(await getRes.arrayBuffer())
       expect(bytes.equals(PNG_BYTES)).toBe(true)
     })
+
+    // HEIC (iPhone 標準) は保存時に WebP へ変換する (docs/26-画像形式対応計画.md)。
+    // MIME を空で送っても中身で判定して受け付け、保存名・配信ともに webp になる
+    test.skipIf(!existsSync(HEIC_FIXTURE))(
+      'HEIC をアップロードすると WebP に変換して保存する',
+      async () => {
+        const res = await POST(uploadRequest(heicFile()))
+        expect(res.status).toBe(200)
+
+        const body = await res.json()
+        expect(body.success).toBe(true)
+        // 変換後の拡張子は webp (heic のままではない)
+        expect(body.data.url).toMatch(/^\/api\/images\/[0-9a-f-]{36}\.webp$/)
+
+        const name = body.data.url.split('/').pop() as string
+        created.push(name)
+
+        const [req, ctx] = getRequest(name)
+        const getRes = await GET(req, ctx)
+        expect(getRes.status).toBe(200)
+        expect(getRes.headers.get('content-type')).toBe('image/webp')
+      },
+    )
 
     // 一覧用サムネ (docs/23-検索結果表示モード計画.md §2)。
     // 原寸のまま 20 枚並べると一覧が使い物にならないので、?thumb=1 の口と

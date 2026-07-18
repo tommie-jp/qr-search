@@ -22,7 +22,29 @@ export interface MemoEditorInnerProps {
 
 const MAX_TEXT_LENGTH = 10000;
 
-const ACCEPTED_IMAGE_TYPES = "image/png,image/jpeg,image/gif,image/webp";
+// ファイル選択ダイアログの絞り込み。MIME に加えて拡張子も併記するのは、
+// iOS/一部 OS が HEIC の MIME を空で送ることがあり、MIME だけだと選べないため。
+// HEIC/HEIF・TIFF はサーバが保存時に WebP へ変換する (docs/26-画像形式対応計画.md)。
+// 最終的な形式判定はサーバの sniffImageFormat が中身を見て行う
+const ACCEPTED_IMAGE_TYPES =
+  "image/png,image/jpeg,image/gif,image/webp,image/avif,image/heic,image/heif,image/tiff,.png,.jpg,.jpeg,.gif,.webp,.avif,.heic,.heif,.tif,.tiff";
+
+// ペースト/ドロップで拾う画像の判定。MIME が image/* のもの、または
+// 対応拡張子を持つもの (MIME を空で送る HEIC 対策)。実体の検査はサーバが行う
+const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|tiff?)$/i;
+
+// アップロード済みの画像を Blob として取り直す。OCR は元 File ではなく
+// これを読む: HEIC など Chrome/Firefox が createImageBitmap で復号できない
+// 形式でも、保存時に WebP へ変換済みのバイトなら OCR・表示・検索が同じ画素を見る。
+// 取得できなければ null (アップロードは成功しているので OCR だけ諦める)
+async function fetchImageBlob(url: string): Promise<Blob | null> {
+  try {
+    const res = await fetch(url);
+    return res.ok ? await res.blob() : null;
+  } catch {
+    return null;
+  }
+}
 
 async function uploadImage(file: File): Promise<string> {
   const formData = new FormData();
@@ -59,7 +81,9 @@ function replaceToken(view: EditorView, token: string, replacement: string): voi
 }
 
 function imageFiles(list: FileList | undefined | null): File[] {
-  return Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
+  return Array.from(list ?? []).filter(
+    (f) => f.type.startsWith("image/") || IMAGE_EXT_RE.test(f.name),
+  );
 }
 
 // プレースホルダの一意性のための連番 (インスタンス間で共有してよい)
@@ -123,7 +147,14 @@ export default function MemoEditorInner({
   // 画像 1 枚を OCR し、指定位置へ引用ブロックを差し込む。挿入時 OCR と
   // 「後から OCR」ボタンの両方がこの 1 本を使う (docs/24-画像OCR計画.md §4)。
   // 処理中はプレースホルダを置き、本文が編集されても文字列一致で差し替える。
-  const ocrIntoDoc = async (view: EditorView, blob: Blob, insertPos: number) => {
+  const ocrIntoDoc = async (
+    view: EditorView,
+    // Blob を直接、または後から届く Promise で受ける。プレースホルダは
+    // insertPos が新鮮なうちに同期で挿し、画像取得の await はその後に回す
+    // (取得を待つ間に本文が動いても、置換は文字列一致なのでずれない)
+    source: Blob | Promise<Blob | null>,
+    insertPos: number,
+  ) => {
     const placeholder = ocrPlaceholder(++ocrSeq);
     const insertion = ocrInsertion(placeholder);
     view.dispatch({ changes: { from: insertPos, insert: insertion } });
@@ -131,6 +162,14 @@ export default function MemoEditorInner({
     // 初回はモデルの読み込みが走る。処理中との区別を出す
     setOcrNote(isOcrReady() ? null : "OCR モデルを準備しています（初回のみ）…");
     try {
+      const blob = source instanceof Blob ? source : await source;
+      if (!blob) {
+        // 画像を取り直せなかった。OCR はおまけなので黙って諦める
+        // (アップロードは成功していて画像自体は本文に載っている)
+        replaceToken(view, insertion, "");
+        setOcrNote(null);
+        return;
+      }
       const quote = await ocrImageToQuote(blob);
       if (quote) {
         replaceToken(view, placeholder, quote);
@@ -161,9 +200,11 @@ export default function MemoEditorInner({
           replaceToken(view, token, markup);
           // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
           // アップロードの流れは止めない (url は UUID で一意なので位置を引ける)。
+          // OCR には元 File ではなく保存後の画像 (url) を読ませる。HEIC など
+          // ブラウザが直接復号できない形式は、保存時に WebP へ変換済みのため
           const pos = view.state.doc.toString().indexOf(markup);
           if (pos >= 0) {
-            void ocrIntoDoc(view, file, pos + markup.length);
+            void ocrIntoDoc(view, fetchImageBlob(url), pos + markup.length);
           }
         } catch (e) {
           replaceToken(view, token, "");
