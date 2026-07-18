@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { firstImageName } from './memoImages'
+import { allImageNames, firstImageName } from './memoImages'
 
 const NAME = '0421547b-ee29-4613-a6d4-da0f41f94054.jpg'
 const OTHER = '11108562-47b2-4c00-846d-23dd7e804ff8.png'
@@ -50,4 +50,31 @@ test('コードの後ろの画像は拾う', () => {
   expect(
     firstImageName('```md\nexample\n```\n![](/api/images/' + NAME + ')'),
   ).toBe(NAME)
+})
+
+test('allImageNames: 自前画像をすべて出現順に返す', () => {
+  expect(
+    allImageNames(`![](/api/images/${NAME})\n本文\n![](/api/images/${OTHER})`),
+  ).toEqual([NAME, OTHER])
+})
+
+test('allImageNames: 同じ画像は 1 度だけ (重複除去)', () => {
+  expect(
+    allImageNames(`![](/api/images/${NAME})\n![](/api/images/${NAME})`),
+  ).toEqual([NAME])
+})
+
+test('allImageNames: 外部画像・不正名・コード内は除く', () => {
+  expect(
+    allImageNames(
+      `![](https://example.com/x.jpg)\n` +
+        `![](/api/images/notauuid.jpg)\n` +
+        '`![](/api/images/' + OTHER + ')`\n' +
+        `![](/api/images/${NAME})`,
+    ),
+  ).toEqual([NAME])
+})
+
+test('allImageNames: 画像が無ければ空配列', () => {
+  expect(allImageNames('ただのメモ')).toEqual([])
 })

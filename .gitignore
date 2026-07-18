@@ -61,3 +61,7 @@ next-env.d.ts
 
 # OCR 推論エンジンの wasm (scripts/copyOnnxWasm.mjs が node_modules から複製する)
 /public/onnxruntime
+
+# 画像検索 (transformers.js) の onnxruntime-web wasm
+# (scripts/copyEmbeddingWasm.mjs が node_modules から複製する)
+/public/embedding-onnx

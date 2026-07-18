@@ -30,6 +30,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 静的アセット。node_modules から複製した vendor の wasm グルー (.mjs) を
+    // 含み (copyOnnxWasm / copyEmbeddingWasm など)、自分のコードではないので
+    // lint 対象にしない
+    "public/**",
   ]),
 ]);
 

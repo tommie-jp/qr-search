@@ -11,8 +11,24 @@ const nextConfig: NextConfig = {
   },
   // node-tikzjax は TeX の core dump などを __dirname 相対で読むため、
   // バンドルせず素のパッケージのまま standalone へ運ばせる。
-  // src/lib/circuitikz.ts の _traceNodeTikzjax がこれと対で効く
-  serverExternalPackages: ["node-tikzjax"],
+  // src/lib/circuitikz.ts の _traceNodeTikzjax がこれと対で効く。
+  //
+  // 画像検索の埋め込み (docs/25-画像検索計画.md) は Node 側で transformers.js を
+  // 使い、その下回りの onnxruntime-node はネイティブ addon (.node) を持つ。
+  // バンドルせず素のまま standalone へ運ばせる (native モジュールは webpack で
+  // 束ねられない)。
+  // heic-decode / libheif-js は libheif を WebAssembly でバンドルした
+  // パッケージ。iPhone 標準の HEIC を保存時に WebP へ変換するために使う
+  // (docs/26-画像形式対応計画.md §3)。sharp の prebuilt バイナリは HEVC を
+  // 含まず HEIC を復号できないため、この WASM 復号器を別に持つ。
+  // webpack で束ねると .wasm の解決が壊れるので素のまま standalone へ運ばせる。
+  serverExternalPackages: [
+    "node-tikzjax",
+    "@huggingface/transformers",
+    "onnxruntime-node",
+    "heic-decode",
+    "libheif-js",
+  ],
   // /docs/memo・/docs/search が実行時に読む md を standalone に同梱する
   outputFileTracingIncludes: {
     "/docs/memo": ["./docs/**/*"],

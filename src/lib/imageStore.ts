@@ -9,6 +9,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { prisma } from './db'
+import { generateEmbeddingInBackground } from './embedding/embedImageServer'
 import { makeThumbnail } from './thumbnail'
 
 // 画像を保存し、本文から参照する URL を返す。
@@ -31,5 +32,9 @@ export async function saveImage(
   const name = `${randomUUID()}.${ext}`
   const thumb = await makeThumbnail(bytes, name)
   await prisma.image.create({ data: { name, mime, data: bytes, thumb } })
+  // 画像検索用の埋め込みを「待たずに」作る (docs/25-画像検索計画.md §4)。
+  // 初回はモデル読み込みで数秒かかるため応答を待たせない。生成できなければ
+  // embedding は null のままで、scripts/backfillEmbeddings.ts が後から埋める。
+  generateEmbeddingInBackground(name, bytes, mime)
   return `/api/images/${name}`
 }

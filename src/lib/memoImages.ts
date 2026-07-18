@@ -20,9 +20,10 @@ const IMAGE_SYNTAX = /!\[[^\]]*\]\(([^)\s]+)\)/g
 // 一覧を開くだけで外部へ 20 本の要求が飛ぶことになるので拾わない。
 const IMAGE_PATH_PREFIX = '/api/images/'
 
-// 本文に最初に現れる自前画像の名前 (`<UUID>.<ext>`)。無ければ null。
+// 本文に貼られた自前画像の名前を出てくる順に列挙する。
 // コードフェンス・インラインコードの中は対象外 (tags.ts / props.ts と同じ流儀)。
-export function firstImageName(memo: string): string | null {
+// firstImageName / allImageNames の共通の抽出規則。
+function* iterImageNames(memo: string): Generator<string> {
   for (const match of stripCode(memo).matchAll(IMAGE_SYNTAX)) {
     const url = match[1]
     if (!url.startsWith(IMAGE_PATH_PREFIX)) {
@@ -32,10 +33,28 @@ export function firstImageName(memo: string): string | null {
     // そのまま信じない (route.ts が 400 で弾く形と同じ線引きをここでも敷く)
     const name = url.slice(IMAGE_PATH_PREFIX.length)
     if (isValidImageName(name)) {
-      return name
+      yield name
     }
   }
+}
+
+// 本文に最初に現れる自前画像の名前 (`<UUID>.<ext>`)。無ければ null。
+export function firstImageName(memo: string): string | null {
+  for (const name of iterImageNames(memo)) {
+    return name
+  }
   return null
+}
+
+// 本文に貼られた自前画像の名前をすべて (出現順・重複除去) 返す。
+// 画像検索の索引づくりで、1 ノートに複数枚ある写真を全部照合対象にするため
+// 使う (docs/25-画像検索計画.md §4)。firstImageName と同じ抽出規則。
+export function allImageNames(memo: string): string[] {
+  const seen = new Set<string>()
+  for (const name of iterImageNames(memo)) {
+    seen.add(name)
+  }
+  return [...seen]
 }
 
 // 一覧のサムネ配信 URL。?thumb=1 は縮小版を返す

@@ -43,6 +43,13 @@ const ScannerModal = dynamic(
   { ssr: false },
 );
 
+// 画像検索は埋め込みモデル (transformers.js + 数十MB) と Worker を抱えるので、
+// スキャナと同じくボタンを押すまで読み込まない (docs/25-画像検索計画.md)。
+const ImageSearchModal = dynamic(
+  () => import("@/components/ImageSearchModal").then((m) => m.ImageSearchModal),
+  { ssr: false },
+);
+
 // 検索窓。素の GET フォームのまま、タグ (#…) を打ちかけたときだけ
 // 候補ドロップダウンで補完を助ける (JS 無効でも検索自体は動く)。
 export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps) {
@@ -50,6 +57,7 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
   const [query, setQuery] = useState(initialQuery);
   const [dropdown, setDropdown] = useState<Dropdown | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [isImageSearching, setIsImageSearching] = useState(false);
   // 入力中かどうか (URL の反映を止める判断に使う)
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -266,6 +274,14 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
       >
         スキャン
       </button>
+      {/* 部品を映して登録済みの写真と照合する (docs/25-画像検索計画.md) */}
+      <button
+        type="button"
+        onClick={() => setIsImageSearching(true)}
+        className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
+      >
+        画像検索
+      </button>
       {/* 打つそばから検索するので普段は押さなくてよいが、JS 無効時の唯一の
           検索手段であり、確定の合図としても残す */}
       <button type="submit" className={`whitespace-nowrap ${PRIMARY_BUTTON_CLASS} px-4`}>
@@ -276,6 +292,9 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
           stickerHost={stickerHost}
           onClose={() => setIsScanning(false)}
         />
+      )}
+      {isImageSearching && (
+        <ImageSearchModal onClose={() => setIsImageSearching(false)} />
       )}
     </form>
   );
