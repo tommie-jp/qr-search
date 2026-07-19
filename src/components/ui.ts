@@ -113,8 +113,10 @@ export const WIDE_RESULTS_CLASS =
 export const BOTTOM_BAR_CLASS =
   "fixed inset-x-0 bottom-0 z-10 border-t backdrop-blur print:hidden";
 
+// landscape-phone:max-w-4xl … スマホ横持ちでは main と同じく 672px の上限を
+// 緩め、スロットを全幅に広げる (docs/31 §12-4)
 export const BOTTOM_BAR_INNER_CLASS =
-  "mx-auto flex max-w-2xl items-stretch px-safe pb-[max(0.25rem,env(safe-area-inset-bottom))]";
+  "mx-auto flex max-w-2xl items-stretch px-safe pb-[max(0.25rem,env(safe-area-inset-bottom))] landscape-phone:max-w-4xl";
 
 // バーの 1 スロット。5 等分 (flex-1) して 320px でも 64px を確保する。
 // 高さ 44px 以上 … バーは「狙って押す」場所なので、検索画面の他の操作

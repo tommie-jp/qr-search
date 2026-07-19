@@ -104,7 +104,10 @@ export default async function RootLayout({
           {/* items-baseline … サイト名 (text-lg)・バージョン (text-xs)・
               ユーザー名 (text-base) と文字の大きさが揃わないので、中央揃えでは
               下端がバラバラに見える。全員の文字のベースラインを 1 本に載せる */}
-          <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-safe pt-safe">
+          {/* landscape-phone:max-w-4xl … スマホ横持ちでは 672px の器の外に
+              遊びの余白ができるだけなので、上限を緩めて全幅を使う
+              (main・下部バーと揃える。docs/31 §12-4) */}
+          <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-safe pt-safe landscape-phone:max-w-4xl">
             {/* 項目はハンバーガーメニューへ畳む (docs/11-アプリ的UIUX計画.md §6)。
                 横に並べていたときは iPhone の幅で 1 文字ずつ折り返れて崩れた。
                 左端に置くのは、片手持ちの親指が届く側だから */}
@@ -193,7 +196,15 @@ export default async function RootLayout({
         </header>
         {/* 遷移アニメーションは各ページの <PageTransition> が持つ
             (layout の要素は unmount されず enter/exit が起きないため) */}
-        <main className="mx-auto max-w-2xl px-safe pt-6 pb-safe">{children}</main>
+        {/* max-w-2xl はメモの本文が読める行長に収めるための上限。
+            landscape-phone では 4xl (896px) へ緩める — スマホ横持ちは縦が
+            窮屈な代わりに横が余っており、行長より「スクロール量が減る」ほうが
+            効く。カードの一覧も 2 カラム入る。none にしないのは、PC の縦に
+            低いウィンドウ (横 1200px 級) も landscape-phone に該当し、
+            そこで行が伸びすぎるのを止めるため (docs/31 §12-4) */}
+        <main className="mx-auto max-w-2xl px-safe pt-6 pb-safe landscape-phone:max-w-4xl">
+          {children}
+        </main>
         {/* どちらも何も描かない (docs/30-ブラウザログ計画.md)。
             転送はログイン中だけ仕掛ける — 受け口は 401 を返すので、
             未ログインで拾っても運べず、無駄な要求になる。
