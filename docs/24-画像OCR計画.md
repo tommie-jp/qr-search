@@ -207,6 +207,43 @@ localStorage に退避 (400ms debounce、ノートごとに `draftKey` = itemNo)
 再発するなら次の一手は PP-OCRv6_tiny への切り替え (モデル数分の一、精度は
 要実測)。
 
+### 9-1. OCR の後に画像検索が落ちる (2026-07-19)
+
+実機報告: スキャン → OCR まで通った後、続けて**画像検索**を開くとメモリ不足で
+モデルを読み込めない。
+
+診断: OCR の singleton (`servicePromise`) は OpenCV.js と onnxruntime-web の
+wasm ヒープを抱えたまま **realm に居座り続ける**。SPA 遷移では realm が
+変わらないので、編集画面を離れても解放されない。そこへ画像検索が別の
+onnxruntime + DINOv2 を積むため上限を超える。画像検索側は閉じるときに
+`worker.terminate()` しており行儀が良いので、残っていたのは OCR 側だけだった。
+
+対処 (緩和):
+
+1. **使い終わったら解放する**: `ocrService.disposeOcr()` が SDK の `dispose()`
+   (det/rec の ORT セッションを release) を呼び、singleton を捨てる。呼ぶのは
+   編集画面の unmount (`MemoEditorInner`) と、**画像検索モーダルを開いた時点**
+   (`ImageSearchModal`)。後者は「解放されないまま来た」経路が 1 つでもあれば
+   元の症状がそのまま出るので、メモリを要る側からも要求しておく保険
+2. **認識中は待つ**: 走っている OCR があれば捌けるまで解放を持ち越す。認識中に
+   ORT セッションを release すると挙動が保証されないため。待ち合わせの判断は
+   `ocrDisposeState.ts` の純関数 (`embedderLoadState` と同じ組み立て)。
+   離れた後に戻ってきて次の OCR を始めた場合は、持ち越した要求を取り下げる
+   (使っている最中のモデルを捨てない)
+3. **embedder も 1 回目から WASM で組む** (`useImageEmbedder` の `spawn(true)`)。
+   以前は WebGPU → 失敗したら WASM の順だったが、iPhone は「アダプタは取れる →
+   初期化で OOM → Worker を作り直して WASM」と必ず二度手間になり、1 回目が
+   確保したメモリが解放される保証も無い
+
+**限界 (これは緩和であって根治ではない)**: `WebAssembly.Memory` は grow しか
+できず、`dispose()` してもヒープの高水位は縮まない。完全に OS へ返すには
+realm ごと捨てる = **OCR を Web Worker へ移して `terminate()` する**しかない。
+これで足りなければ次はそれ (embedder と同じ自前 Worker 方式にする)。SDK の
+`worker: true` オプションは自前 fetch と併用できず進捗 % と両立しないが、
+**自前 Worker なら Worker 内で `fetch` を渡せる**ので % は postMessage で
+中継できる。副次効果として「認識中はメインスレッドが塞がって進捗を出せない」
+制約も外れる。
+
 ## 8. 見送り (必要になったら)
 
 - 既存全画像の一括バッチ OCR (個別ボタンで足りる。要るなら Node 側で)

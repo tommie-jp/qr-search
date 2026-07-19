@@ -15,6 +15,7 @@ import {
 import { fenceLanguageCompletion } from "./fenceCompletion";
 import { fenceLanguageLinter } from "./fenceLinter";
 import {
+  disposeOcr,
   isOcrReady,
   MODEL_READY_PERCENT,
   ocrImageToQuote,
@@ -136,6 +137,16 @@ export default function MemoEditorInner({
     });
   }, []);
 
+  // 編集画面を離れたら OCR のモデルを解放する。抱えたままだと OpenCV と
+  // onnxruntime の wasm ヒープが realm に残り、後から開いた画像検索が
+  // モデルを積めずに落ちる (iOS WebKit のタブ上限)。走っている OCR があれば
+  // 捌けてから解放される (ocrService.disposeOcr)
+  useEffect(() => {
+    return () => {
+      void disposeOcr();
+    };
+  }, []);
+
   // アップロード / OCR 完了前に送信すると、画像リンクや OCR 結果が memo に
   // 入らないため、処理中だけフォーム送信をブロックして知らせる
   const busy = uploading || ocrCount > 0;
@@ -175,8 +186,10 @@ export default function MemoEditorInner({
     const insertion = ocrInsertion(placeholder);
     view.dispatch({ changes: { from: insertPos, insert: insertion } });
     setOcrCount((n) => n + 1);
-    // 初回はモデルの読み込みが走る。処理中との区別を出す
-    setOcrNote(isOcrReady() ? null : "OCR モデルを準備しています（初回のみ）…");
+    // モデルが載っていなければ読み込みが走る。処理中との区別を出す。
+    // 「初回のみ」とは言えない: 画面を離れるとモデルを解放する (disposeOcr) ので、
+    // 戻ってきた 2 回目以降もここを通る
+    setOcrNote(isOcrReady() ? null : "OCR モデルを準備しています…");
     try {
       const blob = source instanceof Blob ? source : await source;
       if (!blob) {

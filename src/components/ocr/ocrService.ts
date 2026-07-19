@@ -19,6 +19,12 @@ import { quietOrtSessionLogs } from '@/lib/ort/quietOrtLogs'
 import { orderOcrItems } from '@/lib/ocr/orderOcrItems'
 import { aggregatePercent } from '@/lib/progress'
 import { createProgressFetch } from '@/lib/progressFetch'
+import {
+  INITIAL_OCR_DISPOSE_STATE,
+  reduceOcrDispose,
+  shouldDisposeNow,
+  type OcrDisposeEvent,
+} from './ocrDisposeState'
 
 // onnxruntime-web は既定で .wasm を CDN から取りに行く。自前配布した
 // public/onnxruntime/ を指して外部依存を断つ (scripts/copyOnnxWasm.mjs)。
@@ -72,6 +78,10 @@ async function quietenOrtWarnings(): Promise<void> {
 // 初期化は 1 度だけ。複数の画像を続けて OCR しても使い回す。
 let servicePromise: Promise<OcrService> | null = null
 let ready = false
+
+// 解放の待ち合わせ状態 (実行中の本数 / 解放を頼まれたか)。判断は
+// ocrDisposeState の純関数が持ち、ここは副作用だけを持つ
+let disposeState = INITIAL_OCR_DISPOSE_STATE
 
 // モデルダウンロードの進捗 % の購読者 (バナー表示用)。service が singleton
 // なので進捗のチャネルもモジュールに 1 本でよい
@@ -148,6 +158,50 @@ export function isOcrReady(): boolean {
   return ready
 }
 
+// singleton を解放する。det/rec の ORT セッションが release され、モデルの
+// テンソル分が wasm ヒープの中で解放される。
+//
+// **wasm ヒープそのものは縮まない** (WebAssembly.Memory は grow しかできない)。
+// 完全に OS へ返すには realm ごと捨てる (OCR を Worker に移して terminate する)
+// しかないので、これは緩和策であって根治ではない (docs/24 §9-1)。
+async function runDispose(): Promise<void> {
+  disposeState = reduceOcrDispose(disposeState, { type: 'dispose-run' })
+  const pending = servicePromise
+  // 先に捨てる。下の await の間に来た OCR は作り直しから始まる
+  servicePromise = null
+  ready = false
+  // 次の初期化で同じ % を最初から流せるようにする
+  lastNotifiedPercent = null
+  if (!pending) {
+    return
+  }
+  try {
+    const service = await pending
+    await service.dispose()
+  } catch {
+    // 初期化に失敗した service には解放するものが無い。ここで投げても
+    // 「画面を離れる」操作が失敗して見えるだけで、呼び手にできることは無い
+  }
+}
+
+// 解放の状態を進め、条件が揃っていれば解放する。
+async function advanceDispose(event: OcrDisposeEvent): Promise<void> {
+  disposeState = reduceOcrDispose(disposeState, event)
+  if (shouldDisposeNow(disposeState)) {
+    await runDispose()
+  }
+}
+
+// OCR の singleton を解放する (編集画面を離れるときに呼ぶ)。
+//
+// OCR は OpenCV.js と onnxruntime-web の wasm ヒープを抱えたまま realm に
+// 居座るため、放っておくと後から開いた画像検索がモデルを積めずに落ちる
+// (iOS WebKit のタブ上限)。**走っている OCR があれば捌けるまで待つ**:
+// 認識中に ORT セッションを release すると挙動が保証されないため。
+export async function disposeOcr(): Promise<void> {
+  await advanceDispose({ type: 'dispose-request' })
+}
+
 // 初回ロードを前もって温めたいとき用 (今は未使用だが、編集画面を開いた時点で
 // 走らせる導線を足せるようにしておく)。
 export function preloadOcr(): void {
@@ -183,6 +237,17 @@ async function toOcrBitmap(blob: Blob): Promise<ImageBitmap> {
 // 移す必要があり、SDK の worker モードは自前 fetch と併用できない
 // = モデル DL の進捗 % と両立しない。ここでは進捗の通知はしない。
 export async function ocrImageToQuote(blob: Blob): Promise<string> {
+  // 認識が終わるまでは解放させない (disposeOcr の理由を参照)
+  disposeState = reduceOcrDispose(disposeState, { type: 'ocr-start' })
+  try {
+    return await runOcr(blob)
+  } finally {
+    // 画面を離れた後に終わった OCR は、ここで持ち越された解放を引き取る
+    void advanceDispose({ type: 'ocr-end' })
+  }
+}
+
+async function runOcr(blob: Blob): Promise<string> {
   if (!servicePromise) {
     servicePromise = createService()
   }

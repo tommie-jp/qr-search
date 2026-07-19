@@ -10,6 +10,7 @@ import {
 } from "@/components/ui";
 import { rankItems, type ImageVectorEntry, type ItemMatch } from "@/lib/imageSearch";
 import { thumbUrl } from "@/lib/memoImages";
+import { disposeOcr } from "./ocr/ocrService";
 import { captureSquareBitmap } from "./imageSearch/capture";
 import { fetchImageSearchIndex } from "./imageSearch/fetchIndex";
 import { useImageEmbedder } from "./imageSearch/useImageEmbedder";
@@ -88,6 +89,15 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  // OCR が抱えているモデルを先に解放する。編集画面の unmount でも解放している
+  // (MemoEditorInner) が、そちらに頼り切ると「解放されないまま来た」経路が
+  // 1 つでもあれば元のメモリ不足がそのまま再現する。メモリを必要とする側が
+  // 自分で要求しておく。OCR が走っていなければ即座に済み、走っていても
+  // ここでのモデル取得 (数十 MB・数秒) の方が長いので待ちにはならない
+  useEffect(() => {
+    void disposeOcr();
+  }, []);
 
   // 索引の取得 (モーダルを開いた時点で 1 度)
   useEffect(() => {
