@@ -15,6 +15,7 @@ import {
   PASSKEY_REGISTER_OPTIONS_PATH,
   PASSKEY_REGISTER_VERIFY_PATH,
 } from './authPaths'
+import { clearPasskeyHint, markPasskeyUsedHere } from './passkeyHint'
 
 // 利用者が Face ID のダイアログを閉じた・時間切れになった、のいずれか。
 // ブラウザはどちらも NotAllowedError にまとめてしまい区別できない。
@@ -28,7 +29,18 @@ export class PasskeyCancelledError extends Error {
 }
 
 export async function loginWithPasskey(): Promise<string> {
-  const optionsJSON = await postForData(PASSKEY_LOGIN_OPTIONS_PATH, {})
+  let optionsJSON: unknown
+  try {
+    optionsJSON = await postForData(PASSKEY_LOGIN_OPTIONS_PATH, {})
+  } catch (error) {
+    // 404 = サーバに 1 つもパスキーが無い。この端末の実績も無効になったので
+    // ヒントを捨てる (残すと毎回空振りの自動発火を試み続ける)。
+    // それ以外の失敗 (通信断・503 など) は一時的なものなので実績は残す
+    if (error instanceof PasskeyApiError && error.status === 404) {
+      clearPasskeyHint()
+    }
+    throw error
+  }
 
   const response = await runAuthenticator(() =>
     startAuthentication({ optionsJSON: optionsJSON as never }),
@@ -37,6 +49,10 @@ export async function loginWithPasskey(): Promise<string> {
   const result = (await postForData(PASSKEY_LOGIN_VERIFY_PATH, { response })) as {
     userName: string
   }
+
+  // 「このブラウザでパスキーが使えた」実績。次回から自動ログインを試してよい
+  markPasskeyUsedHere()
+
   return result.userName
 }
 
@@ -48,6 +64,9 @@ export async function registerPasskey(label: string): Promise<void> {
   )
 
   await postForData(PASSKEY_REGISTER_VERIFY_PATH, { response, label })
+
+  // 登録した端末には確実に鍵がある。ログインを待たずに実績として扱ってよい
+  markPasskeyUsedHere()
 }
 
 // 認証器を動かすところ。取り消しだけを別の例外に翻訳する。
@@ -65,6 +84,21 @@ async function runAuthenticator<T>(start: () => Promise<T>): Promise<T> {
     // 残りは環境の問題 (対応していないブラウザなど)。原因を握りつぶさない
     console.error('認証器の呼び出しに失敗しました', error)
     throw new Error('この端末ではパスキーを利用できませんでした')
+  }
+}
+
+// サーバが断ったときの例外。**status を持たせるのが要点** —
+// 「パスキーが 1 つも無い (404)」と「一時的な失敗」を呼ぶ側が区別できないと、
+// 通信が切れただけでこの端末の実績まで捨ててしまう。
+//
+// message はサーバが日本語で書いたものをそのまま持つので、画面へ直接出せる。
+export class PasskeyApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'PasskeyApiError'
+    this.status = status
   }
 }
 
@@ -91,11 +125,17 @@ async function postForData(path: string, body: unknown): Promise<unknown> {
     envelope = await response.json()
   } catch {
     // 502 の HTML が返ってきた場合など。JSON でないものを黙って無視しない
-    throw new Error(`サーバから予期しない応答が返りました (${response.status})`)
+    throw new PasskeyApiError(
+      `サーバから予期しない応答が返りました (${response.status})`,
+      response.status,
+    )
   }
 
   if (!response.ok || envelope.success !== true) {
-    throw new Error(envelope.error || `処理に失敗しました (${response.status})`)
+    throw new PasskeyApiError(
+      envelope.error || `処理に失敗しました (${response.status})`,
+      response.status,
+    )
   }
 
   return envelope.data

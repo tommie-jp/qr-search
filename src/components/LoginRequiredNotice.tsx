@@ -1,6 +1,7 @@
 import { LoginButton } from "@/components/LoginButton";
 import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { BOX_CLASS } from "@/components/ui";
+import { isPasskeyEnabled } from "@/lib/webauthnConfig";
 
 // 「ログインが必要です」の案内 (docs/18-ログイン計画.md, docs/22-ノート公開計画.md §4)。
 //
@@ -24,9 +25,13 @@ export function LoginRequiredNotice() {
       </div>
       {/* パスキーを主、パスワードを副にする (docs/29-パスキー計画.md §8)。
           パスワード側を消さないのは、まだパスキーを登録していない端末と、
-          全端末のパスキーを失ったときの復旧経路になるため (docs/29 §2) */}
+          全端末のパスキーを失ったときの復旧経路になるため (docs/29 §2)。
+
+          autoStart を渡すのはここだけ (docs/29 §13)。ヘッダにも同じボタンが
+          あるが、あちらは公開ノートにも出るので自動発火させない。
+          「保護されたページを開こうとした」= ログインの意思がある場面に絞る */}
       <div className="flex flex-col items-start gap-2">
-        <PasskeyLoginButton variant="primary" />
+        <PasskeyLoginButton variant="primary" autoStart={isPasskeyEnabled()} />
         <LoginButton variant="header" label="パスワードでログイン" />
       </div>
     </div>
