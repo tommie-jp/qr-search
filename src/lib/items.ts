@@ -233,9 +233,11 @@ function buildTrashedWhere(query: string): Prisma.Sql {
 
 // ソート句。PGroonga のスコアは小テーブルで seq scan になり効かないため、
 // 関連度順は採用せず現行の更新順/番号順を維持する (docs/04-全文検索計画.md §3-4)。
+// 更新順の item_no はタイブレーク。同時刻の行 (インポート直後など) で並びが
+// 不定になると、ページ送り・前後ナビが読み込みのたびに揺れる (docs/15 §2-2)。
 function buildOrderBy(sort: Sort): Prisma.Sql {
   return sort === 'updated'
-    ? Prisma.sql`ORDER BY updated_at DESC`
+    ? Prisma.sql`ORDER BY updated_at DESC, item_no ASC`
     : Prisma.sql`ORDER BY item_no_num ASC NULLS LAST, item_no ASC`
 }
 
