@@ -77,7 +77,7 @@ export function SearchResults({
   return (
     <div
       aria-busy={isPending}
-      className={`space-y-4 transition-opacity ${isPending ? "opacity-50" : ""} ${className}`}
+      className={`space-y-2 transition-opacity ${isPending ? "opacity-50" : ""} ${className}`}
     >
       {children}
     </div>

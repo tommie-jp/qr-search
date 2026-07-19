@@ -55,6 +55,24 @@ summary {
   padding-top: max(0.75rem, env(safe-area-inset-top));
 }
 
+/* ハンバーガーメニューのボトムシート (docs/11-アプリ的UIUX計画.md §6)。
+   下から現れることで「画面の下端に一時的に開いた物」と伝える。
+   閉じる側は付けない — 閉じ終わるまで unmount を待つ状態管理が要るわりに、
+   得られるのは見た目の余韻だけなため。
+   使う側は motion-safe: を付けること (動きを減らす設定では動かさない) */
+@utility animate-sheet-up {
+  animation: sheet-up 200ms ease-out both;
+}
+
+@keyframes sheet-up {
+  from {
+    translate: 0 100%;
+  }
+  to {
+    translate: 0 0;
+  }
+}
+
 /* 画面遷移のアニメーション (docs/11-アプリ的UIUX計画.md §4)。
    クラス名は layout.tsx の <ViewTransition> が種類に応じて付ける。
    横方向で前後を表す: 進むと新しい画面が右から入り、戻ると左から入る。

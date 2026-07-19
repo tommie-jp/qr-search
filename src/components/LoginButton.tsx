@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LOGIN_PATH, loginHref } from "@/lib/loginRedirect";
+import { LoginIcon } from "@/components/MenuIcons";
 import {
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
@@ -66,6 +67,9 @@ export function LoginButton({
           window.location.href = loginHref(here);
         }}
       >
+        {/* アイコンはメニューの行のときだけ (他の variant は文字だけの
+            リンク / 主ボタンで、行頭にアイコンを置く形になっていない) */}
+        {variant === "menu" && <LoginIcon />}
         {label}
       </a>
       {isLoggingIn && (

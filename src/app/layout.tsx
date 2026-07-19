@@ -9,6 +9,7 @@ import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { LoginButton } from "@/components/LoginButton";
 import { LogoutButton } from "@/components/LogoutButton";
+import { GithubIcon, KeyIcon, LogIcon } from "@/components/MenuIcons";
 import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
@@ -114,6 +115,7 @@ export default async function RootLayout({
                 rel="noopener noreferrer"
                 className={HEADER_MENU_ITEM_CLASS}
               >
+                <GithubIcon />
                 GitHub
               </a>
               {user ? (
@@ -121,6 +123,7 @@ export default async function RootLayout({
                   {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
                       見えても 401 だが、押せない物を見せない */}
                   <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
+                    <LogIcon />
                     ログ
                   </Link>
                   {/* その場で見る側のログ (docs/30-ブラウザログ計画.md §2)。
@@ -133,6 +136,7 @@ export default async function RootLayout({
                     href={PASSKEY_SETTINGS_PATH}
                     className={HEADER_MENU_ITEM_CLASS}
                   >
+                    <KeyIcon />
                     パスキー
                   </Link>
                   <LogoutButton variant="menu" />

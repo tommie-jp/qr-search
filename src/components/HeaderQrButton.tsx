@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { QrIcon } from "@/components/MenuIcons";
 import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
 
 interface HeaderQrButtonProps {
@@ -50,7 +51,14 @@ export function HeaderQrButton({
           setIsOpen(true);
         }}
       >
-        {variant === "menu" ? "QR コード" : "QR"}
+        {variant === "menu" ? (
+          <>
+            <QrIcon />
+            QR コード
+          </>
+        ) : (
+          "QR"
+        )}
       </button>
       {isOpen &&
         createPortal(

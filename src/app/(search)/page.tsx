@@ -13,9 +13,9 @@ import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
 import {
-  ACTION_LINK_CLASS,
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
+  COMPACT_ACTION_LINK_CLASS,
   WIDE_RESULTS_CLASS,
 } from "@/components/ui";
 import {
@@ -62,7 +62,9 @@ export default async function Home({ searchParams }: HomeProps) {
     // アプリを開いているホスト (localhost 等) とは食い違いうる
     <SearchNavProvider sort={sort}>
       <PageTransition>
-        <div className="space-y-4">
+        {/* 縦の間隔は詰める。検索窓・件数・一覧は 1 つの操作面として続けて
+            読む物で、離すほど 1 画面に入る件数が減る */}
+        <div className="space-y-2">
           <SearchForm
             initialQuery={query}
             tags={tags.map((t) => t.tag)}
@@ -133,12 +135,15 @@ async function HomeResults({
   return (
     <SearchResults className={view === "card" ? WIDE_RESULTS_CLASS : ""}>
       <div className="flex items-center justify-between">
-        <p className="flex items-baseline gap-2 text-gray-600">
+        {/* 件数は text-sm、その脇の補助リンクはさらに一段下げて text-xs。
+            両方同じ大きさにすると、件数 (常に見る物) と補助リンク
+            (たまに押す物) の区別が付かなくなる */}
+        <p className="flex items-baseline gap-2 text-sm text-gray-600">
           <span>
             {query ? `「${query}」の検索結果: ` : "すべて: "}
             {result.total} 件
           </span>
-          <Link href="/docs/search" className="text-sm text-blue-600 underline">
+          <Link href="/docs/search" className="text-xs text-blue-600 underline">
             検索ヘルプ
           </Link>
           {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
@@ -146,7 +151,7 @@ async function HomeResults({
             <Link
               href="/trash"
               transitionTypes={["nav-forward"]}
-              className="text-sm text-blue-600 underline"
+              className="text-xs text-blue-600 underline"
             >
               ゴミ箱 ({trashCount})
             </Link>
@@ -156,25 +161,25 @@ async function HomeResults({
                 遷移で loading.tsx の骨組みが出ないため、リンク側でスピナーを出す */}
         <p className="flex gap-1">
           {sort === "itemNo" ? (
-            <span className={`${ACTION_LINK_CLASS} font-bold text-gray-900`}>
+            <span className={`${COMPACT_ACTION_LINK_CLASS} font-bold text-gray-900`}>
               番号順
             </span>
           ) : (
             <PendingLink
               href={buildSearchUrl(query, 1, "itemNo")}
-              className={ACTION_LINK_CLASS}
+              className={COMPACT_ACTION_LINK_CLASS}
             >
               番号順
             </PendingLink>
           )}
           {sort === "updated" ? (
-            <span className={`${ACTION_LINK_CLASS} font-bold text-gray-900`}>
+            <span className={`${COMPACT_ACTION_LINK_CLASS} font-bold text-gray-900`}>
               更新順
             </span>
           ) : (
             <PendingLink
               href={buildSearchUrl(query, 1, "updated")}
-              className={ACTION_LINK_CLASS}
+              className={COMPACT_ACTION_LINK_CLASS}
             >
               更新順
             </PendingLink>
@@ -201,20 +206,20 @@ async function HomeResults({
         {result.page > 1 ? (
           <PendingLink
             href={buildSearchUrl(query, result.page - 1, sort)}
-            className={ACTION_LINK_CLASS}
+            className={COMPACT_ACTION_LINK_CLASS}
           >
             ← 前へ
           </PendingLink>
         ) : (
           <span />
         )}
-        <span className="text-gray-500">
+        <span className="text-sm text-gray-500">
           {result.page} / {result.pageCount} ページ
         </span>
         {result.page < result.pageCount ? (
           <PendingLink
             href={buildSearchUrl(query, result.page + 1, sort)}
-            className={ACTION_LINK_CLASS}
+            className={COMPACT_ACTION_LINK_CLASS}
           >
             次へ →
           </PendingLink>

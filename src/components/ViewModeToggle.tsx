@@ -31,7 +31,7 @@ export function ViewModeToggle({ view, action }: ViewModeToggleProps) {
       className="flex items-center gap-1"
       aria-label="表示"
     >
-      <span className="text-gray-500">表示</span>
+      <span className="text-sm text-gray-500">表示</span>
       <span className="inline-flex overflow-hidden rounded border border-gray-300">
         {OPTIONS.map(({ mode, label }) => {
           const current = mode === view;
@@ -44,7 +44,9 @@ export function ViewModeToggle({ view, action }: ViewModeToggleProps) {
               // 選択中の側も押せるままにしておく (disabled にしない)。
               // 別端末や cookie 切れで表示が既定に戻ったとき、押して直せる
               aria-pressed={current}
-              className={`min-h-11 px-3 transition-colors ${
+              // 高さ 36px・文字 14px は検索画面の他のボタンと揃える
+              // (ui.ts の COMPACT_* 参照)
+              className={`min-h-9 px-3 text-sm transition-colors ${
                 current
                   ? "bg-blue-600 font-bold text-white"
                   : "bg-white text-blue-600 active:bg-blue-50"

@@ -5,9 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { PendingLink } from "@/components/PendingLink";
 import { useSearchNav } from "@/components/SearchNav";
 import {
-  BOX_CLASS,
-  PRIMARY_BUTTON_CLASS,
-  SECONDARY_BUTTON_CLASS,
+  COMPACT_ICON_BUTTON_CLASS,
+  COMPACT_INPUT_CLASS,
+  COMPACT_PRIMARY_BUTTON_CLASS,
+  COMPACT_SECONDARY_BUTTON_CLASS,
 } from "@/components/ui";
 import {
   applyCompletion,
@@ -214,7 +215,7 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
       method="GET"
       action="/"
       onSubmit={handleSubmit}
-      className="relative flex flex-wrap items-start gap-2"
+      className="relative flex flex-wrap items-start gap-1.5"
     >
       <div className="relative min-w-40 flex-1">
         <input
@@ -245,7 +246,7 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
           aria-expanded={dropdown !== null}
           aria-autocomplete="list"
           aria-controls="tag-suggestions"
-          className={`min-h-11 w-full ${BOX_CLASS}`}
+          className={`w-full ${COMPACT_INPUT_CLASS}`}
         />
         {dropdown && (
           <ul
@@ -279,13 +280,13 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
           「スキャンだけ入力窓と同じ行に残る」散らかった並びになる。
           塊の中でも折り返すのは、320px ではボタン 4 つが一列に収まらず、
           折り返せないと横スクロールが出るため (実測 53px はみ出す) */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {/* カメラ非対応の環境でも隠さない。押したとき理由を出す方が原因を追える
             (docs/09-スキャン計画.md §6) */}
         <button
           type="button"
           onClick={() => setIsScanning(true)}
-          className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
+          className={`whitespace-nowrap ${COMPACT_SECONDARY_BUTTON_CLASS}`}
         >
           スキャン
         </button>
@@ -293,13 +294,16 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
         <button
           type="button"
           onClick={() => setIsImageSearching(true)}
-          className={`whitespace-nowrap ${SECONDARY_BUTTON_CLASS}`}
+          className={`whitespace-nowrap ${COMPACT_SECONDARY_BUTTON_CLASS}`}
         >
           画像検索
         </button>
         {/* 打つそばから検索するので普段は押さなくてよいが、JS 無効時の唯一の
             検索手段であり、確定の合図としても残す */}
-        <button type="submit" className={`whitespace-nowrap ${PRIMARY_BUTTON_CLASS} px-4`}>
+        <button
+          type="submit"
+          className={`whitespace-nowrap ${COMPACT_PRIMARY_BUTTON_CLASS}`}
+        >
           検索
         </button>
         {/* 空ノートを作る (docs/27-新規ノート追加計画.md)。
@@ -310,14 +314,15 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
             /new は force-dynamic で loading.tsx を持たない = 押してから画面が
             変わるまで何も起きないので、素の Link ではなく PendingLink で
             スピナーを出す (docs/11-アプリ的UIUX計画.md §1-2)。
-            ラベルが「+」だけなのは幅を詰めるため。意味は aria-label / title で補う */}
+            ラベルが「+」だけなのは幅を詰めるため。意味は aria-label / title で補う。
+            左右の余白を持たない正方形にするのも同じ理由 (COMPACT_ICON_BUTTON_CLASS) */}
         <PendingLink
           href="/new"
           prefetch={false}
           aria-label="新規ノート"
           title="新規ノート"
           transitionTypes={["nav-forward"]}
-          className={`text-xl ${SECONDARY_BUTTON_CLASS}`}
+          className={COMPACT_ICON_BUTTON_CLASS}
         >
           +
         </PendingLink>

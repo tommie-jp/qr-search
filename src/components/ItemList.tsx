@@ -8,7 +8,11 @@ import { DEFAULT_VIEW_MODE, type ViewMode } from "@/lib/viewMode";
 import { BulkTagToolbar } from "./BulkTagToolbar";
 import { ItemRow } from "./ItemRow";
 import { ViewModeToggle } from "./ViewModeToggle";
-import { ACTION_LINK_CLASS, PRIMARY_BUTTON_CLASS } from "./ui";
+import {
+  ACTION_LINK_CLASS,
+  COMPACT_ACTION_LINK_CLASS,
+  PRIMARY_BUTTON_CLASS,
+} from "./ui";
 
 // bulkTagAction をそのまま import すると db.ts (DATABASE_URL 必須) まで巻き込み
 // テストが動かないため、サーバーアクションは page.tsx から prop で受け取る。
@@ -141,7 +145,7 @@ export function ItemList({
           <button
             type="button"
             onClick={() => setSelectMode(true)}
-            className={ACTION_LINK_CLASS}
+            className={COMPACT_ACTION_LINK_CLASS}
           >
             選択
           </button>

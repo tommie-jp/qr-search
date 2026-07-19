@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LOGOUT_PATH } from "@/lib/authPaths";
+import { LogoutIcon } from "@/components/MenuIcons";
 import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
 
 // ログアウト (docs/18-ログイン計画.md §11)。
@@ -56,6 +57,9 @@ export function LogoutButton({
           : "inline-flex min-h-11 items-center rounded px-2 text-gray-500 transition-colors hover:text-gray-900 active:bg-gray-100 disabled:opacity-60"
       }
     >
+      {/* アイコンはメニューの行のときだけ。ヘッダ直置きの側は文字だけの
+          小さなリンクで、アイコンを足すと幅を食う */}
+      {variant === "menu" && <LogoutIcon />}
       {isBusy ? "処理中…" : "ログアウト"}
     </button>
   );

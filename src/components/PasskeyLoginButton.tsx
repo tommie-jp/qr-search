@@ -8,6 +8,7 @@ import {
   isAutoLoginSuppressed,
   suppressAutoLogin,
 } from "@/lib/passkeyHint";
+import { KeyIcon } from "@/components/MenuIcons";
 import {
   HEADER_MENU_ITEM_CLASS,
   PRIMARY_BUTTON_CLASS,
@@ -130,6 +131,9 @@ export function PasskeyLoginButton({
         disabled={isBusy}
         className={className}
       >
+        {/* アイコンはメニューの行のときだけ (他の variant は文字だけの
+            リンク / 主ボタンで、行頭にアイコンを置く形になっていない) */}
+        {variant === "menu" && <KeyIcon />}
         {/* 共有のスピナー (BUSY_SPINNER_CLASS) は赤背景用の白なので、
             白地のここでは見えない。文字で状態を出す */}
         {isBusy ? "ログイン中…" : "パスキーでログイン"}

@@ -10,8 +10,15 @@ import { createPortal } from "react-dom";
 // 項目は今後も増える側なので、畳める入れ物にする。
 //
 // **画面幅で出し分けない。** 「狭いときだけメニュー」にするとコードパスが
-// 2 本になり、片方だけ壊れる (今回の崩れもデスクトップでは見えなかった)。
+// 2 本になり、片方だけ壊れる (当初の崩れもデスクトップでは見えなかった)。
 // 全幅で同じ形にして、壊れ方を 1 通りに保つ。
+//
+// **開いた項目は画面の下端から出す (ボトムシート)。** 以前は開閉ボタンの
+// 直下に垂れるドロップダウンだったが、これは PC の作法で、このアプリの
+// 主戦場であるスマホでは「上端のボタンを押す → さらに上に出た項目を押す」と
+// なり、片手持ちの親指が 2 回とも届かない。下から出せば、開いた後の選択が
+// 親指の届く範囲で完結する。開閉ボタン自体を下へ移す案もあるが、それは
+// ヘッダーの構成ごと変える話なので別途 (§6 参照)。
 //
 // 中身は children で受け取る。こうすると HeaderMenu 自身はログイン状態を
 // 知らずに済み、layout.tsx (Server Component) が項目を組み立てられる
@@ -19,12 +26,15 @@ import { createPortal } from "react-dom";
 export function HeaderMenu({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
-  // Escape で閉じる。開いているときだけ登録する
+  // 開いている間だけの後始末をまとめて持つ。閉じたら (= 依存が false に
+  // なったら) cleanup が走り、すべて元へ戻る
   useEffect(() => {
     if (!isOpen) {
       return;
     }
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsOpen(false);
@@ -34,7 +44,24 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+
+    // 背面のスクロールを止める。暗くした背景が指で動くと「触れないのに
+    // 動く」矛盾になるうえ、シートの中を弾いたつもりが後ろが流れる
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    // シートへフォーカスを移す。**portal で body の末尾に描くので、
+    // 移さないとタブ順がヘッダー → 本文 → シートになり、開いた直後に
+    // Tab を押しても項目へ入れない** (ヘッダーの中に描いていた頃は
+    // DOM の並びがそのままタブ順だったので、これは要らなかった)。
+    // 項目の外に出た後まで閉じ込める処理 (focus trap) は持たない —
+    // Escape と外側タップで出られるので、行き止まりにはならない
+    sheetRef.current?.focus();
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [isOpen]);
 
   return (
@@ -46,7 +73,7 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
         aria-expanded={isOpen}
         aria-haspopup="menu"
         onClick={() => setIsOpen((open) => !open)}
-        // relative z-40 で外側タップ用の覆い (z-30) より上に出す。
+        // relative z-40 で外側タップ用の覆い (z-10) より上に出す。
         // 下に居ると ✕ を押しても覆いがタップを横取りし、この onClick が
         // 動かない。結果的に閉じはする (覆いが閉じる) が、押した物と
         // 動いた物が食い違う状態になり、開閉が二重に走る余地も残る
@@ -71,48 +98,64 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
         </svg>
       </button>
 
-      {isOpen && (
-        <>
-          {/* 外側タップで閉じる覆い。document のリスナーではなく実体のある
-              要素にするのは、iOS Safari で body へのタップが拾えないことが
-              あるため。透明だが確実にタップを受ける。
+      {isOpen &&
+        // **覆いもシートも body へ portal するのが要点。** ヘッダーには
+        // backdrop-blur が掛かっており、backdrop-filter を持つ要素は
+        // position:fixed の包含ブロックになる。ヘッダーの中に置くと
+        // inset-0 や bottom-0 が「画面全体」ではなく「ヘッダーの矩形」を
+        // 指し、覆いは本文まで届かず、シートは画面の下端に貼れない。
+        // 実際それで、メニューを開いたまま本文のリンクを押せてしまい、
+        // 閉じずに画面が遷移した
+        createPortal(
+          <>
+            {/* 外側タップで閉じる覆い。document のリスナーではなく実体のある
+                要素にするのは、iOS Safari で body へのタップが拾えないことが
+                あるため。
 
-              **body へ portal するのが要点。** ヘッダーには backdrop-blur が
-              掛かっており、backdrop-filter を持つ要素は position:fixed の
-              包含ブロックになる。ヘッダーの中に置くと inset-0 が
-              「画面全体」ではなく「ヘッダーの矩形」になり、覆いが本文まで
-              届かない。実際それで、メニューを開いたまま本文のリンクを
-              押せてしまい、閉じずに画面が遷移した。
-
-              z-10 = ヘッダー (z-20) より下。本文より上なので外側タップは
-              拾えるうえ、ヘッダー自身の操作 (✕) は覆いに邪魔されない */}
-          {createPortal(
+                暗転させるのはシートの作法で、「後ろは今触れない」を目で
+                伝えるため。ただし **z-10 = ヘッダー (z-20) より下** に置くので、
+                暗くなるのは本文だけでヘッダーの帯は明るいまま残る。これは
+                妥協ではなく必要な制約: ヘッダーは z-20 で積み重ね文脈を作るため、
+                その中にある開閉ボタンの z-40 は「ヘッダーの中での 40」でしかなく、
+                覆いをヘッダーより上に出すと ✕ が覆いの下に潜って上のコメントの
+                食い違いが起きる。画面全体を暗くするより ✕ が正しく効くほうを取る */}
             <div
-              className="fixed inset-0 z-10"
+              className="fixed inset-0 z-10 bg-black/40"
               onClick={() => setIsOpen(false)}
               aria-hidden
-            />,
-            document.body,
-          )}
-          {/* 項目を押したら閉じる。個々の項目に閉じる処理を配らず、
-              バブリングを 1 か所で受けることで、項目が増えても閉じ忘れない。
+            />
+            {/* 項目を押したら閉じる。個々の項目に閉じる処理を配らず、
+                バブリングを 1 か所で受けることで、項目が増えても閉じ忘れない。
 
-              **例外は「自前の UI 状態を持つ項目」** (HeaderQrButton の
-              オーバーレイ、PasskeyLoginButton の進行中・エラー表示)。
-              閉じるとその部品ごと unmount され、開いたはずのものや
-              出したはずのエラーが道連れに消える。該当する部品は自分の
-              onClick で stopPropagation してメニューを開いたままにする */}
-          <div
-            role="menu"
-            onClick={() => setIsOpen(false)}
-            // 開閉ボタンはヘッダーの左端にあるので、パネルも左寄せにする。
-            // right-0 のままだと画面の外へはみ出す
-            className="absolute left-0 top-full z-40 mt-1 flex w-56 flex-col gap-0.5 rounded border border-gray-300 bg-white p-1 shadow-lg"
-          >
-            {children}
-          </div>
-        </>
-      )}
+                **例外は「自前の UI 状態を持つ項目」** (HeaderQrButton の
+                オーバーレイ、PasskeyLoginButton の進行中・エラー表示)。
+                閉じるとその部品ごと unmount され、開いたはずのものや
+                出したはずのエラーが道連れに消える。該当する部品は自分の
+                onClick で stopPropagation してメニューを開いたままにする。
+
+                mx-auto max-w-2xl … 本文の器 (main) と同じ幅に収める。
+                全幅に伸ばすと PC で画面を横切る帯になり、間延びして見える。
+                pb-… は自前で持つ。画面の下端に貼り付くので、ホームバーに
+                潜らないよう safe-area の分を空ける (main の pb-safe は
+                fixed には効かない) */}
+            <div
+              ref={sheetRef}
+              role="menu"
+              tabIndex={-1}
+              onClick={() => setIsOpen(false)}
+              className="fixed inset-x-0 bottom-0 z-40 mx-auto flex max-w-2xl flex-col gap-0.5 rounded-t-2xl border border-gray-300 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-4px_16px_rgba(0,0,0,0.15)] motion-safe:animate-sheet-up"
+            >
+              {/* つまみ。掴んで動かせるわけではないが、この形が
+                  「下から出た一時的なシート」の合図として通じている */}
+              <span
+                aria-hidden
+                className="mx-auto mb-1 h-1 w-10 shrink-0 rounded-full bg-gray-300"
+              />
+              {children}
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }

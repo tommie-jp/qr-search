@@ -1,7 +1,13 @@
 // ページ間で共有する枠・入力欄・ボタンの Tailwind クラス。
 // メモの markdown 表示 / テキスト表示 / 入力欄で見た目を揃える
 
-export const BOX_CLASS = "rounded border border-gray-300 bg-white px-3 py-2";
+// 枠と余白を分けて持つ。検索画面の詰めた入力欄 (COMPACT_INPUT_CLASS) が
+// 縦の余白だけ差し替えられるようにするため。py-1 を後ろから足す形にすると、
+// Tailwind は「クラス属性の並び順」ではなく「CSS 内の定義順」で勝敗が決まり、
+// py-2 が勝ってしまう
+const BOX_SKIN = "rounded border border-gray-300 bg-white px-3";
+
+export const BOX_CLASS = `${BOX_SKIN} py-2`;
 
 export const MEMO_INPUT_CLASS = `w-full ${BOX_CLASS} font-mono text-base`;
 
@@ -9,17 +15,45 @@ export const MEMO_INPUT_CLASS = `w-full ${BOX_CLASS} font-mono text-base`;
 // min-h-11 = 44px は指で狙える最小の大きさ。active: で押した瞬間に反応を返す
 // (サーバ応答を待つ間、無反応に見えるのを防ぐ)
 
+// 見た目 (色・枠・押した感) と大きさ (高さ・余白・文字) を分けて持つ。
+// 検索画面だけを詰めた版に差し替えるため (COMPACT_* 参照)
+const PRIMARY_SKIN =
+  "inline-flex items-center justify-center gap-2 rounded bg-blue-600 font-medium text-white transition-transform active:scale-95 disabled:opacity-60 disabled:active:scale-100";
+const SECONDARY_SKIN =
+  "inline-flex items-center justify-center gap-2 rounded border border-gray-300 bg-white font-medium text-gray-700 transition active:scale-95 active:bg-gray-100 disabled:opacity-50 disabled:active:scale-100";
+const ACTION_LINK_SKIN =
+  "inline-flex items-center gap-1.5 rounded text-blue-600 transition-colors active:bg-blue-50";
+
 // 主ボタン (更新など)
-export const PRIMARY_BUTTON_CLASS =
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded bg-blue-600 px-6 font-medium text-white transition-transform active:scale-95 disabled:opacity-60 disabled:active:scale-100";
+export const PRIMARY_BUTTON_CLASS = `${PRIMARY_SKIN} min-h-11 px-6`;
 
 // 副ボタン (スキャン・画像挿入など)
-export const SECONDARY_BUTTON_CLASS =
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded border border-gray-300 bg-white px-3 font-medium text-gray-700 transition active:scale-95 active:bg-gray-100 disabled:opacity-50 disabled:active:scale-100";
+export const SECONDARY_BUTTON_CLASS = `${SECONDARY_SKIN} min-h-11 px-3`;
 
 // 操作リンク (編集 / QR / 記法 / ページ送りなど)。素の下線リンクは指で狙いにくい
-export const ACTION_LINK_CLASS =
-  "inline-flex min-h-11 items-center gap-1.5 rounded px-2 text-blue-600 transition-colors active:bg-blue-50";
+export const ACTION_LINK_CLASS = `${ACTION_LINK_SKIN} min-h-11 px-2`;
+
+// 以下、**検索画面トップ専用**の詰めた版 (高さ 36px / 文字 14px)。
+//
+// 一覧は「並んだ物を見比べる」画面で、操作ボタンは主役ではない。44px の
+// 押しやすさより 1 画面に入る件数を優先する。逆に編集画面などは「狙って
+// 押す」場所なので 44px のまま — だから共有クラスを縮めず別に切っている。
+// 使う場所は SearchForm / ItemList / ViewModeToggle / (search)/page.tsx だけ
+const COMPACT_SIZE = "min-h-9 text-sm";
+
+export const COMPACT_PRIMARY_BUTTON_CLASS = `${PRIMARY_SKIN} ${COMPACT_SIZE} px-4`;
+
+export const COMPACT_SECONDARY_BUTTON_CLASS = `${SECONDARY_SKIN} ${COMPACT_SIZE} px-3`;
+
+export const COMPACT_ACTION_LINK_CLASS = `${ACTION_LINK_SKIN} ${COMPACT_SIZE} px-2`;
+
+// 記号 1 文字だけのボタン (「+」)。左右の余白を持たず高さと同じ幅の正方形に
+// する。px-3 のままだと 1 文字に対して枠が横長になり、間延びして見える
+export const COMPACT_ICON_BUTTON_CLASS = `${SECONDARY_SKIN} min-h-9 w-9 text-lg`;
+
+// 検索窓。文字だけは text-base (16px) のまま下げない。iOS Safari は 16px 未満の
+// 入力欄にフォーカスすると画面を勝手に拡大し、戻せないため
+export const COMPACT_INPUT_CLASS = `${BOX_SKIN} min-h-9 py-1`;
 
 // 時間のかかる準備・処理中の知らせ (OCR、画像検索のモデル準備、書誌取得など)。
 // 灰色の小さな文字だと埋もれて「固まった」と誤解されるため、赤背景で統一して
@@ -35,9 +69,12 @@ export const BUSY_SPINNER_CLASS =
 //
 // 行そのものをタップ領域にする (w-full + min-h-11)。文字だけを的にすると、
 // メニューという「狙って押す場所」で指を外しやすい。
-// リンクもボタンも同じ見た目にするため、両方からこれを使う
+// リンクもボタンも同じ見た目にするため、両方からこれを使う。
+//
+// gap-2 は行頭のアイコン (MenuIcons.tsx) との間隔。高さは 44px のまま —
+// メニューは「狙って押す」場所なので、検索画面のように詰めない
 export const HEADER_MENU_ITEM_CLASS =
-  "flex min-h-11 w-full items-center rounded px-3 text-left font-medium text-gray-700 transition-colors hover:bg-gray-100 active:bg-gray-200";
+  "flex min-h-11 w-full items-center gap-2 rounded px-3 text-left font-medium text-gray-700 transition-colors hover:bg-gray-100 active:bg-gray-200";
 
 // 破壊的な操作 (ゴミ箱へ / 永久削除)。赤は「戻せないかもしれない」の合図で、
 // 押す前に一拍置かせる。枠は持たせない (主ボタンと同格に見せない)
@@ -62,6 +99,33 @@ export const DANGER_BUTTON_CLASS =
 // 1 カラムで、はみ出させる余白も無い
 export const WIDE_RESULTS_CLASS =
   "lg:relative lg:left-1/2 lg:w-[calc(100vw-4rem)] lg:max-w-6xl lg:-translate-x-1/2";
+
+// 検索画面の下部操作バー (docs/31-下部操作バー計画.md §4)。
+//
+// fixed で画面下端に貼り付ける。中身はヘッダーと同じ max-w-2xl に収め、
+// 広い画面でボタンが左右に散らばらないようにする。
+// 下端の余白は自前で持つ (HeaderMenu のボトムシートと同じ。standalone の
+// ホームバーに潜らせない)。
+//
+// z-10 … ハンバーガーメニューの外側タップ用の覆い (z-10) と同層に置き、
+// DOM 順で覆いを勝たせる。バーが覆いより上だと、メニューを開いたまま
+// バーが押せてしまう (docs/11 §8-4 の落とし穴 3 と同じ罠)
+export const BOTTOM_BAR_CLASS =
+  "fixed inset-x-0 bottom-0 z-10 border-t backdrop-blur print:hidden";
+
+export const BOTTOM_BAR_INNER_CLASS =
+  "mx-auto flex max-w-2xl items-stretch px-safe pb-[max(0.25rem,env(safe-area-inset-bottom))]";
+
+// バーの 1 スロット。5 等分 (flex-1) して 320px でも 64px を確保する。
+// 高さ 44px 以上 … バーは「狙って押す」場所なので、検索画面の他の操作
+// (COMPACT_* の 36px) のようには詰めない (docs/31 §3-3)
+export const BOTTOM_BAR_SLOT_CLASS =
+  "flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded px-1 pt-1.5 text-[0.625rem] font-medium leading-none transition-colors active:bg-gray-200/70";
+
+// バーぶんの余白。これがないと一覧の最終行とページ送りがバーに隠れる。
+// 高さ = アイコン 24 + 隙間 + ラベル + 上下余白 ≒ 3.25rem
+export const BOTTOM_BAR_SPACER_CLASS =
+  "h-[calc(3.25rem+env(safe-area-inset-bottom))] print:hidden";
 
 // 編集フォームの下端に貼り付くボタン行 (docs/11-アプリ的UIUX計画.md §2-1)。
 // 長い本文でも一番下までスクロールせずに保存できる。
