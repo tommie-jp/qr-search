@@ -207,7 +207,7 @@ localStorage に退避 (400ms debounce、ノートごとに `draftKey` = itemNo)
 再発するなら次の一手は PP-OCRv6_tiny への切り替え (モデル数分の一、精度は
 要実測)。
 
-### 9-1. OCR の後に画像検索が落ちる (2026-07-19)
+### 9-1. OCR の後に画像検索が落ちる → OCR を Worker へ (2026-07-19)
 
 実機報告: スキャン → OCR まで通った後、続けて**画像検索**を開くとメモリ不足で
 モデルを読み込めない。
@@ -218,31 +218,62 @@ wasm ヒープを抱えたまま **realm に居座り続ける**。SPA 遷移で
 onnxruntime + DINOv2 を積むため上限を超える。画像検索側は閉じるときに
 `worker.terminate()` しており行儀が良いので、残っていたのは OCR 側だけだった。
 
-対処 (緩和):
+#### 失敗した一手: dispose() で解放する (v0.18.0・撤回済み)
 
-1. **使い終わったら解放する**: `ocrService.disposeOcr()` が SDK の `dispose()`
-   (det/rec の ORT セッションを release) を呼び、singleton を捨てる。呼ぶのは
-   編集画面の unmount (`MemoEditorInner`) と、**画像検索モーダルを開いた時点**
-   (`ImageSearchModal`)。後者は「解放されないまま来た」経路が 1 つでもあれば
-   元の症状がそのまま出るので、メモリを要る側からも要求しておく保険
-2. **認識中は待つ**: 走っている OCR があれば捌けるまで解放を持ち越す。認識中に
-   ORT セッションを release すると挙動が保証されないため。待ち合わせの判断は
-   `ocrDisposeState.ts` の純関数 (`embedderLoadState` と同じ組み立て)。
-   離れた後に戻ってきて次の OCR を始めた場合は、持ち越した要求を取り下げる
-   (使っている最中のモデルを捨てない)
-3. **embedder も 1 回目から WASM で組む** (`useImageEmbedder` の `spawn(true)`)。
-   以前は WebGPU → 失敗したら WASM の順だったが、iPhone は「アダプタは取れる →
-   初期化で OOM → Worker を作り直して WASM」と必ず二度手間になり、1 回目が
-   確保したメモリが解放される保証も無い
+最初は SDK の `dispose()` (det/rec の ORT セッションを release) を編集画面の
+unmount で呼ぶ方式を入れた。**これは効かないどころか悪化した**。実機の体感は
+「以前よりメモリーエラーになりやすい」で、ログにも OOM が並んだ。
 
-**限界 (これは緩和であって根治ではない)**: `WebAssembly.Memory` は grow しか
-できず、`dispose()` してもヒープの高水位は縮まない。完全に OS へ返すには
-realm ごと捨てる = **OCR を Web Worker へ移して `terminate()` する**しかない。
-これで足りなければ次はそれ (embedder と同じ自前 Worker 方式にする)。SDK の
-`worker: true` オプションは自前 fetch と併用できず進捗 % と両立しないが、
-**自前 Worker なら Worker 内で `fetch` を渡せる**ので % は postMessage で
-中継できる。副次効果として「認識中はメインスレッドが塞がって進捗を出せない」
-制約も外れる。
+理由: `WebAssembly.Memory` は grow しかできない。`dispose()` はヒープの
+**内側**でメモリを返すだけで、タブの占有量は 1 バイトも減らない。一方で解放の
+たびに次の OCR がセッションを作り直すため、断片化した領域を再利用できずヒープが
+かえって伸びる。**解放の呼び出し回数を増やした分だけ悪くなる**。
+
+同時に入れた「embedder を 1 回目から WASM で組む」(`spawn(true)`) も撤回した。
+WebGPU ならモデルの重みが GPU 側に載る可能性を潰し、両方の試行が wasm ヒープを
+食う経路になっていた (ログでは 2 回とも `wasm` で OOM)。
+
+#### 採った手: OCR を Web Worker へ移して terminate する
+
+realm ごと捨てるのが**唯一メモリを OS へ返す方法**なので、OCR の実体を
+`ocrWorker.ts` に移し、`ocrService.ts` はメインスレッド側の窓口 (Worker を 1 本
+抱えて要求と応答を対応づけるだけ) にした。
+
+- `disposeOcr()` は `worker.terminate()`。呼ぶのは編集画面の unmount
+  (`MemoEditorInner`) と、**画像検索モーダルを開いた時点** (`ImageSearchModal`)。
+  後者は「落とされないまま来た」経路が 1 つでもあれば元の症状が出るので、
+  メモリを要る側からも要求しておく保険。`ImageSearchModal` では
+  **`useImageEmbedder` より前**に置くこと (effect は登録順に走るので、後ろだと
+  埋め込みモデルを積み始めてから解放することになる)
+- 走っている OCR は待たない。呼ぶのは編集画面が閉じた後か画像検索の直前で、
+  どちらも結果の行き先が無い。待っている呼び手には理由を伝えて落とす
+- 副次効果: 認識中もメインスレッドが空くので、「認識中は進捗もアニメも
+  描画されない」制約が外れた
+
+**SDK の worker モード (`worker: true`) を使わない理由**: あちらは自前 `fetch` を
+受け取れず、モデル DL の進捗 % が出せなくなる。モデル資産は
+`Cache-Control: no-cache` かつ ETag 無しで配られるため、「メインスレッドで
+先読みしてキャッシュを温める」逃げ道も使えない (21MB を二重取得することになる)。
+自前 Worker なら Worker 内の `fetch` をそのまま渡せて、% は postMessage で
+中継できる。
+
+**Worker 化に必要だった 2 つの shim** (`ocrWorker.ts` 冒頭): SDK の非 Worker
+ビルドは DOM を前提にしており、素の Worker では動かない。実測で踏んだのは 2 つ:
+
+1. `document.createElement("canvas")` — `bitmapToSourceMat` が認識のたびに呼ぶ。
+   `OffscreenCanvas` を返して解決 (SDK 自身の worker-entry も同じ変換を
+   OffscreenCanvas で行っており、同梱 OpenCV は imread で OffscreenCanvas を
+   受け付ける)
+2. `HTMLImageElement` / `HTMLCanvasElement` — OpenCV.js の imread が
+   `instanceof` を先に見るため、未定義だと ReferenceError。渡すのは常に
+   OffscreenCanvas なので、素の class を置いて false にすれば素通りする
+
+SDK を上げるときはこの 2 点が生きているか確認すること。壊れると Worker 起動
+直後に ReferenceError で落ちるので、実機を待たず編集画面の OCR 1 回で分かる。
+
+**ローカル実測 (Chrome, 2026-07-19)**: 挿入時 OCR が Worker 内で成功し
+(`ABC-1234` / `TEST OCR` を取得、進捗 % も従来どおり表示)、編集画面を離れると
+Worker は 0 本になった。戻って 2 回目の OCR も成功 (`SECOND-99`)。
 
 ## 8. 見送り (必要になったら)
 

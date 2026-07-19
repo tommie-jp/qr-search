@@ -1,90 +1,42 @@
-// クライアントサイド OCR の実体 (docs/24-画像OCR計画.md §1-3)。
+// クライアントサイド OCR のメインスレッド側の窓口 (docs/24-画像OCR計画.md §9-1)。
 //
-// PaddleOCR 公式ブラウザ SDK (@paddleocr/paddleocr-js) の PP-OCRv5 を
-// onnxruntime-web で実行する。画像はサーバへ再送しない。重い依存
-// (SDK + OpenCV.js + モデル) はページ表示では読まず、最初に OCR を実行する
-// ときだけ動的 import で取り込む。2 回目以降はブラウザの HTTP キャッシュ /
-// メモリ上の singleton が効く。
+// 実体 (SDK + OpenCV.js + onnxruntime + モデル) は ocrWorker.ts の中だけに置き、
+// ここは Worker を 1 つ抱えて要求と応答を Promise で対応づけるだけ。画像は
+// サーバへ再送しない。
+//
+// **なぜ Worker か (メモリ)**: 以前はメインスレッドで SDK を直接動かしていたが、
+// WebAssembly.Memory は grow しかできないため、確保した数百 MB がタブに残り
+// 続けた。SPA 遷移では realm が変わらないので編集画面を離れても解放されず、
+// 後から開いた画像検索がモデルを積めずに落ちていた (実機 iPhone)。SDK の
+// dispose() では ORT セッションを release してもヒープの高水位は縮まず、むしろ
+// 作り直しで伸びて悪化した (v0.18.0 で実証)。**terminate して realm ごと捨てる**
+// のが唯一メモリを OS へ返す方法なので、そのために Worker へ移した。
 //
 // **公式 SDK を使う理由 (縦書き)**: 以前使っていた ppu-paddle-ocr は検出した
 // 矩形をそのまま認識にかけるため、日本語の縦書きがほぼ読めなかった。公式 SDK は
 // 公式パイプラインと同じく「縦横比 1.5 以上のクロップは 90 度回してから認識」を
-// 実装しており、縦書きの列を認識できる。
+// 実装しており、縦書きの列を認識できる (docs/24 §2)。
 //
-// このモジュールはブラウザでのみ呼ぶ (createImageBitmap / WebAssembly を使う)。
-// サーバ側からは絶対に import しないこと。
+// このモジュールはブラウザでのみ呼ぶ。サーバ側からは絶対に import しないこと。
 
-import { formatOcrQuote } from '@/lib/ocr/ocrQuote'
-import { quietOrtSessionLogs } from '@/lib/ort/quietOrtLogs'
-import { orderOcrItems } from '@/lib/ocr/orderOcrItems'
-import { aggregatePercent } from '@/lib/progress'
-import { createProgressFetch } from '@/lib/progressFetch'
-import {
-  INITIAL_OCR_DISPOSE_STATE,
-  reduceOcrDispose,
-  shouldDisposeNow,
-  type OcrDisposeEvent,
-} from './ocrDisposeState'
-
-// onnxruntime-web は既定で .wasm を CDN から取りに行く。自前配布した
-// public/onnxruntime/ を指して外部依存を断つ (scripts/copyOnnxWasm.mjs)。
-const WASM_BASE_PATH = '/onnxruntime/'
-
-// 日本語を含む統合モデル (PP-OCRv5 mobile)。日本語優先は認識後の正規化
-// (normalizeToJapanese) で寄せる ②方式 (docs/24 §2)。PP-OCRv5 は公式デモで
-// 実画像の縦書きが読めることを確認した版なので、これを既定にする。
-//
-// SDK の既定は百度の CDN からモデルを直接取るが、そこは CORS ヘッダを返さず
-// **ブラウザからは弾かれる** (実機で確認)。自前配布に差し替える
-// (scripts/fetchPaddleOcrModels.mjs が public/paddle-ocr/ へ落とす)。
-// モデル名は tar 内 inference.yml の model_name と一致していないと
-// 初期化時に弾かれるので、スクリプト側のファイル名と対で変える。
-const DET_MODEL_NAME = 'PP-OCRv5_mobile_det'
-const REC_MODEL_NAME = 'PP-OCRv5_mobile_rec'
-const MODEL_BASE_PATH = '/paddle-ocr/'
-
-// モデル tar 2 本の合計バイト数 (det 4,843,520 + rec 16,701,440)。
-// Content-Length が取れないときの進捗 % の分母に使う。モデルを差し替える
-// ときは scripts/fetchPaddleOcrModels.mjs と対でここも更新する
-// (ずれても % の見た目が狂うだけで動作には影響しない)
-const MODEL_TOTAL_BYTES_FALLBACK = 21_544_960
+import type { FromOcrWorker, ToOcrWorker } from './ocrWorkerMessages'
 
 // 「モデルの準備が終わった」の合図。バイト計は 99 で頭打ちにしてあるので、
 // この値だけが完了 (成功・失敗を問わず購読者が表示を畳んでよい) を意味する
 export const MODEL_READY_PERCENT = 100
 
-// OCR に渡す画像の長辺の上限。アップロード保存は実質原寸 (webp の上限
-// 16383px のみ) なので、iPhone の 12〜48MP 写真がそのまま入り得る。
-// OpenCV の行列は「幅×高さ×4 バイト」を何面も持つため、原寸のまま通すと
-// iOS WebKit のタブ上限を超えて**ページごと再起動**する (エディタの内容が
-// 消えたように見える)。長辺 2048px なら行列 1 面 16MB 程度で、ラベル・
-// 書籍ページの印刷文字には足りる
-const MAX_OCR_SIDE = 2048
-
-type SdkModule = typeof import('@paddleocr/paddleocr-js')
-type OcrService = Awaited<ReturnType<SdkModule['PaddleOCR']['create']>>
-
-// モデル由来の ORT 警告で /logs と eruda が埋まるのを止める。
-// 理由と仕組みは quietOrtLogs.ts に書いた。**セッションを作る前に**呼ぶこと。
-//
-// SDK が内部で import する onnxruntime-web と、ここで import するものは
-// 同じインスタンス (SDK は onnxruntime-web を入れ子に持たず、巻き上げられた
-// 1 つを共有する)。だからここで包めば SDK のセッションにも効く
-async function quietenOrtWarnings(): Promise<void> {
-  const ort = await import('onnxruntime-web')
-  quietOrtSessionLogs(ort)
+interface Pending {
+  resolve: (quote: string) => void
+  reject: (error: Error) => void
 }
 
-// 初期化は 1 度だけ。複数の画像を続けて OCR しても使い回す。
-let servicePromise: Promise<OcrService> | null = null
+let worker: Worker | null = null
 let ready = false
+const pending = new Map<number, Pending>()
+let nextId = 1
 
-// 解放の待ち合わせ状態 (実行中の本数 / 解放を頼まれたか)。判断は
-// ocrDisposeState の純関数が持ち、ここは副作用だけを持つ
-let disposeState = INITIAL_OCR_DISPOSE_STATE
-
-// モデルダウンロードの進捗 % の購読者 (バナー表示用)。service が singleton
-// なので進捗のチャネルもモジュールに 1 本でよい
+// モデルダウンロードの進捗 % の購読者 (バナー表示用)。Worker は 1 本なので
+// 進捗のチャネルもモジュールに 1 本でよい
 let modelProgressListeners: readonly ((percent: number) => void)[] = []
 
 // 直前に通知した %。チャンク到着ごとに同じ整数を流すと購読者 (React state)
@@ -113,175 +65,104 @@ function notifyModelProgress(percent: number): void {
   }
 }
 
-async function createService(): Promise<OcrService> {
-  try {
-    return await initService()
-  } catch (e) {
-    // 失敗したことも購読者へ伝える。伝えないと「準備しています… 47%」の
-    // バナーが永久に残る (バイト計は 99 止まりで完了に届かないため)
-    notifyModelProgress(MODEL_READY_PERCENT)
-    throw e
+// 未解決の要求をまとめて落とす。放っておくと呼び手が永遠に待つ
+function rejectPending(reason: string): void {
+  for (const entry of pending.values()) {
+    entry.reject(new Error(reason))
   }
+  pending.clear()
 }
 
-async function initService(): Promise<OcrService> {
-  await quietenOrtWarnings()
-  const { PaddleOCR } = await import('@paddleocr/paddleocr-js')
+function handleMessage(msg: FromOcrWorker): void {
+  if (msg.type === 'model-progress') {
+    notifyModelProgress(msg.percent)
+    return
+  }
+  if (msg.type === 'ready') {
+    ready = true
+    notifyModelProgress(MODEL_READY_PERCENT)
+    return
+  }
+  if (msg.type === 'load-error') {
+    // 準備バナーを畳ませる。伝えないと「準備しています… 47%」が永久に残る
+    // (バイト計は 99 止まりで完了に届かないため)
+    notifyModelProgress(MODEL_READY_PERCENT)
+    rejectPending(msg.message)
+    return
+  }
+  const entry = pending.get(msg.id)
+  if (!entry) {
+    return
+  }
+  pending.delete(msg.id)
+  if (msg.type === 'result') {
+    entry.resolve(msg.quote)
+    return
+  }
+  entry.reject(new Error(msg.message))
+}
 
-  const service = await PaddleOCR.create({
-    textDetectionModelName: DET_MODEL_NAME,
-    textDetectionModelAsset: { url: `${MODEL_BASE_PATH}${DET_MODEL_NAME}.tar` },
-    textRecognitionModelName: REC_MODEL_NAME,
-    textRecognitionModelAsset: { url: `${MODEL_BASE_PATH}${REC_MODEL_NAME}.tar` },
-    // モデル tar の受信バイトを数えて DL 進捗 % を流す。aggregatePercent は
-    // 99 で頭打ちし、create の解決 (下の notifyModelProgress(100)) が真の完了
-    fetch: createProgressFetch((downloads) =>
-      notifyModelProgress(aggregatePercent(downloads, MODEL_TOTAL_BYTES_FALLBACK)),
-    ),
-    ortOptions: {
-      // wasm に固定する。'auto' は WebGPU が見えると WebGPU を選ぶが、
-      // iOS WebKit の WebGPU はメモリを余分に食い、挙動もまだ枯れていない。
-      // 画像検索の embedder と同じ「WASM で動くのが基準性能」の方針に合わせ、
-      // 全端末で同じ経路を踏む (PC の高速化は必要になってから戻す)
-      backend: 'wasm',
-      wasmPaths: WASM_BASE_PATH,
-    },
+function getWorker(): Worker {
+  if (worker) {
+    return worker
+  }
+  const created = new Worker(new URL('./ocrWorker.ts', import.meta.url), {
+    type: 'module',
   })
-  ready = true
-  notifyModelProgress(MODEL_READY_PERCENT)
-  return service
+  created.onmessage = (event: MessageEvent<FromOcrWorker>) => {
+    handleMessage(event.data)
+  }
+  // Worker 自体が起動できない (チャンクの 404、import の失敗など) と onmessage は
+  // 一生呼ばれない。拾わないと「準備しています」で固まる
+  created.onerror = (event: ErrorEvent) => {
+    notifyModelProgress(MODEL_READY_PERCENT)
+    rejectPending(event.message || 'OCR を起動できませんでした')
+  }
+  worker = created
+  return created
 }
 
-// 初回のモデル読み込みが済んでいるか。UI が「準備中(初回)」と「処理中」を
+// 初回のモデル読み込みが済んでいるか。UI が「準備中」と「処理中」を
 // 出し分けるのに使う。
 export function isOcrReady(): boolean {
   return ready
 }
 
-// singleton を解放する。det/rec の ORT セッションが release され、モデルの
-// テンソル分が wasm ヒープの中で解放される。
-//
-// **wasm ヒープそのものは縮まない** (WebAssembly.Memory は grow しかできない)。
-// 完全に OS へ返すには realm ごと捨てる (OCR を Worker に移して terminate する)
-// しかないので、これは緩和策であって根治ではない (docs/24 §9-1)。
-async function runDispose(): Promise<void> {
-  disposeState = reduceOcrDispose(disposeState, { type: 'dispose-run' })
-  const pending = servicePromise
-  // 先に捨てる。下の await の間に来た OCR は作り直しから始まる
-  servicePromise = null
-  ready = false
-  // 次の初期化で同じ % を最初から流せるようにする
-  lastNotifiedPercent = null
-  if (!pending) {
-    return
-  }
-  try {
-    const service = await pending
-    await service.dispose()
-  } catch {
-    // 初期化に失敗した service には解放するものが無い。ここで投げても
-    // 「画面を離れる」操作が失敗して見えるだけで、呼び手にできることは無い
-  }
-}
-
-// 解放の状態を進め、条件が揃っていれば解放する。
-async function advanceDispose(event: OcrDisposeEvent): Promise<void> {
-  disposeState = reduceOcrDispose(disposeState, event)
-  if (shouldDisposeNow(disposeState)) {
-    await runDispose()
-  }
-}
-
-// OCR の singleton を解放する (編集画面を離れるときに呼ぶ)。
-//
-// OCR は OpenCV.js と onnxruntime-web の wasm ヒープを抱えたまま realm に
-// 居座るため、放っておくと後から開いた画像検索がモデルを積めずに落ちる
-// (iOS WebKit のタブ上限)。**走っている OCR があれば捌けるまで待つ**:
-// 認識中に ORT セッションを release すると挙動が保証されないため。
-export async function disposeOcr(): Promise<void> {
-  await advanceDispose({ type: 'dispose-request' })
-}
-
 // 初回ロードを前もって温めたいとき用 (今は未使用だが、編集画面を開いた時点で
 // 走らせる導線を足せるようにしておく)。
 export function preloadOcr(): void {
-  if (!servicePromise) {
-    servicePromise = createService()
-  }
+  getWorker().postMessage({ type: 'preload' } satisfies ToOcrWorker)
 }
 
-// 大きすぎる画像を OCR 用に縮める。上限以下ならそのまま返す。
-async function toOcrBitmap(blob: Blob): Promise<ImageBitmap> {
-  const bitmap = await createImageBitmap(blob)
-  const side = Math.max(bitmap.width, bitmap.height)
-  if (side <= MAX_OCR_SIDE) {
-    return bitmap
+// OCR の Worker を落とし、抱えていたメモリを OS へ返す。
+//
+// 編集画面を離れるとき (MemoEditorInner) と、画像検索を開くとき
+// (ImageSearchModal) に呼ぶ。**terminate は realm ごと捨てる**ので、
+// OpenCV と onnxruntime が確保した wasm ヒープがまるごと返る
+// (SDK の dispose() では縮まなかった。冒頭のコメント参照)。
+//
+// 走っている OCR があっても待たない: 呼ぶのは編集画面が閉じた後か、
+// メモリを空けたい画像検索の直前で、どちらも結果の行き先が無い。
+// 待っている呼び手には理由を伝えて落とす。
+export function disposeOcr(): void {
+  if (!worker) {
+    return
   }
-  const scale = MAX_OCR_SIDE / side
-  const resized = await createImageBitmap(bitmap, {
-    resizeWidth: Math.round(bitmap.width * scale),
-    resizeHeight: Math.round(bitmap.height * scale),
-    resizeQuality: 'high',
-  })
-  bitmap.close()
-  return resized
+  worker.terminate()
+  worker = null
+  ready = false
+  lastNotifiedPercent = null
+  rejectPending('OCR を終了しました')
 }
 
 // 画像 1 枚を OCR し、日本語優先で整えた引用ブロックを返す。
 // 文字が取れなければ空文字を返す (呼び手はこれを「見つからなかった」に使う)。
 //
-// **認識中の進捗 % は出せない**: SDK が進捗を通知しないうえ、onnxruntime-web
-// の推論はメインスレッドを同期的に占有するため、経過時間から擬似進捗を作って
-// setInterval で流しても 1 度も発火しない (実測: 1.8 秒の認識中にティック 0 回。
-// state を変えても再描画自体が走らない)。% を出すには OCR を Web Worker へ
-// 移す必要があり、SDK の worker モードは自前 fetch と併用できない
-// = モデル DL の進捗 % と両立しない。ここでは進捗の通知はしない。
-export async function ocrImageToQuote(blob: Blob): Promise<string> {
-  // 認識が終わるまでは解放させない (disposeOcr の理由を参照)
-  disposeState = reduceOcrDispose(disposeState, { type: 'ocr-start' })
-  try {
-    return await runOcr(blob)
-  } finally {
-    // 画面を離れた後に終わった OCR は、ここで持ち越された解放を引き取る
-    void advanceDispose({ type: 'ocr-end' })
-  }
-}
-
-async function runOcr(blob: Blob): Promise<string> {
-  if (!servicePromise) {
-    servicePromise = createService()
-  }
-  let service: OcrService
-  try {
-    service = await servicePromise
-  } catch (e) {
-    // 失敗した promise を握り続けると以後の OCR が全部即失敗する。
-    // 捨てておけば次回は取り直せる (回線が戻れば読める)
-    servicePromise = null
-    throw e
-  }
-
-  // 原寸ではなく縮小した ImageBitmap を渡す (MAX_OCR_SIDE の理由を参照)。
-  // 返るのは入力 1 枚につき 1 要素の配列。
-  //
-  // 検出段はさらに長辺 960 まで縮めて掛ける (PP-OCR の伝統的な既定)。
-  // SDK の既定 (短辺 64 以上・上限 4000) は大きな文字で検出が細切れになる
-  // (拡大画像の実測: 1 文字が複数の断片に割れて読み順も壊れた)。
-  // 認識段は縮小前の切り抜きを使うので、小さな文字の画質は落ちない
-  const bitmap = await toOcrBitmap(blob)
-  try {
-    const [result] = await service.predict(bitmap, {
-      text_det_limit_side_len: 960,
-      text_det_limit_type: 'max',
-    })
-    if (!result) {
-      return ''
-    }
-
-    // items は検出器の出力順なので、読み順 (縦書きなら右→左) に並べ替えてから
-    // 引用ブロックへ整形する。
-    return formatOcrQuote(orderOcrItems(result.items))
-  } finally {
-    bitmap.close()
-  }
+// 認識は Worker の中で走るので、メインスレッド (入力・描画) は塞がらない。
+export function ocrImageToQuote(blob: Blob): Promise<string> {
+  const id = nextId++
+  return new Promise<string>((resolve, reject) => {
+    pending.set(id, { resolve, reject })
+    getWorker().postMessage({ type: 'ocr', id, blob } satisfies ToOcrWorker)
+  })
 }

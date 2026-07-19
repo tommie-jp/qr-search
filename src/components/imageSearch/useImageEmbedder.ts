@@ -1,13 +1,10 @@
 // 埋め込み Worker をひとつ抱え、フレーム → ベクトルの往復を Promise で扱うフック
 // (docs/25-画像検索計画.md §6)。id で要求と応答を対応づける。
 //
-// モデルの読み込みに失敗したら、**Worker を作り直して** 1 度だけ読み直す。
-// 同一 Worker 内で組み直しても必ず失敗する (transformers.js と ort が失敗を
-// realm 単位でラッチする。理由は embedder.ts の getExtractor に書いた) ため、
-// 再試行には新しい Worker が要る。判断は embedderLoadState の純関数が持つ。
-//
-// 1 回目から WASM で組む (spawn(true))。以前は WebGPU → 失敗したら WASM の
-// 順だったが、iPhone では必ず OOM で落ちて二度手間になるだけだった。
+// モデルの読み込みに失敗したら、**Worker を作り直して** WASM 強制で 1 度だけ
+// 読み直す (iPhone は WebGPU のアダプタを返すのに初期化が OOM で落ちる)。
+// 同一 Worker 内で組み直しても必ず失敗する理由は embedder.ts の getExtractor に
+// 書いた。再試行するかどうかの判断は embedderLoadState の純関数が持つ。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -129,12 +126,7 @@ export function useImageEmbedder(): ImageEmbedder {
       worker.postMessage({ type: 'preload', forceWasm } satisfies ToEmbedWorker)
     }
 
-    // 最初から WASM で組む。WebGPU を先に試すと、iPhone では
-    // 「アダプタは取れる → 初期化で OOM → Worker を作り直して WASM」と
-    // 必ず二度手間になり、その 1 回目が確保したメモリが解放される保証も無い。
-    // OCR 側も全端末 WASM 固定 (ocrService の ortOptions) なので方針を揃える。
-    // PC の高速化として WebGPU を戻すなら、端末を見て分ける必要がある
-    spawn(true)
+    spawn(false)
 
     return () => {
       disposed = true

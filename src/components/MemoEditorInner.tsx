@@ -137,13 +137,13 @@ export default function MemoEditorInner({
     });
   }, []);
 
-  // 編集画面を離れたら OCR のモデルを解放する。抱えたままだと OpenCV と
-  // onnxruntime の wasm ヒープが realm に残り、後から開いた画像検索が
-  // モデルを積めずに落ちる (iOS WebKit のタブ上限)。走っている OCR があれば
-  // 捌けてから解放される (ocrService.disposeOcr)
+  // 編集画面を離れたら OCR の Worker を落とす。抱えたままだと OpenCV と
+  // onnxruntime の wasm ヒープが残り、後から開いた画像検索がモデルを積めずに
+  // 落ちる (iOS WebKit のタブ上限)。terminate は realm ごと捨てるので
+  // メモリが OS へ返る (ocrService.disposeOcr)
   useEffect(() => {
     return () => {
-      void disposeOcr();
+      disposeOcr();
     };
   }, []);
 

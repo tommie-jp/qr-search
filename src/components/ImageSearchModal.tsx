@@ -63,6 +63,18 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
   // 埋め込みが 1 枚処理中か (ライブ中はフレームを間引くのに使う)
   const inFlightRef = useRef(false);
 
+  // OCR の Worker を落としてメモリを空ける。編集画面の unmount でも落として
+  // いる (MemoEditorInner) が、そちらに頼り切ると「落とされないまま来た」経路が
+  // 1 つでもあれば元のメモリ不足がそのまま再現する。メモリを必要とする側が
+  // 自分で要求しておく。
+  //
+  // **useImageEmbedder より前に置くこと**: effect は登録順に走るので、ここが
+  // 後ろだと埋め込み Worker がモデルを取り始めた後に解放することになる。
+  // 空けてから積むためにこの位置に置いてある
+  useEffect(() => {
+    disposeOcr();
+  }, []);
+
   const {
     ready: modelReady,
     failed: modelFailed,
@@ -89,15 +101,6 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
-
-  // OCR が抱えているモデルを先に解放する。編集画面の unmount でも解放している
-  // (MemoEditorInner) が、そちらに頼り切ると「解放されないまま来た」経路が
-  // 1 つでもあれば元のメモリ不足がそのまま再現する。メモリを必要とする側が
-  // 自分で要求しておく。OCR が走っていなければ即座に済み、走っていても
-  // ここでのモデル取得 (数十 MB・数秒) の方が長いので待ちにはならない
-  useEffect(() => {
-    void disposeOcr();
-  }, []);
 
   // 索引の取得 (モーダルを開いた時点で 1 度)
   useEffect(() => {

@@ -1,17 +1,13 @@
 // 埋め込みモデルの初回読み込みの状態遷移 (docs/11-画像検索調査メモ.md)。
 //
-// 落ちたら新しい Worker で 1 度だけ組み直す、という再試行を純関数に切り出す。
+// WebGPU で落ちたら WASM で 1 度だけ組み直す、という再試行を純関数に切り出す。
 // Worker の生成・破棄という副作用は useImageEmbedder が持ち、ここは「次に何を
 // すべきか」だけを決める (Worker なしでテストできるようにするため)。
-//
-// 1 回目・再試行ともデバイスは WASM (useImageEmbedder の spawn(true))。
-// それでも再試行に意味があるのは、失敗が realm にラッチされる仕組み上、
-// 一時的な失敗 (モデル取得の失敗など) は新しい Worker でしか救えないため。
 
 export type EmbedderPhase =
-  // 1 回目の読み込み中
+  // 1 回目 (WebGPU が使えるなら WebGPU) の読み込み中
   | 'loading'
-  // 1 回目が落ち、新しい Worker (WASM 強制) で読み直している最中
+  // 1 回目が落ち、WASM 強制の Worker で読み直している最中
   | 'retrying-wasm'
   | 'ready'
   | 'failed'
@@ -45,11 +41,11 @@ export function reduceEmbedderLoad(
     return state
   }
   if (state.phase === 'loading') {
-    // まだ諦めない。新しい Worker で組み直せば救える失敗がある。
-    // 1 回目の理由は UI に出さず、再試行の結末を待つ
+    // まだ諦めない。WASM 強制で組み直せば救える端末がある (iPhone の
+    // WebGPU 初期化 OOM)。1 回目の理由は UI に出さず、再試行の結末を待つ
     return { phase: 'retrying-wasm', failureMessage: null }
   }
-  // retrying-wasm か failed。作り直しても駄目なら打つ手はないので確定させる
+  // retrying-wasm か failed。WASM でも駄目なら打つ手はないので確定させる
   return { phase: 'failed', failureMessage: event.message }
 }
 
