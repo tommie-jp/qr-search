@@ -4,6 +4,7 @@ import { verifyBasicAuthUser } from '@/lib/auth'
 import { safeNextPath } from '@/lib/loginRedirect'
 import { issueSession } from '@/lib/sessionStore'
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from '@/lib/sessionToken'
+import { loginCancelledPage } from './cancelledPage'
 
 // ログインの口 (docs/18-ログイン計画.md)。
 //
@@ -24,21 +25,24 @@ import { SESSION_COOKIE_NAME, sessionCookieOptions } from '@/lib/sessionToken'
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const user = await verifyBasicAuthUser(request.headers.get('authorization'))
 
+  // next は外から来る値。素通しすると他所へ運ぶ踏み台になるので必ず検算する。
+  // 401 のボディにも載せるので、認証の成否より先に出しておく
+  const next = safeNextPath(request.nextUrl.searchParams.get('next'))
+
   if (user === null) {
-    return new NextResponse('ログインしてください。\n', {
+    // ボディが人の目に触れるのはダイアログをキャンセルしたときだけ。
+    // そのとき行き止まりにしないための HTML (cancelledPage.ts)
+    return new NextResponse(loginCancelledPage(next), {
       status: 401,
       headers: {
         // charset="UTF-8" … ユーザー名に非 ASCII を使えるようにする (RFC 7617)
         'WWW-Authenticate': 'Basic realm="qr-search", charset="UTF-8"',
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'text/html; charset=utf-8',
         // 401 も含めて誰にも持たせない。前に nginx が居るため明示する
         'Cache-Control': 'no-store',
       },
     })
   }
-
-  // next は外から来る値。素通しすると他所へ運ぶ踏み台になるので必ず検算する
-  const next = safeNextPath(request.nextUrl.searchParams.get('next'))
 
   // 資格情報が正しいと確かめたこの 1 回だけ、セッションを発行する。
   // 以後 requestAuth.ts はこの Cookie だけを見る

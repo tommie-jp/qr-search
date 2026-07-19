@@ -69,6 +69,36 @@ describe('GET /login without valid credentials', () => {
     expect(response.status).toBe(401)
     expect(issueSessionMock).not.toHaveBeenCalled()
   })
+
+  // ダイアログを閉じるとブラウザはこのボディをそのまま画面に出す。
+  // 行き止まりにしない (docs/18 §12)
+  test('shows a way back when the visitor closes the dialog', async () => {
+    const response = await GET(request(null, 'http://localhost/login?next=/item/4518'))
+
+    expect(response.headers.get('Content-Type')).toContain('text/html')
+    await expect(response.text()).resolves.toContain('href="/item/4518"')
+  })
+
+  test('sends the visitor back to the top page when there is no return target', async () => {
+    const response = await GET(request(null))
+
+    await expect(response.text()).resolves.toContain('href="/"')
+  })
+
+  test('still validates the return target on the way back', async () => {
+    const response = await GET(request(null, 'http://localhost/login?next=//evil.example.com'))
+
+    // 401 のボディも踏み台にしない
+    const body = await response.text()
+    expect(body).not.toContain('evil.example.com')
+    expect(body).toContain('href="/"')
+  })
+
+  test('never lets the 401 be cached', async () => {
+    const response = await GET(request(null))
+
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+  })
 })
 
 describe('GET /login with valid credentials', () => {
