@@ -2,15 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
 
 interface HeaderQrButtonProps {
   qrDataUrl: string;
   url: string;
+  // ヘッダーに直接置くか、ハンバーガーメニューの 1 行として置くか
+  variant?: "header" | "menu";
 }
 
 // ヘッダー右端の「QR」。クリックで公開サイト URL を埋め込んだ QR を
 // オーバーレイ表示し、もう一度のクリックか Esc で閉じる。
-export function HeaderQrButton({ qrDataUrl, url }: HeaderQrButtonProps) {
+export function HeaderQrButton({
+  qrDataUrl,
+  url,
+  variant = "header",
+}: HeaderQrButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
@@ -30,10 +37,20 @@ export function HeaderQrButton({ qrDataUrl, url }: HeaderQrButtonProps) {
     <>
       <button
         type="button"
-        className="text-gray-500 hover:text-gray-900"
-        onClick={() => setIsOpen(true)}
+        className={
+          variant === "menu"
+            ? HEADER_MENU_ITEM_CLASS
+            : "text-gray-500 hover:text-gray-900"
+        }
+        onClick={(event) => {
+          // メニューの中に居るとき、親のバブリングで閉じられないようにする。
+          // 閉じるとこの部品ごと unmount され、開いたはずの QR
+          // (portal で出しているオーバーレイ) も道連れに消える
+          event.stopPropagation();
+          setIsOpen(true);
+        }}
       >
-        QR
+        {variant === "menu" ? "QR コード" : "QR"}
       </button>
       {isOpen &&
         createPortal(

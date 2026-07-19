@@ -31,6 +31,14 @@ export const BUSY_NOTICE_CLASS =
 export const BUSY_SPINNER_CLASS =
   "size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white";
 
+// ヘッダーのハンバーガーメニューの 1 行 (docs/11-アプリ的UIUX計画.md §6)。
+//
+// 行そのものをタップ領域にする (w-full + min-h-11)。文字だけを的にすると、
+// メニューという「狙って押す場所」で指を外しやすい。
+// リンクもボタンも同じ見た目にするため、両方からこれを使う
+export const HEADER_MENU_ITEM_CLASS =
+  "flex min-h-11 w-full items-center rounded px-3 text-left font-medium text-gray-700 transition-colors hover:bg-gray-100 active:bg-gray-200";
+
 // 破壊的な操作 (ゴミ箱へ / 永久削除)。赤は「戻せないかもしれない」の合図で、
 // 押す前に一拍置かせる。枠は持たせない (主ボタンと同格に見せない)
 export const DANGER_BUTTON_CLASS =

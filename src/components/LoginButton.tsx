@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { LOGIN_PATH, loginHref } from "@/lib/loginRedirect";
-import { BUSY_NOTICE_CLASS, BUSY_SPINNER_CLASS } from "@/components/ui";
+import {
+  BUSY_NOTICE_CLASS,
+  BUSY_SPINNER_CLASS,
+  HEADER_MENU_ITEM_CLASS,
+} from "@/components/ui";
 
 interface LoginButtonProps {
   // ヘッダの中に置くか (小さい文字リンク)、案内の本文に置くか (主ボタン)
-  variant?: "header" | "primary";
+  variant?: "header" | "primary" | "menu";
   // パスキーが主になった画面 (docs/29-パスキー計画.md §8) では
   // 「パスワードでログイン」と書き分ける。ボタンが 2 つ並ぶので、
   // どちらも「ログイン」だと選べない
@@ -43,9 +47,11 @@ export function LoginButton({
   }, []);
 
   const className =
-    variant === "header"
-      ? "inline-flex min-h-11 items-center rounded px-2 font-medium text-blue-600 transition-colors active:bg-blue-50"
-      : "inline-flex min-h-11 items-center justify-center gap-2 rounded bg-blue-600 px-6 font-medium text-white transition-transform active:scale-95";
+    variant === "menu"
+      ? HEADER_MENU_ITEM_CLASS
+      : variant === "header"
+        ? "inline-flex min-h-11 items-center rounded px-2 font-medium text-blue-600 transition-colors active:bg-blue-50"
+        : "inline-flex min-h-11 items-center justify-center gap-2 rounded bg-blue-600 px-6 font-medium text-white transition-transform active:scale-95";
 
   return (
     <>

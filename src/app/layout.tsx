@@ -2,11 +2,13 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import QRCode from "qrcode";
 import pkg from "../../package.json";
+import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { LoginButton } from "@/components/LoginButton";
 import { LogoutButton } from "@/components/LogoutButton";
 import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { StandaloneBackButton } from "@/components/StandaloneBackButton";
+import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
 import {
   isProductionEnv,
   LOCAL_THEME_COLOR,
@@ -108,45 +110,57 @@ export default async function RootLayout({
                 LOCAL
               </span>
             )}
-            <div className="ml-auto flex items-baseline gap-3">
-              <HeaderQrButton qrDataUrl={siteQrDataUrl} url={siteUrl} />
-              <a
-                href={GITHUB_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-gray-500 hover:text-gray-900"
-              >
-                GitHub
-              </a>
-              {user ? (
-                <>
-                  <span className="text-gray-500" title="ログイン中">
-                    {user}
-                  </span>
-                  {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
-                      見えても 401 だが、押せない物を見せない */}
-                  <Link
-                    href="/logs"
-                    className="text-gray-500 hover:text-gray-900"
-                  >
-                    ログ
-                  </Link>
-                  {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
-                      ここが登録への唯一の導線なので、ログイン中は常に出す */}
-                  <Link
-                    href={PASSKEY_SETTINGS_PATH}
-                    className="text-gray-500 hover:text-gray-900"
-                  >
-                    パスキー
-                  </Link>
-                  <LogoutButton />
-                </>
-              ) : (
-                <>
-                  <PasskeyLoginButton />
-                  <LoginButton label="パスワード" />
-                </>
+            {/* 項目はハンバーガーメニューへ畳む (docs/11-アプリ的UIUX計画.md §6)。
+                横に並べていたときは iPhone の幅で 1 文字ずつ折り返れて崩れた。
+                ユーザー名だけはメニューの外に残す — 「誰で入っているか」は
+                一目で確かめたい情報で、押す物でもないため */}
+            <div className="ml-auto flex items-center gap-1">
+              {user && (
+                <span
+                  className="max-w-24 truncate text-gray-500"
+                  title={`${user} でログイン中`}
+                >
+                  {user}
+                </span>
               )}
+              <HeaderMenu>
+                <HeaderQrButton
+                  qrDataUrl={siteQrDataUrl}
+                  url={siteUrl}
+                  variant="menu"
+                />
+                <a
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={HEADER_MENU_ITEM_CLASS}
+                >
+                  GitHub
+                </a>
+                {user ? (
+                  <>
+                    {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
+                        見えても 401 だが、押せない物を見せない */}
+                    <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
+                      ログ
+                    </Link>
+                    {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
+                        ここが登録への唯一の導線なので、ログイン中は常に出す */}
+                    <Link
+                      href={PASSKEY_SETTINGS_PATH}
+                      className={HEADER_MENU_ITEM_CLASS}
+                    >
+                      パスキー
+                    </Link>
+                    <LogoutButton variant="menu" />
+                  </>
+                ) : (
+                  <>
+                    <PasskeyLoginButton variant="menu" />
+                    <LoginButton variant="menu" label="パスワードでログイン" />
+                  </>
+                )}
+              </HeaderMenu>
             </div>
           </div>
         </header>

@@ -8,11 +8,15 @@ import {
   isAutoLoginSuppressed,
   suppressAutoLogin,
 } from "@/lib/passkeyHint";
-import { PRIMARY_BUTTON_CLASS } from "@/components/ui";
+import {
+  HEADER_MENU_ITEM_CLASS,
+  PRIMARY_BUTTON_CLASS,
+} from "@/components/ui";
 
 interface PasskeyLoginButtonProps {
-  // ヘッダの中に置くか (小さい文字リンク)、案内の本文に置くか (主ボタン)
-  variant?: "header" | "primary";
+  // ヘッダの中に置くか (小さい文字リンク)、案内の本文に置くか (主ボタン)、
+  // ハンバーガーメニューの 1 行として置くか
+  variant?: "header" | "primary" | "menu";
   // このブラウザにパスキーの実績があれば、押さなくてもログインを試みる
   // (docs/29-パスキー計画.md §13)。渡してよいのは「ログインが必要です」の
   // 案内だけ —— ヘッダは公開ノートにも出るため、そこで自動発火させると
@@ -43,9 +47,11 @@ export function PasskeyLoginButton({
   const autoStartedRef = useRef(false);
 
   const className =
-    variant === "header"
-      ? "inline-flex min-h-11 items-center rounded px-2 font-medium text-blue-600 transition-colors active:bg-blue-50 disabled:opacity-60"
-      : PRIMARY_BUTTON_CLASS;
+    variant === "menu"
+      ? `${HEADER_MENU_ITEM_CLASS} disabled:opacity-60`
+      : variant === "header"
+        ? "inline-flex min-h-11 items-center rounded px-2 font-medium text-blue-600 transition-colors active:bg-blue-50 disabled:opacity-60"
+        : PRIMARY_BUTTON_CLASS;
 
   async function startLogin({ isAuto }: { isAuto: boolean }) {
     setError(null);
@@ -113,7 +119,14 @@ export function PasskeyLoginButton({
       <button
         ref={buttonRef}
         type="button"
-        onClick={() => void startLogin({ isAuto: false })}
+        onClick={(event) => {
+          // メニューの中に居るとき、親のバブリングで閉じられないようにする。
+          // 閉じるとこの部品ごと unmount され、失敗しても赤字を出す先が
+          // 消えてしまう (成功時は reload なので閉じても困らないが、
+          // 失敗が黙って消えるのは困る)
+          event.stopPropagation();
+          void startLogin({ isAuto: false });
+        }}
         disabled={isBusy}
         className={className}
       >
