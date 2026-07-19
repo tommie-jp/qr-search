@@ -69,3 +69,20 @@ test('外部画像は対象外', () => {
 test('画像が無ければ null', () => {
   expect(imageAtCursor('ただのテキスト', 3)).toBeNull()
 })
+
+// 音声・PDF も画像記法で本文に入る (docs/12-添付ファイル種類拡張メモ.md)。
+// OCR できるのは画像だけなので、「後から OCR」の候補から外す
+test.each([
+  '![audio](/api/images/cccccccc-0000-0000-0000-000000000000.mp3)',
+  '![audio](/api/images/cccccccc-0000-0000-0000-000000000000.m4a)',
+  '![audio](/api/images/cccccccc-0000-0000-0000-000000000000.wav)',
+  '![仕様書.pdf](/api/images/cccccccc-0000-0000-0000-000000000000.pdf)',
+])('画像でない添付は OCR 対象にしない: %s', (markup) => {
+  expect(imageAtCursor(markup, 5)).toBeNull()
+})
+
+test('音声・PDF に挟まれていても画像だけを選ぶ', () => {
+  const audio = '![audio](/api/images/cccccccc-0000-0000-0000-000000000000.mp3)'
+  const doc = `${audio}\n\n${IMG_A}\n\nここにカーソル`
+  expect(imageAtCursor(doc, doc.indexOf('ここに'))?.url).toContain('aaaaaaaa')
+})

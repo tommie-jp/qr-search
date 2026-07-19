@@ -51,7 +51,11 @@ const ACCEPTED_IMAGE_TYPES =
 const ACCEPTED_AUDIO_TYPES =
   "audio/mpeg,audio/mp4,audio/wav,audio/x-m4a,.mp3,.m4a,.wav";
 
-const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES}`;
+// PDF (docs/12-添付ファイル種類拡張メモ.md)。表示はブラウザ内蔵ビューアに任せ、
+// 本文にはリンクだけを出す
+const ACCEPTED_PDF_TYPES = "application/pdf,.pdf";
+
+const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${ACCEPTED_PDF_TYPES}`;
 
 // ペースト/ドロップで拾う画像の判定。MIME が image/* のもの、または
 // 対応拡張子を持つもの (MIME を空で送る HEIC 対策)。実体の検査はサーバが行う
@@ -60,8 +64,22 @@ const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|tiff?)$/i;
 // 音声の判定。MIME が audio/* のもの、または対応拡張子を持つもの。
 const AUDIO_EXT_RE = /\.(?:mp3|m4a|wav)$/i;
 
+const PDF_EXT_RE = /\.pdf$/i;
+
 function isAudioFile(file: File): boolean {
   return file.type.startsWith("audio/") || AUDIO_EXT_RE.test(file.name);
+}
+
+function isPdfFile(file: File): boolean {
+  return file.type === "application/pdf" || PDF_EXT_RE.test(file.name);
+}
+
+// PDF は元のファイル名を画像記法の alt に残す。UUID 名では中身が判らないうえ、
+// 本文に入れておけば PGroonga の全文検索でファイル名から引ける。
+// `]` と改行は画像記法そのものを壊すので落とす (URL 側はサーバ発番の UUID)。
+function pdfAltText(fileName: string): string {
+  const cleaned = fileName.replace(/[[\]\r\n]/g, "").trim();
+  return cleaned.length > 0 ? cleaned : "PDF";
 }
 
 // アップロード済みの画像を Blob として取り直す。OCR は元 File ではなく
@@ -98,11 +116,14 @@ function replaceToken(view: EditorView, token: string, replacement: string): voi
   });
 }
 
-// アップロード対象に拾うファイル (画像または音声)。
+// アップロード対象に拾うファイル (画像・音声・PDF)。
 function pickFiles(list: FileList | undefined | null): File[] {
   return Array.from(list ?? []).filter(
     (f) =>
-      f.type.startsWith("image/") || IMAGE_EXT_RE.test(f.name) || isAudioFile(f),
+      f.type.startsWith("image/") ||
+      IMAGE_EXT_RE.test(f.name) ||
+      isAudioFile(f) ||
+      isPdfFile(f),
   );
 }
 
@@ -251,13 +272,19 @@ export default function MemoEditorInner({
           const url = await uploadImageWithProgress(file, (percent) => {
             setUpload({ current: index + 1, total: files.length, percent });
           });
-          // 音声は ![audio](url) で挿入し、MarkdownView が <audio> に振り分ける。
+          // 音声は ![audio](url)、PDF は ![ファイル名.pdf](url) で挿入し、
+          // MarkdownView が src の拡張子を見て <audio> / リンクに振り分ける。
           // 画像は従来どおり ![](url)
           const isAudio = isAudioFile(file);
-          const markup = isAudio ? `![audio](${url})` : `![](${url})`;
+          const isPdf = !isAudio && isPdfFile(file);
+          const markup = isAudio
+            ? `![audio](${url})`
+            : isPdf
+              ? `![${pdfAltText(file.name)}](${url})`
+              : `![](${url})`;
           replaceToken(view, token, markup);
-          if (isAudio) {
-            continue; // 音声は OCR しない
+          if (isAudio || isPdf) {
+            continue; // 画像でないものは OCR しない
           }
           // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
           // アップロードの流れは止めない (url は UUID で一意なので位置を引ける)。
@@ -443,7 +470,7 @@ export default function MemoEditorInner({
         {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
             幅が狭いときは畳んでボタンの場所を空ける */}
         <span className="hidden text-gray-400 sm:inline">
-          画像・音声はペースト・ドラッグ&ドロップでも挿入できます
+          画像・音声・PDF はペースト・ドラッグ&ドロップでも挿入できます
         </span>
         <span
           className={`ml-auto ${

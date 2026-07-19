@@ -119,6 +119,13 @@ function wavFile(): File {
   return new File([WAV_BYTES], 'memo.wav', { type: 'audio/wav' })
 }
 
+// 最小の PDF (先頭の "%PDF-" だけを見るので、開ける必要はない)
+const PDF_BYTES = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n')
+
+function pdfFile(): File {
+  return new File([PDF_BYTES], '仕様書.pdf', { type: 'application/pdf' })
+}
+
 function rangeRequest(
   name: string,
   range: string,
@@ -189,6 +196,14 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
   test('音声を名乗る HTML (中身が音声でない) は 400 を返す', async () => {
     const fake = new File(['<html>not audio</html>'], 'x.mp3', {
       type: 'audio/mpeg',
+    })
+    const res = await POST(uploadRequest(fake))
+    expect(res.status).toBe(400)
+  })
+
+  test('PDF を名乗る HTML (中身が PDF でない) は 400 を返す', async () => {
+    const fake = new File(['<html><script>alert(1)</script></html>'], 'x.pdf', {
+      type: 'application/pdf',
     })
     const res = await POST(uploadRequest(fake))
     expect(res.status).toBe(400)
@@ -352,6 +367,38 @@ describe.skipIf(!runDbTests)(
       expect(res.headers.get('content-type')).toBe('audio/wav')
       const bytes = Buffer.from(await res.arrayBuffer())
       expect(bytes.equals(WAV_BYTES.subarray(0, 10))).toBe(true)
+    })
+
+    // PDF (docs/12-添付ファイル種類拡張メモ.md)。音声と同じ「変換しない添付」
+    // の経路に乗り、表示はブラウザ内蔵ビューアに任せる
+    test('PDF をアップロードすると .pdf 名で保存し、GET で同じバイト列を配る', async () => {
+      const res = await POST(uploadRequest(pdfFile()))
+      expect(res.status).toBe(200)
+
+      const body = await res.json()
+      expect(body.success).toBe(true)
+      expect(body.data.url).toMatch(/^\/api\/images\/[0-9a-f-]{36}\.pdf$/)
+
+      const name = body.data.url.split('/').pop() as string
+      created.push(name)
+
+      const [req, ctx] = getRequest(name)
+      const getRes = await GET(req, ctx)
+      expect(getRes.status).toBe(200)
+      expect(getRes.headers.get('content-type')).toBe('application/pdf')
+      // ユーザー由来のバイト列なので MIME スニッフィングは禁止のまま
+      expect(getRes.headers.get('x-content-type-options')).toBe('nosniff')
+      const bytes = Buffer.from(await getRes.arrayBuffer())
+      expect(bytes.equals(PDF_BYTES)).toBe(true)
+    })
+
+    test('PDF はサムネも埋め込みも作らず、そのまま保存される', async () => {
+      const name = await upload(pdfFile())
+      const row = await prisma.image.findUnique({ where: { name } })
+      expect(row?.mime).toBe('application/pdf')
+      expect(row?.thumb).toBeNull()
+      expect(row?.embedding).toBeNull()
+      expect(Buffer.from(row?.data as Uint8Array).equals(PDF_BYTES)).toBe(true)
     })
 
     test('範囲外の Range は 416 を返す', async () => {

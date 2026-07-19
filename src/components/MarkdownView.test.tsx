@@ -162,6 +162,24 @@ test("画像 URL は従来どおり <img> のまま (音声に巻き込まれな
   expect(html).not.toContain("<audio");
 });
 
+// PDF (docs/12-添付ファイル種類拡張メモ.md)。インラインビューアは埋め込まず、
+// 押したらブラウザ内蔵ビューアが開く別タブリンクにする
+test("PDF URL の画像記法は別タブリンクにする", () => {
+  const html = render("![仕様書.pdf](/api/images/abc.pdf)");
+  expect(html).toContain('href="/api/images/abc.pdf"');
+  expect(html).toContain('target="_blank"');
+  expect(html).toContain("仕様書.pdf");
+  // 画像でも音声でもない
+  expect(html).not.toContain("<img");
+  expect(html).not.toContain("<audio");
+});
+
+test("PDF の alt が空でも既定のラベルを出す", () => {
+  const html = render("![](/api/images/abc.pdf)");
+  expect(html).toContain('href="/api/images/abc.pdf"');
+  expect(html).toContain("PDF");
+});
+
 test("本文中の #タグ を検索リンクにする", () => {
   const html = render("これは #抵抗 のメモ");
   expect(html).toContain(`href="/?q=${encodeURIComponent("#抵抗")}"`);

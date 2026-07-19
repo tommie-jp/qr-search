@@ -7,9 +7,12 @@ import {
   isValidAttachmentName,
   isValidAudioName,
   isValidImageName,
+  isValidPdfName,
   MAX_IMAGE_BYTES,
+  PDF_MIME,
   sniffAudioFormat,
   sniffImageFormat,
+  sniffPdf,
 } from './uploads'
 
 test('対応する画像 MIME は拡張子を返す', () => {
@@ -183,16 +186,58 @@ test('isValidAttachmentName は画像・音声の両方を許可する', () => {
   expect(isValidAttachmentName('../secret.mp3')).toBe(false)
 })
 
-test('配信 Content-Type は既知の画像・音声 mime だけ採用する', () => {
+test('配信 Content-Type は既知の画像・音声・PDF mime だけ採用する', () => {
   expect(isAllowedContentMime('image/png')).toBe(true)
   expect(isAllowedContentMime('image/webp')).toBe(true)
   expect(isAllowedContentMime('audio/mpeg')).toBe(true)
   expect(isAllowedContentMime('audio/mp4')).toBe(true)
   expect(isAllowedContentMime('audio/wav')).toBe(true)
+  expect(isAllowedContentMime(PDF_MIME)).toBe(true)
   // 未知・危険な mime は採用しない (route.ts が octet-stream に落とす)
   expect(isAllowedContentMime('image/svg+xml')).toBe(false)
   expect(isAllowedContentMime('text/html')).toBe(false)
   expect(isAllowedContentMime('video/mp4')).toBe(false)
+})
+
+// --- PDF (docs/12-添付ファイル種類拡張メモ.md) ---
+
+test('先頭が "%PDF-" なら PDF と判定する', () => {
+  expect(sniffPdf(new TextEncoder().encode('%PDF-1.7\n%âãÏÓ'))).toBe(true)
+  expect(sniffPdf(new TextEncoder().encode('%PDF-1.4'))).toBe(true)
+})
+
+test('PDF でない中身・先頭がずれた PDF は false', () => {
+  // 署名は offset 0 固定。前に何か付いたポリグロットは受けない
+  expect(sniffPdf(new TextEncoder().encode('\n%PDF-1.7'))).toBe(false)
+  expect(sniffPdf(new TextEncoder().encode('%PDX-1.7'))).toBe(false)
+  expect(sniffPdf(new TextEncoder().encode('<html>'))).toBe(false)
+  expect(sniffPdf(PNG_HEAD)).toBe(false)
+  expect(sniffPdf(new Uint8Array(0))).toBe(false)
+})
+
+test('PDF は画像・音声の判定に混ざらない', () => {
+  const pdf = new TextEncoder().encode('%PDF-1.7')
+  expect(sniffImageFormat(pdf)).toBeNull()
+  expect(sniffAudioFormat(pdf)).toBeNull()
+})
+
+test('PDF の保存名 (UUID + .pdf) を許可する', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidPdfName(`${uuid}.pdf`)).toBe(true)
+  expect(isValidPdfName(`${uuid}.png`)).toBe(false)
+  expect(isValidPdfName('../../etc/passwd.pdf')).toBe(false)
+  expect(isValidPdfName('a.pdf')).toBe(false) // UUID 形式でない
+})
+
+test('isValidImageName は PDF 名を拾わない (一覧サムネ・画像検索に混ぜない)', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidImageName(`${uuid}.pdf`)).toBe(false)
+})
+
+test('isValidAttachmentName は PDF も許可する', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidAttachmentName(`${uuid}.pdf`)).toBe(true)
+  expect(isValidAttachmentName('../secret.pdf')).toBe(false)
 })
 
 function uploadRequest(headers: Record<string, string>): Request {

@@ -165,18 +165,18 @@ export function isValidAudioName(name: string): boolean {
   return AUDIO_NAME_PATTERN.test(name)
 }
 
-// 画像・音声のどちらの保存名も許すか。配信ゲート (route.ts) と proxy の
+// 画像・音声・PDF のいずれの保存名も許すか。配信ゲート (route.ts) と proxy の
 // 素通し判定 (publicPaths.ts) が使う。**memoImages などの「画像だけ」を
-// 拾う経路は isValidImageName のままにする** — 音声を一覧サムネや画像検索の
-// 対象に混ぜないため (この 2 つを分けているのが肝)。
+// 拾う経路は isValidImageName のままにする** — 音声や PDF を一覧サムネや画像
+// 検索の対象に混ぜないため (この 2 つを分けているのが肝)。
 export function isValidAttachmentName(name: string): boolean {
-  return isValidImageName(name) || isValidAudioName(name)
+  return isValidImageName(name) || isValidAudioName(name) || isValidPdfName(name)
 }
 
-// 配信時に Content-Type としてそのまま返してよい mime か。画像・音声とも
+// 配信時に Content-Type としてそのまま返してよい mime か。画像・音声・PDF とも
 // 保存時に中身を検証済みだが、DB の値を鵜呑みにせず既知の mime のときだけ採用する。
 export function isAllowedContentMime(mime: string): boolean {
-  return mime in MIME_TO_EXT || mime in AUDIO_MIME_TO_EXT
+  return mime in MIME_TO_EXT || mime in AUDIO_MIME_TO_EXT || mime === PDF_MIME
 }
 
 // WAV は RIFF コンテナ: "RIFF"(0) + "WAVE"(8)
@@ -221,6 +221,30 @@ export function sniffAudioFormat(bytes: Uint8Array): AudioFormat | null {
     return 'wav'
   }
   return sniffIsoBmffAudio(bytes)
+}
+
+// --- PDF (docs/12-添付ファイル種類拡張メモ.md) ---
+//
+// PDF も音声と同じく変換もサムネも埋め込みもせず、images テーブルへそのまま
+// 保存する。表示はブラウザ内蔵ビューアに任せ (本文にはリンクだけ出す)、
+// 配信は音声と同じ経路 (Content-Type + Range) をそのまま使う。
+
+export const PDF_MIME = 'application/pdf'
+export const PDF_EXT = 'pdf'
+
+// 保存名は画像・音声と同じ「UUID + .pdf」だけ (トラバーサル対策)。
+const PDF_NAME_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/
+
+export function isValidPdfName(name: string): boolean {
+  return PDF_NAME_PATTERN.test(name)
+}
+
+// PDF は先頭が "%PDF-" (25 50 44 46 2D)。仕様上ヘッダは先頭 1KB 以内に
+// あればよいが、ポリグロット (先頭が別形式に見える PDF) を避けるため
+// offset 0 固定で見る (画像の署名判定と同じ厳しさ)。
+export function sniffPdf(bytes: Uint8Array): boolean {
+  return startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])
 }
 
 // multipart のヘッダ等のオーバーヘッド分を上限に足す

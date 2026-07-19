@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
-import { saveAudio, saveImage } from '@/lib/imageStore'
+import { saveImage, savePlainAttachment } from '@/lib/imageStore'
 import { normalizeImage } from '@/lib/normalizeImage'
 import {
   audioSaveInfo,
   checkUploadRequest,
   type ImageFormat,
   MAX_IMAGE_BYTES,
+  PDF_EXT,
+  PDF_MIME,
   sniffAudioFormat,
   sniffImageFormat,
+  sniffPdf,
   tooLargeMessage,
 } from '@/lib/uploads'
 
@@ -52,7 +55,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 形式はクライアント申告の MIME ではなく中身の先頭バイトで決める。
   // MIME を空で送る端末 (iOS の HEIC など) でも拾え、詐称にも強い。
-  // まず画像として判定し、外れたら音声 (mp3/m4a/wav) を試す。
+  // まず画像として判定し、外れたら音声 (mp3/m4a/wav)、PDF の順に試す。
   const imageFormat = sniffImageFormat(bytes)
   if (imageFormat) {
     return saveImageUpload(bytes, imageFormat)
@@ -62,13 +65,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (audioFormat) {
     // 音声は変換もサムネも要らない。中身をそのまま保存する
     const { mime, ext } = audioSaveInfo(audioFormat)
-    const url = await saveAudio(bytes, mime, ext)
+    const url = await savePlainAttachment(bytes, mime, ext)
+    return NextResponse.json({ success: true, data: { url }, error: null })
+  }
+
+  if (sniffPdf(bytes)) {
+    // PDF もそのまま保存し、表示はブラウザ内蔵ビューアに任せる
+    const url = await savePlainAttachment(bytes, PDF_MIME, PDF_EXT)
     return NextResponse.json({ success: true, data: { url }, error: null })
   }
 
   return errorResponse(
     400,
-    '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav)',
+    '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav, PDF: pdf)',
   )
 }
 

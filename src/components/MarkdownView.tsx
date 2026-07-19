@@ -103,6 +103,11 @@ function preOrDiagram(circuits: CircuitMap) {
 // React が組み立てる要素なので、生 HTML の許可リスト (sanitizeSchema) は要らない。
 const AUDIO_SRC_RE = /\.(?:mp3|m4a|wav)(?:[?#]|$)/i;
 
+// PDF も同じく画像記法 `![ファイル名.pdf](url)` で本文に入る。インライン
+// ビューアは埋め込まず、押したらブラウザ内蔵ビューアが開くリンクにする
+// (iPhone との相性がよく、本文が重くならない)
+const PDF_SRC_RE = /\.pdf(?:[?#]|$)/i;
+
 // alt 末尾の "|数字" を表示幅 (px) として解釈する (例: ![スクショ|200](/api/images/x.png))。
 // 生 HTML を無効にしたまま画像ごとに幅を指定できるようにするための独自記法。
 // 画像はクリックで拡大できるよう ZoomableImage で描画する
@@ -121,6 +126,15 @@ function imgWithWidth({
         src={props.src}
         className="w-full max-w-md"
       />
+    );
+  }
+  if (typeof props.src === "string" && PDF_SRC_RE.test(props.src)) {
+    // alt には挿入時のファイル名が入る (MemoEditorInner の pdfAltText)。
+    // 別タブで開く — 同じタブだとノートから離れてしまう
+    return (
+      <a href={props.src} rel="noreferrer" target="_blank" className="break-all">
+        📄 {alt || "PDF"}
+      </a>
     );
   }
   const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
