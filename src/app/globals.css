@@ -5,6 +5,12 @@
    例: standalone:inline-flex */
 @custom-variant standalone (@media (display-mode: standalone));
 
+/* スマホを横に持ったときだけ効く変体 (docs/31-下部操作バー計画.md §12)。
+   orientation: landscape だけだと PC のウィンドウはほぼ常に該当してしまうので、
+   高さで「縦の余裕がない画面」に絞る。500px は iPhone Pro Max の横持ち
+   (視界の高さ 400px 前後) を含み、PC の通常ウィンドウを外す境目 */
+@custom-variant landscape-phone (@media (orientation: landscape) and (max-height: 500px));
+
 html {
   /* iOS のラバーバンド (ドラッグで画面全体が引きずられる) と
      Android の引っ張って更新を止める */

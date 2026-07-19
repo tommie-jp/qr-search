@@ -66,7 +66,10 @@ export function HeaderQrButton({
             className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/70 p-4"
             onClick={() => setIsOpen(false)}
           >
-            <div className="border border-gray-300 bg-white p-3 text-center">
+            {/* max-h + overflow … QR (240px) + URL で高さ 300px を超えるため、
+                スマホ横持ち (視界 300px 台) でははみ出す。器の p-4 の内側に
+                収めて中をスクロールさせる (docs/31 §12) */}
+            <div className="max-h-full overflow-y-auto border border-gray-300 bg-white p-3 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={qrDataUrl} alt={`QR: ${url}`} width={240} height={240} />
               <div className="mt-1 break-all font-mono text-gray-600">

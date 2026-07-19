@@ -118,14 +118,20 @@ export const BOTTOM_BAR_INNER_CLASS =
 
 // バーの 1 スロット。5 等分 (flex-1) して 320px でも 64px を確保する。
 // 高さ 44px 以上 … バーは「狙って押す」場所なので、検索画面の他の操作
-// (COMPACT_* の 36px) のようには詰めない (docs/31 §3-3)
+// (COMPACT_* の 36px) のようには詰めない (docs/31 §3-3)。
+//
+// landscape-phone: … スマホ横持ちでは縦積み (アイコンの下にラベル) をやめ、
+// アイコンとラベルを横に並べて高さを 52px → 36px に詰める (docs/31 §12)。
+// 視界の高さが 300px 台まで減るので、縦幅の節約を 44px より優先する
+// (iOS のタブバーが横向きでコンパクト形へ変わるのと同じ作法)
 export const BOTTOM_BAR_SLOT_CLASS =
-  "flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded px-1 pt-1.5 text-[0.625rem] font-medium leading-none transition-colors active:bg-gray-200/70";
+  "flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded px-1 pt-1.5 text-[0.625rem] font-medium leading-none transition-colors active:bg-gray-200/70 landscape-phone:min-h-9 landscape-phone:flex-row landscape-phone:gap-1.5 landscape-phone:pt-0 landscape-phone:text-xs";
 
 // バーぶんの余白。これがないと一覧の最終行とページ送りがバーに隠れる。
-// 高さ = アイコン 24 + 隙間 + ラベル + 上下余白 ≒ 3.25rem
+// 高さ = アイコン 24 + 隙間 + ラベル + 上下余白 ≒ 3.25rem。
+// landscape-phone はスロットが min-h-9 (36px) + 下余白 4px ≒ 2.5rem
 export const BOTTOM_BAR_SPACER_CLASS =
-  "h-[calc(3.25rem+env(safe-area-inset-bottom))] print:hidden";
+  "h-[calc(3.25rem+env(safe-area-inset-bottom))] print:hidden landscape-phone:h-[calc(2.5rem+env(safe-area-inset-bottom))]";
 
 // 編集フォームの下端に貼り付くボタン行 (docs/11-アプリ的UIUX計画.md §2-1)。
 // 長い本文でも一番下までスクロールせずに保存できる。

@@ -150,13 +150,24 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
                 全幅に伸ばすと PC で画面を横切る帯になり、間延びして見える。
                 pb-… は自前で持つ。画面の下端に貼り付くので、ホームバーに
                 潜らないよう safe-area の分を空ける (main の pb-safe は
-                fixed には効かない) */}
+                fixed には効かない)。
+
+                max-h + overflow-y-auto … スマホ横持ちでは視界の高さが
+                300px 台まで減り、項目全部は入らない (docs/31 §12)。上限を
+                切ってシートの中をスクロールさせる。上に残す隙間は
+                「ヘッダーの帯の高さ」(pt-safe = max(0.25rem, inset-top) +
+                中身 ≒ 2.5rem)。シート (z-40) はヘッダー (z-20) より上に
+                描かれるため、帯に被せると ✕ ボタンが押せなくなる —
+                実際 240px の横画面で ✕ へのタップをシートが横取りした。
+                overscroll-contain … スクロールが端に達したとき背面へ
+                伝播させない (背面は overflow:hidden で止めているが、iOS は
+                チェーンでラバーバンドが動くことがある) */}
             <div
               ref={sheetRef}
               role="menu"
               tabIndex={-1}
               onClick={() => setIsOpen(false)}
-              className="fixed inset-x-0 bottom-0 z-40 mx-auto flex max-w-2xl flex-col gap-0.5 rounded-t-2xl border border-gray-300 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-4px_16px_rgba(0,0,0,0.15)] motion-safe:animate-sheet-up"
+              className="fixed inset-x-0 bottom-0 z-40 mx-auto flex max-h-[calc(100dvh-max(0.25rem,env(safe-area-inset-top))-2.5rem)] max-w-2xl flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-t-2xl border border-gray-300 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-4px_16px_rgba(0,0,0,0.15)] motion-safe:animate-sheet-up"
             >
               {/* つまみ。掴んで動かせるわけではないが、この形が
                   「下から出た一時的なシート」の合図として通じている */}

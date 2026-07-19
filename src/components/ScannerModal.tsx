@@ -105,27 +105,39 @@ export function ScannerModal({ stickerHost, onClose }: ScannerModalProps) {
         </button>
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4">
-        {/* エラーは Scanner を差し替えず上に出す。ライブラリはカメラ起動の失敗も
-            トーチ切り替えの失敗も同じ onError に流すため、差し替えると
-            「ライトを点けようとしただけでカメラが死ぬ」ことになる。
-            起動に失敗したときは Scanner 側が黒いままなので、これで困らない */}
-        {error && (
-          <p
-            role="alert"
-            className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-white"
-          >
-            {error}
-          </p>
-        )}
-        <div className="w-full max-w-md">
-          <Scanner
-            formats={SCAN_FORMATS}
-            onScan={handleScan}
-            onError={handleError}
-            components={{ finder: true, torch: true }}
-            classNames={{ container: "overflow-hidden rounded" }}
-          />
+      {/* min-h-0 + overflow-y-auto … エラー文とカメラ枠が並ぶと、スマホ横持ち
+          (視界 300px 台) では入り切らないことがある (docs/31 §12)。器の中を
+          スクロールできるようにしておく (ImageSearchModal と同じ作り)。
+          縦の中央寄せは justify-center ではなく内側の my-auto で行う —
+          justify-center はあふれた分が上下とも画面外に出て、スクロールしても
+          上端に届かない (auto マージンはあふれると 0 に潰れるので安全) */}
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-4">
+        <div className="my-auto flex w-full flex-col items-center gap-3">
+          {/* エラーは Scanner を差し替えず上に出す。ライブラリはカメラ起動の失敗も
+              トーチ切り替えの失敗も同じ onError に流すため、差し替えると
+              「ライトを点けようとしただけでカメラが死ぬ」ことになる。
+              起動に失敗したときは Scanner 側が黒いままなので、これで困らない */}
+          {error && (
+            <p
+              role="alert"
+              className="max-w-sm rounded bg-red-900/80 px-3 py-2 text-center text-white"
+            >
+              {error}
+            </p>
+          )}
+          {/* max-w は 28rem に加えて視界の高さ (dvh) でも縛る。スマホ横持ちでは
+              高さが 300px 台になり、幅 28rem のカメラ映像 (4:3 で高さ 336px) が
+              画面から溢れる (docs/31 §12)。幅 ≤ 75dvh なら 4:3 でも高さ ≤ 56dvh
+              で、上の見出し行と合わせても収まる */}
+          <div className="w-full max-w-[min(28rem,75dvh)]">
+            <Scanner
+              formats={SCAN_FORMATS}
+              onScan={handleScan}
+              onError={handleError}
+              components={{ finder: true, torch: true }}
+              classNames={{ container: "overflow-hidden rounded" }}
+            />
+          </div>
         </div>
       </div>
     </div>,

@@ -311,9 +311,12 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
           </p>
         )}
 
-        {/* カメラビューと中央のガイド枠 (= 実質センタークロップ) */}
+        {/* カメラビューと中央のガイド枠 (= 実質センタークロップ)。
+            max-w を視界の高さ (dvh) でも縛るのは ScannerModal と同じ理由 —
+            スマホ横持ちで映像が縦に溢れると、下のシャッターが画面外に落ちて
+            スクロールしないと押せなくなる (docs/31 §12) */}
         {!error && (
-          <div className="relative w-full max-w-md">
+          <div className="relative w-full max-w-[min(28rem,75dvh)]">
             <video
               ref={videoRef}
               playsInline
