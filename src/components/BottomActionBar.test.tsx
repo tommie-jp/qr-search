@@ -94,6 +94,26 @@ test("非本番はピンク、本番は白の帯にする", () => {
   expect(render("compact", "updated", "", true)).toContain("bg-white/95");
 });
 
+// アイコンの機能色 (docs/31-下部操作バー計画.md §11-1)。
+// ここで固定できるのは「5 スロットそれぞれに色が乗っている」ことだけで、
+// 選択中に青を外して親の白を継ぐ方 (§11-5) はこのテストでは守れない —
+// 常に text-blue-600 を当てるよう直しても非選択時の描画は変わらず、
+// これは通ってしまう。選択中の描画は静的描画では作れない
+// (この土台に jsdom は無い) ため、反転はブラウザで確認する
+// (HeaderMenu.test.tsx と同じ方針)
+test("5 スロットのアイコンにそれぞれ機能色が乗る", () => {
+  const html = render();
+  for (const color of [
+    "text-sky-600",
+    "text-violet-600",
+    "text-emerald-600",
+    "text-amber-600",
+    "text-blue-600",
+  ]) {
+    expect(html).toContain(color);
+  }
+});
+
 test("一覧がバーに隠れないよう余白を確保する", () => {
   // これが無いと一覧の最終行とページ送りがバーの下に潜る
   const html = render();

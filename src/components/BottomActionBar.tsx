@@ -53,6 +53,22 @@ const ImageSearchModal = dynamic(
   { ssr: false },
 );
 
+// スロットごとの機能色 (docs/31-下部操作バー計画.md §11-1)。
+// ラベルを読まなくても色と形で狙えるようにする。色をアイコン側ではなく
+// ここから与えるのは、選択スロットが押下中に白へ反転するため — 反転を知って
+// いるのはこの部品だけで、currentColor 経由なら text-white がそのまま勝つ。
+// ラベルの文字は塗らない。0.625rem を 5 色に塗るとうるさく、読みにくくなる
+function SlotIcon({
+  color,
+  children,
+}: {
+  color: string;
+  children: React.ReactNode;
+}) {
+  // flex … span を inline のまま置くと svg の下にベースラインぶんの隙間が出る
+  return <span className={`flex ${color}`}>{children}</span>;
+}
+
 // 検索画面の主要操作を画面下端にまとめた固定バー (docs/31-下部操作バー計画.md)。
 //
 // 片手持ちの親指が届くのは画面の下側で、届きにくいのは左右ではなく高さ
@@ -102,7 +118,9 @@ export function BottomActionBar({
             onClick={() => setIsScanning(true)}
             className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
           >
-            <ScanIcon />
+            <SlotIcon color="text-sky-600">
+              <ScanIcon />
+            </SlotIcon>
             スキャン
           </button>
 
@@ -112,7 +130,9 @@ export function BottomActionBar({
             onClick={() => setIsImageSearching(true)}
             className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
           >
-            <ImageSearchIcon />
+            <SlotIcon color="text-violet-600">
+              <ImageSearchIcon />
+            </SlotIcon>
             画像検索
           </button>
 
@@ -128,7 +148,9 @@ export function BottomActionBar({
               }に切替)`}
               className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
             >
-              {isCard ? <GridViewIcon /> : <ListViewIcon />}
+              <SlotIcon color="text-emerald-600">
+                {isCard ? <GridViewIcon /> : <ListViewIcon />}
+              </SlotIcon>
               {isCard ? "大" : "小"}
             </button>
           </form>
@@ -143,7 +165,9 @@ export function BottomActionBar({
             }に切替)`}
             className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
           >
-            <SortIcon />
+            <SlotIcon color="text-amber-600">
+              <SortIcon />
+            </SlotIcon>
             {isItemNoSort ? "番号順" : "更新順"}
           </PendingLink>
 
@@ -157,7 +181,12 @@ export function BottomActionBar({
               selectMode ? "bg-blue-600 text-white" : "text-gray-700"
             }`}
           >
-            <SelectIcon />
+            {/* 選択中はスロットごと bg-blue-600 + text-white へ反転する。
+                色を足さず親の text-white を継がせる (blue のまま置くと
+                青地に青で沈む) */}
+            <SlotIcon color={selectMode ? "" : "text-blue-600"}>
+              <SelectIcon />
+            </SlotIcon>
             選択
           </button>
         </div>
