@@ -163,7 +163,11 @@ export function BottomActionBar({
             aria-label={`並び順: ${isItemNoSort ? "番号順" : "更新順"} (押すと${
               isItemNoSort ? "更新順" : "番号順"
             }に切替)`}
-            className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
+            // スピナーは絶対配置で流れから抜く。縦積みのスロットで場所を
+            // 取らせると、その半分ぶんアイコンとラベルが持ち上がり、この
+            // スロットだけ他と高さが揃わない
+            spinnerClassName="absolute top-1 right-1"
+            className={`${BOTTOM_BAR_SLOT_CLASS} relative text-gray-700`}
           >
             <SlotIcon color="text-amber-600">
               <SortIcon />
