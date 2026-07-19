@@ -15,7 +15,16 @@
 # バージョンアップはイメージビルドより前に行う。
 #
 # 使い方:
-#   ./doDeploy.sh [patch|minor|major]   (省略時: patch)
+#   ./doDeploy.sh [patch|minor|major] [--send-compose.yml]   (省略時: patch)
+#
+#   --send-compose.yml  compose.yaml もリモートへ送る。
+#
+#     既定で送らないのは、リモートの compose.yaml が「配置済みの設定」であり、
+#     毎回上書きすると手元と乖離していたときに黙って消してしまうため。
+#     一方で**環境変数を足したときは送らないと反映されない** — 値を渡す
+#     environment: の行は compose.yaml 側にあるので、.env だけ直しても
+#     コンテナには届かず「設定したのに未設定と言われる」形で嵌まる
+#     (docs/29-パスキー計画.md §12 で実際に踏んだ)。
 #
 # 環境変数で上書き可能:
 #   DEPLOY_REMOTE      ssh 接続先 (default: vps2)
@@ -24,11 +33,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BUMP="${1:-patch}"
-case "$BUMP" in
-  patch|minor|major) ;;
-  *) echo "usage: $0 [patch|minor|major]" >&2; exit 1 ;;
-esac
+usage() { echo "usage: $0 [patch|minor|major] [--send-compose.yml]" >&2; exit 1; }
+
+BUMP=""
+SEND_COMPOSE=0
+for arg in "$@"; do
+  case "$arg" in
+    --send-compose.yml) SEND_COMPOSE=1 ;;
+    patch|minor|major)
+      # バージョンの上げ幅を 2 つ書かれたら、どちらの意図か決められない
+      [ -z "$BUMP" ] || usage
+      BUMP="$arg"
+      ;;
+    *) usage ;;
+  esac
+done
+BUMP="${BUMP:-patch}"
 
 REMOTE="${DEPLOY_REMOTE:-vps2}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-41-QR-search/qr-search}"
@@ -86,7 +106,37 @@ ssh -M -S "$SSH_CTRL" -f -N \
 DATABASE_URL="postgresql://qr:${ENCODED_PW}@127.0.0.1:${TUNNEL_PORT}/qr" \
   npx prisma migrate deploy
 
-log "7/8 app コンテナ再作成"
+# compose.yaml の転送は再作成の**直前**に置く。ここで送っておけば、続く
+# up -d --force-recreate が新しい定義 (environment: など) で作り直す。
+# 送ったのに再作成しない、という中途半端な状態を作らないための並び
+if [ "$SEND_COMPOSE" = "1" ]; then
+  log "7/8 compose.yaml 転送 + app コンテナ再作成"
+
+  LOCAL_SUM="$(md5sum compose.yaml | cut -d' ' -f1)"
+  REMOTE_SUM="$(ssh "$REMOTE" "md5sum '$REMOTE_DIR/compose.yaml' 2>/dev/null | cut -d' ' -f1" || true)"
+
+  if [ "$LOCAL_SUM" = "$REMOTE_SUM" ]; then
+    echo "OK: compose.yaml は同一 (転送を省略)"
+  else
+    # 上書きする前に控えを取る。手元と乖離した設定がリモートにあった場合、
+    # 転送はそれを消す操作になるため。正本はこのリポジトリなので、
+    # 控えは「直前の状態にすぐ戻せる」ためだけの 1 世代でよい。
+    #
+    # 初回 (リモートに何も無い) は控えを作らない。作れないのに
+    # 「控えは .bak にある」と言うと、戻せると思って探す羽目になる
+    if ssh "$REMOTE" "[ -f '$REMOTE_DIR/compose.yaml' ]"; then
+      ssh "$REMOTE" "cp '$REMOTE_DIR/compose.yaml' '$REMOTE_DIR/compose.yaml.bak'"
+      BACKUP_NOTE="前の内容は $REMOTE_DIR/compose.yaml.bak"
+    else
+      BACKUP_NOTE="リモートに既存の compose.yaml は無かった"
+    fi
+    scp -q compose.yaml "$REMOTE:$REMOTE_DIR/compose.yaml"
+    echo "OK: compose.yaml を転送 ($BACKUP_NOTE)"
+  fi
+else
+  log "7/8 app コンテナ再作成"
+fi
+
 ssh "$REMOTE" "cd '$REMOTE_DIR' && docker compose up -d --no-build --force-recreate app"
 
 log "8/8 ヘルスチェック ($REMOTE 上の $HEALTH_URL)"
