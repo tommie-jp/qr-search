@@ -96,6 +96,47 @@ export default async function RootLayout({
           }`}
         >
           <div className="mx-auto flex max-w-2xl items-center gap-2 px-safe pt-safe pb-3">
+            {/* 項目はハンバーガーメニューへ畳む (docs/11-アプリ的UIUX計画.md §6)。
+                横に並べていたときは iPhone の幅で 1 文字ずつ折り返れて崩れた。
+                左端に置くのは、片手持ちの親指が届く側だから */}
+            <HeaderMenu>
+              <HeaderQrButton
+                qrDataUrl={siteQrDataUrl}
+                url={siteUrl}
+                variant="menu"
+              />
+              <a
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={HEADER_MENU_ITEM_CLASS}
+              >
+                GitHub
+              </a>
+              {user ? (
+                <>
+                  {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
+                      見えても 401 だが、押せない物を見せない */}
+                  <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
+                    ログ
+                  </Link>
+                  {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
+                      ここが登録への唯一の導線なので、ログイン中は常に出す */}
+                  <Link
+                    href={PASSKEY_SETTINGS_PATH}
+                    className={HEADER_MENU_ITEM_CLASS}
+                  >
+                    パスキー
+                  </Link>
+                  <LogoutButton variant="menu" />
+                </>
+              ) : (
+                <>
+                  <PasskeyLoginButton variant="menu" />
+                  <LoginButton variant="menu" label="パスワードでログイン" />
+                </>
+              )}
+            </HeaderMenu>
             <StandaloneBackButton />
             <Link href="/" className="text-lg font-bold">
               {SITE_NAME}
@@ -110,58 +151,16 @@ export default async function RootLayout({
                 LOCAL
               </span>
             )}
-            {/* 項目はハンバーガーメニューへ畳む (docs/11-アプリ的UIUX計画.md §6)。
-                横に並べていたときは iPhone の幅で 1 文字ずつ折り返れて崩れた。
-                ユーザー名だけはメニューの外に残す — 「誰で入っているか」は
+            {/* ユーザー名だけはメニューの外に残す — 「誰で入っているか」は
                 一目で確かめたい情報で、押す物でもないため */}
-            <div className="ml-auto flex items-center gap-1">
-              {user && (
-                <span
-                  className="max-w-24 truncate text-gray-500"
-                  title={`${user} でログイン中`}
-                >
-                  {user}
-                </span>
-              )}
-              <HeaderMenu>
-                <HeaderQrButton
-                  qrDataUrl={siteQrDataUrl}
-                  url={siteUrl}
-                  variant="menu"
-                />
-                <a
-                  href={GITHUB_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={HEADER_MENU_ITEM_CLASS}
-                >
-                  GitHub
-                </a>
-                {user ? (
-                  <>
-                    {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
-                        見えても 401 だが、押せない物を見せない */}
-                    <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
-                      ログ
-                    </Link>
-                    {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
-                        ここが登録への唯一の導線なので、ログイン中は常に出す */}
-                    <Link
-                      href={PASSKEY_SETTINGS_PATH}
-                      className={HEADER_MENU_ITEM_CLASS}
-                    >
-                      パスキー
-                    </Link>
-                    <LogoutButton variant="menu" />
-                  </>
-                ) : (
-                  <>
-                    <PasskeyLoginButton variant="menu" />
-                    <LoginButton variant="menu" label="パスワードでログイン" />
-                  </>
-                )}
-              </HeaderMenu>
-            </div>
+            {user && (
+              <span
+                className="ml-auto max-w-24 truncate text-gray-500"
+                title={`${user} でログイン中`}
+              >
+                {user}
+              </span>
+            )}
           </div>
         </header>
         {/* 遷移アニメーションは各ページの <PageTransition> が持つ

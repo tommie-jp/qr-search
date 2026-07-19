@@ -105,7 +105,9 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
           <div
             role="menu"
             onClick={() => setIsOpen(false)}
-            className="absolute right-0 top-full z-40 mt-1 flex w-56 flex-col gap-0.5 rounded border border-gray-300 bg-white p-1 shadow-lg"
+            // 開閉ボタンはヘッダーの左端にあるので、パネルも左寄せにする。
+            // right-0 のままだと画面の外へはみ出す
+            className="absolute left-0 top-full z-40 mt-1 flex w-56 flex-col gap-0.5 rounded border border-gray-300 bg-white p-1 shadow-lg"
           >
             {children}
           </div>
