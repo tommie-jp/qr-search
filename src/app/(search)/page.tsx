@@ -6,18 +6,21 @@ import {
   setViewModeAction,
   trashItemsAction,
 } from "@/app/actions";
+import { BottomActionBar } from "@/components/BottomActionBar";
 import { ItemList } from "@/components/ItemList";
 import { PageTransition } from "@/components/PageTransition";
 import { PendingLink } from "@/components/PendingLink";
 import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
+import { SelectModeProvider } from "@/components/SelectModeProvider";
 import {
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
   COMPACT_ACTION_LINK_CLASS,
   WIDE_RESULTS_CLASS,
 } from "@/components/ui";
+import { isProductionEnv } from "@/lib/appEnv";
 import {
   countTrashedItems,
   countTrashedMatches,
@@ -61,36 +64,48 @@ export default async function Home({ searchParams }: HomeProps) {
     // stickerHost … シールに焼かれたホストは QR_BASE_URL 固定で、
     // アプリを開いているホスト (localhost 等) とは食い違いうる
     <SearchNavProvider sort={sort}>
-      <PageTransition>
-        {/* 縦の間隔は詰める。検索窓・件数・一覧は 1 つの操作面として続けて
-            読む物で、離すほど 1 画面に入る件数が減る */}
-        <div className="space-y-2">
-          <SearchForm
-            initialQuery={query}
-            tags={tags.map((t) => t.tag)}
-            stickerHost={qrStickerHost()}
-          />
+      {/* 選択モードは下部バーの「選択」と一覧 (ItemList) で共有する
+          (docs/31-下部操作バー計画.md §5-2)。両方を包める位置がここしかない */}
+      <SelectModeProvider>
+        <PageTransition>
+          {/* 縦の間隔は詰める。検索窓・件数・一覧は 1 つの操作面として続けて
+              読む物で、離すほど 1 画面に入る件数が減る */}
+          <div className="space-y-2">
+            <SearchForm initialQuery={query} tags={tags.map((t) => t.tag)} />
 
-          {/* 検索本体は Suspense で後送り。初回のドキュメント読み込み
-              (ログイン直後など) は固定部が先に出て、結果は届き次第差し替わる。
-              クライアント遷移 (打鍵での URL 書き換え・ページ送り) では
-              このフォールバックは出ない (App Router は表示済みの内容を保つ)
-              ので、既存の PendingLink のスピナーはそのまま生きる */}
-          <Suspense
-            fallback={
-              <p
-                role="status"
-                className={`${BUSY_NOTICE_CLASS} flex items-center gap-2`}
-              >
-                <span aria-hidden className={BUSY_SPINNER_CLASS} />
-                検索結果を読み込み中…
-              </p>
-            }
-          >
-            <HomeResults query={query} page={page} sort={sort} view={view} />
-          </Suspense>
-        </div>
-      </PageTransition>
+            {/* 検索本体は Suspense で後送り。初回のドキュメント読み込み
+                (ログイン直後など) は固定部が先に出て、結果は届き次第差し替わる。
+                クライアント遷移 (打鍵での URL 書き換え・ページ送り) では
+                このフォールバックは出ない (App Router は表示済みの内容を保つ)
+                ので、既存の PendingLink のスピナーはそのまま生きる */}
+            <Suspense
+              fallback={
+                <p
+                  role="status"
+                  className={`${BUSY_NOTICE_CLASS} flex items-center gap-2`}
+                >
+                  <span aria-hidden className={BUSY_SPINNER_CLASS} />
+                  検索結果を読み込み中…
+                </p>
+              }
+            >
+              <HomeResults query={query} page={page} sort={sort} view={view} />
+            </Suspense>
+          </div>
+
+          {/* 下部バーは Suspense の外に置く。検索結果を待たずに出したい
+              (スキャン・画像検索は結果と無関係に押せるべき) ため。
+              並び順・表示は URL と cookie から決まるので結果も要らない */}
+          <BottomActionBar
+            query={query}
+            sort={sort}
+            view={view}
+            viewAction={setViewModeAction}
+            stickerHost={qrStickerHost()}
+            isProd={isProductionEnv()}
+          />
+        </PageTransition>
+      </SelectModeProvider>
     </SearchNavProvider>
   );
 }
@@ -134,58 +149,30 @@ async function HomeResults({
 
   return (
     <SearchResults className={view === "card" ? WIDE_RESULTS_CLASS : ""}>
-      <div className="flex items-center justify-between">
-        {/* 件数は text-sm、その脇の補助リンクはさらに一段下げて text-xs。
-            両方同じ大きさにすると、件数 (常に見る物) と補助リンク
-            (たまに押す物) の区別が付かなくなる */}
-        <p className="flex items-baseline gap-2 text-sm text-gray-600">
-          <span>
-            {query ? `「${query}」の検索結果: ` : "すべて: "}
-            {result.total} 件
-          </span>
-          <Link href="/docs/search" className="text-xs text-blue-600 underline">
-            検索ヘルプ
+      {/* 並び順は下部バーへ移したので、この行は件数と補助リンクだけになった
+          (docs/31-下部操作バー計画.md §2)。
+          件数は text-sm、その脇の補助リンクはさらに一段下げて text-xs。
+          両方同じ大きさにすると、件数 (常に見る物) と補助リンク
+          (たまに押す物) の区別が付かなくなる */}
+      <p className="flex items-baseline gap-2 text-sm text-gray-600">
+        <span>
+          {query ? `「${query}」の検索結果: ` : "すべて: "}
+          {result.total} 件
+        </span>
+        <Link href="/docs/search" className="text-xs text-blue-600 underline">
+          検索ヘルプ
+        </Link>
+        {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
+        {trashCount > 0 && (
+          <Link
+            href="/trash"
+            transitionTypes={["nav-forward"]}
+            className="text-xs text-blue-600 underline"
+          >
+            ゴミ箱 ({trashCount})
           </Link>
-          {/* ゴミ箱が空のときは出さない (普段は目に入らないように) */}
-          {trashCount > 0 && (
-            <Link
-              href="/trash"
-              transitionTypes={["nav-forward"]}
-              className="text-xs text-blue-600 underline"
-            >
-              ゴミ箱 ({trashCount})
-            </Link>
-          )}
-        </p>
-        {/* 並び替え・ページ送りは同じルートの searchParams だけを変える
-                遷移で loading.tsx の骨組みが出ないため、リンク側でスピナーを出す */}
-        <p className="flex gap-1">
-          {sort === "itemNo" ? (
-            <span className={`${COMPACT_ACTION_LINK_CLASS} font-bold text-gray-900`}>
-              番号順
-            </span>
-          ) : (
-            <PendingLink
-              href={buildSearchUrl(query, 1, "itemNo")}
-              className={COMPACT_ACTION_LINK_CLASS}
-            >
-              番号順
-            </PendingLink>
-          )}
-          {sort === "updated" ? (
-            <span className={`${COMPACT_ACTION_LINK_CLASS} font-bold text-gray-900`}>
-              更新順
-            </span>
-          ) : (
-            <PendingLink
-              href={buildSearchUrl(query, 1, "updated")}
-              className={COMPACT_ACTION_LINK_CLASS}
-            >
-              更新順
-            </PendingLink>
-          )}
-        </p>
-      </div>
+        )}
+      </p>
 
       <PropsTable rows={props.rows} omitted={props.omitted} />
 
@@ -196,7 +183,6 @@ async function HomeResults({
         sort={sort}
         action={bulkTagAction}
         view={view}
-        viewAction={setViewModeAction}
         trashAction={trashItemsAction}
         registerHref={registerHref}
         trashedMatches={trashedMatches}

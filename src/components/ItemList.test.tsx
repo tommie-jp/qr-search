@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import type { Item } from "@/generated/prisma/client";
 import type { ViewMode } from "@/lib/viewMode";
 import { ItemList } from "./ItemList";
+import { SelectModeProvider } from "./SelectModeProvider";
 
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
@@ -30,19 +31,22 @@ const render = (
   trashedMatches = 0,
   view: ViewMode = "compact",
 ) =>
+  // 選択モードは下部バーと共有する context なので、単体でも provider が要る
+  // (docs/31-下部操作バー計画.md §5-2)
   renderToStaticMarkup(
-    <ItemList
-      items={items}
-      query={query}
-      page={1}
-      sort="updated"
-      action={noop}
-      view={view}
-      viewAction={noop}
-      trashAction={noop}
-      registerHref={registerHref}
-      trashedMatches={trashedMatches}
-    />,
+    <SelectModeProvider>
+      <ItemList
+        items={items}
+        query={query}
+        page={1}
+        sort="updated"
+        action={noop}
+        view={view}
+        trashAction={noop}
+        registerHref={registerHref}
+        trashedMatches={trashedMatches}
+      />
+    </SelectModeProvider>,
   );
 
 test("各アイテムを行として描画する", () => {
@@ -54,10 +58,9 @@ test("各アイテムを行として描画する", () => {
   expect(html).toContain('href="/item/4502"');
 });
 
-test("初期表示は選択トグルを出し、ツールバー/チェックボックスは出さない", () => {
+test("選択モードに入るまではツールバーもチェックボックスも出さない", () => {
+  // 選択モードの入り口 (「選択」ボタン) は下部バーが持つので、ここには無い
   const html = render([makeItem({ itemNo: "4951" })]);
-  expect(html).toContain("選択");
-  // 選択モードに入るまではツールバーもチェックボックスも無い
   expect(html).not.toContain("件を選択中");
   expect(html).not.toContain('type="checkbox"');
 });
@@ -115,16 +118,9 @@ test("ゴミ箱の案内と「新規登録」は共存する (復元か新規か
   expect(html).toContain("新規登録");
 });
 
-// 表示モード (docs/23-検索結果表示モード計画.md)
-
-test("表示モードの切替を出し、いま選ばれている側が判る", () => {
-  const html = render([makeItem()], "", null, 0, "compact");
-  expect(html).toContain("表示");
-  expect(html).toContain('value="compact"');
-  expect(html).toContain('value="card"');
-  // 押さなくても現在のモードが見える (ドロップダウンにしない理由)
-  expect(html).toContain('value="compact" aria-pressed="true"');
-});
+// 表示モード (docs/23-検索結果表示モード計画.md)。
+// 切替そのものは下部バーへ移したので (BottomActionBar.test.tsx)、
+// ここでは受け取ったモードで描き分けられることだけを見る
 
 test("カード表示はカラム数を指定せず画面幅に任せる", () => {
   // スマホ 1 列 / PC 2 列以上は auto-fill が決める。モードでカラム数を

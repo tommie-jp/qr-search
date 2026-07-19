@@ -7,12 +7,8 @@ import type { Sort } from "@/lib/validation";
 import { DEFAULT_VIEW_MODE, type ViewMode } from "@/lib/viewMode";
 import { BulkTagToolbar } from "./BulkTagToolbar";
 import { ItemRow } from "./ItemRow";
-import { ViewModeToggle } from "./ViewModeToggle";
-import {
-  ACTION_LINK_CLASS,
-  COMPACT_ACTION_LINK_CLASS,
-  PRIMARY_BUTTON_CLASS,
-} from "./ui";
+import { useSelectMode } from "./SelectModeProvider";
+import { ACTION_LINK_CLASS, PRIMARY_BUTTON_CLASS } from "./ui";
 
 // bulkTagAction をそのまま import すると db.ts (DATABASE_URL 必須) まで巻き込み
 // テストが動かないため、サーバーアクションは page.tsx から prop で受け取る。
@@ -25,10 +21,9 @@ interface ItemListProps {
   page: number;
   sort: Sort;
   action: BulkTagAction;
-  // 表示モードと、その切替 (cookie を書くので prop で受け取る)。
-  // docs/23-検索結果表示モード計画.md
+  // 表示モード (docs/23-検索結果表示モード計画.md)。切替そのものは
+  // 下部バーが持つので、ここは受け取って描き分けるだけ
   view?: ViewMode;
-  viewAction: BulkTagAction;
   // 選択したノートをゴミ箱へ入れる (docs/12-ゴミ箱計画.md §5)
   trashAction: BulkTagAction;
   // 0 件の検索語をタグにした新規ノートの編集ページ。タグにできない語
@@ -89,8 +84,8 @@ function emptyState(
   );
 }
 
-// 検索結果リスト。通常は今までどおりの表示 + 「選択」トグル。選択モードでは
-// 各行にチェックボックス、上部に一括タグ付け/削除のツールバーを出す。
+// 検索結果リスト。選択モードでは各行にチェックボックス、上部に一括タグ付け/
+// 削除のツールバーを出す。モードの入り切りは下部バーの「選択」が持つ。
 export function ItemList({
   items,
   query,
@@ -98,13 +93,25 @@ export function ItemList({
   sort,
   action,
   view = DEFAULT_VIEW_MODE,
-  viewAction,
   trashAction,
   registerHref,
   trashedMatches,
 }: ItemListProps) {
-  const [selectMode, setSelectMode] = useState(false);
+  // 選択モードの入り切りは下部バーが持つ (docs/31-下部操作バー計画.md §5-2)。
+  // 選んだ番号の Set はここに残す — バーは「何件選ばれたか」を知る必要がなく、
+  // 持ち上げても使い道がない
+  const { selectMode, exit } = useSelectMode();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  // 選択モードを抜けたら選択を捨てる。バーから抜けることもあるので、
+  // 抜ける操作それぞれに後始末を配らず、モードの変化 1 か所で受ける
+  const [wasSelectMode, setWasSelectMode] = useState(selectMode);
+  if (selectMode !== wasSelectMode) {
+    setWasSelectMode(selectMode);
+    if (!selectMode) {
+      setSelected(new Set());
+    }
+  }
 
   const toggle = (itemNo: string) =>
     setSelected((prev) => {
@@ -116,11 +123,6 @@ export function ItemList({
       }
       return next;
     });
-
-  const exitSelect = () => {
-    setSelectMode(false);
-    setSelected(new Set());
-  };
 
   // 小 … 今までどおりの 1 カラムの一覧 (区切り線で仕切る)。
   // 大 … カードを敷き詰めるグリッド。**カラム数は指定しない**。auto-fill に
@@ -139,24 +141,12 @@ export function ItemList({
 
   if (!selectMode) {
     return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <ViewModeToggle view={view} action={viewAction} />
-          <button
-            type="button"
-            onClick={() => setSelectMode(true)}
-            className={COMPACT_ACTION_LINK_CLASS}
-          >
-            選択
-          </button>
-        </div>
-        <ul className={listClass}>
-          {items.map((item) => (
-            <ItemRow key={item.itemNo} item={item} view={view} />
-          ))}
-          {emptyState(items, query, registerHref, trashedMatches, view)}
-        </ul>
-      </div>
+      <ul className={listClass}>
+        {items.map((item) => (
+          <ItemRow key={item.itemNo} item={item} view={view} />
+        ))}
+        {emptyState(items, query, registerHref, trashedMatches, view)}
+      </ul>
     );
   }
 
@@ -171,7 +161,7 @@ export function ItemList({
         trashAction={trashAction}
         onSelectAll={() => setSelected(new Set(items.map((i) => i.itemNo)))}
         onClear={() => setSelected(new Set())}
-        onCancel={exitSelect}
+        onCancel={exit}
       />
       <ul className={listClass}>
         {items.map((item) => (

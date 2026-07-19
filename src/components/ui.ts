@@ -38,7 +38,7 @@ export const ACTION_LINK_CLASS = `${ACTION_LINK_SKIN} min-h-11 px-2`;
 // 一覧は「並んだ物を見比べる」画面で、操作ボタンは主役ではない。44px の
 // 押しやすさより 1 画面に入る件数を優先する。逆に編集画面などは「狙って
 // 押す」場所なので 44px のまま — だから共有クラスを縮めず別に切っている。
-// 使う場所は SearchForm / ItemList / ViewModeToggle / (search)/page.tsx だけ
+// 使う場所は SearchForm / ItemList / (search)/page.tsx だけ
 const COMPACT_SIZE = "min-h-9 text-sm";
 
 export const COMPACT_PRIMARY_BUTTON_CLASS = `${PRIMARY_SKIN} ${COMPACT_SIZE} px-4`;

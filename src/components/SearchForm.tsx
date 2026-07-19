@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { PendingLink } from "@/components/PendingLink";
 import { useSearchNav } from "@/components/SearchNav";
@@ -8,7 +7,6 @@ import {
   COMPACT_ICON_BUTTON_CLASS,
   COMPACT_INPUT_CLASS,
   COMPACT_PRIMARY_BUTTON_CLASS,
-  COMPACT_SECONDARY_BUTTON_CLASS,
 } from "@/components/ui";
 import {
   applyCompletion,
@@ -21,9 +19,6 @@ import {
 interface SearchFormProps {
   initialQuery: string;
   tags: string[];
-  // QR シールに焼かれている URL のホスト (QR_BASE_URL 由来)。
-  // process.env はクライアントに渡らないのでサーバから降ろす
-  stickerHost: string;
 }
 
 interface Dropdown {
@@ -37,29 +32,15 @@ const MAX_CANDIDATES = 8;
 // 打ち終わりを待つ間隔。短すぎると 1 文字ごとに DB を引き、長いと反応が鈍い
 const SEARCH_DEBOUNCE_MS = 300;
 
-// スキャナはカメラと読み取りエンジン (wasm 約 1MB) を抱えるので、
-// ボタンを押すまで一切読み込まない (docs/09-スキャン計画.md §2)。
-// ssr: false … camera / document を触るのでサーバでは描画できない
-const ScannerModal = dynamic(
-  () => import("@/components/ScannerModal").then((m) => m.ScannerModal),
-  { ssr: false },
-);
-
-// 画像検索は埋め込みモデル (transformers.js + 数十MB) と Worker を抱えるので、
-// スキャナと同じくボタンを押すまで読み込まない (docs/25-画像検索計画.md)。
-const ImageSearchModal = dynamic(
-  () => import("@/components/ImageSearchModal").then((m) => m.ImageSearchModal),
-  { ssr: false },
-);
-
 // 検索窓。素の GET フォームのまま、タグ (#…) を打ちかけたときだけ
 // 候補ドロップダウンで補完を助ける (JS 無効でも検索自体は動く)。
-export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps) {
+//
+// スキャナと画像検索のモーダルは以前ここが持っていたが、ボタンが下部バーへ
+// 移ったので所有権も BottomActionBar へ渡した (docs/31-下部操作バー計画.md §5-1)。
+export function SearchForm({ initialQuery, tags }: SearchFormProps) {
   const { navigate } = useSearchNav();
   const [query, setQuery] = useState(initialQuery);
   const [dropdown, setDropdown] = useState<Dropdown | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [isImageSearching, setIsImageSearching] = useState(false);
   // 入力中かどうか (URL の反映を止める判断に使う)
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -207,15 +188,14 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
   };
 
   return (
-    // ボタンが 4 つに増えて (スキャン・画像検索・検索・+)、狭い画面では
-    // 一列に収まらなくなった。flex-wrap + 入力窓の min-w で「入りきらなければ
-    // ボタン列を次の行へ送る」ようにする。折り返さないままだと入力窓が
-    // 潰されて (375px で実測 26px)、横スクロールまで出る
+    // スキャン・画像検索が下部バーへ抜けてボタンは 2 つ (検索・+) になったので、
+    // 320px でも 1 行に収まり折り返しは要らなくなった。入力窓の min-w だけは
+    // 残す (これが無いと窓が潰れて横スクロールが出る)
     <form
       method="GET"
       action="/"
       onSubmit={handleSubmit}
-      className="relative flex flex-wrap items-start gap-1.5"
+      className="relative flex items-start gap-1.5"
     >
       <div className="relative min-w-40 flex-1">
         <input
@@ -277,27 +257,10 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
         )}
       </div>
       {/* ボタンは 1 つの塊にまとめる。塊にしないと狭い画面で
-          「スキャンだけ入力窓と同じ行に残る」散らかった並びになる。
-          塊の中でも折り返すのは、320px ではボタン 4 つが一列に収まらず、
-          折り返せないと横スクロールが出るため (実測 53px はみ出す) */}
-      <div className="flex flex-wrap gap-1.5">
-        {/* カメラ非対応の環境でも隠さない。押したとき理由を出す方が原因を追える
-            (docs/09-スキャン計画.md §6) */}
-        <button
-          type="button"
-          onClick={() => setIsScanning(true)}
-          className={`whitespace-nowrap ${COMPACT_SECONDARY_BUTTON_CLASS}`}
-        >
-          スキャン
-        </button>
-        {/* 部品を映して登録済みの写真と照合する (docs/25-画像検索計画.md) */}
-        <button
-          type="button"
-          onClick={() => setIsImageSearching(true)}
-          className={`whitespace-nowrap ${COMPACT_SECONDARY_BUTTON_CLASS}`}
-        >
-          画像検索
-        </button>
+          「検索だけ入力窓と同じ行に残る」散らかった並びになる。
+          スキャン・画像検索は下部バーへ移したので残りは 2 つ
+          (docs/31-下部操作バー計画.md §2) */}
+      <div className="flex gap-1.5">
         {/* 打つそばから検索するので普段は押さなくてよいが、JS 無効時の唯一の
             検索手段であり、確定の合図としても残す */}
         <button
@@ -327,15 +290,6 @@ export function SearchForm({ initialQuery, tags, stickerHost }: SearchFormProps)
           +
         </PendingLink>
       </div>
-      {isScanning && (
-        <ScannerModal
-          stickerHost={stickerHost}
-          onClose={() => setIsScanning(false)}
-        />
-      )}
-      {isImageSearching && (
-        <ImageSearchModal onClose={() => setIsImageSearching(false)} />
-      )}
     </form>
   );
 }
