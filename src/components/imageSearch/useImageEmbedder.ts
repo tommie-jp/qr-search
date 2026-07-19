@@ -7,7 +7,7 @@
 // 書いた。再試行するかどうかの判断は embedderLoadState の純関数が持つ。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { logDiagEvent, readMemorySnapshot } from '@/lib/diagLog'
+import { logDiagEvent, logEnvironmentOnce, readMemorySnapshot } from '@/lib/diagLog'
 import {
   INITIAL_EMBEDDER_LOAD_STATE,
   needsWasmRespawn,
@@ -83,6 +83,7 @@ export function useImageEmbedder(): ImageEmbedder {
 
       // どちらの経路で組み始めたかを実機調査用に残す (docs/30 §6)。
       // 失敗は console.warn (下) が拾うので、ここは開始の印だけでよい
+      logEnvironmentOnce()
       logDiagEvent(
         `[画像検索] Worker 起動 (${forceWasm ? 'WASM 強制' : 'デバイス自動選択'})`,
       )

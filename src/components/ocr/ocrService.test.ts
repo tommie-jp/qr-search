@@ -17,6 +17,7 @@ vi.mock('@/lib/diagLog', () => ({
   logDiagEvent: (text: string) => {
     diag.events.push(text)
   },
+  logEnvironmentOnce: () => {},
 }))
 
 // メインスレッド・フォールバックは動的 import されるので差し替えて記録する

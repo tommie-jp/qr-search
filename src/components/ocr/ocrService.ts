@@ -27,7 +27,7 @@
 //
 // このモジュールはブラウザでのみ呼ぶ。サーバ側からは絶対に import しないこと。
 
-import { logDiagEvent } from '@/lib/diagLog'
+import { logDiagEvent, logEnvironmentOnce } from '@/lib/diagLog'
 import type { FromOcrWorker, ToOcrWorker } from './ocrWorkerMessages'
 
 // 「モデルの準備が終わった」の合図。バイト計は 99 で頭打ちにしてあるので、
@@ -209,6 +209,9 @@ function handleMessage(msg: FromOcrWorker): void {
 // Worker を起こし、待っている要求を出し直す (作り直し時)。
 function spawnWorker(): void {
   worker?.terminate()
+  // どんな端末かを 1 度だけ添える (32bit ブラウザの特定に丸一日かかった。
+  // ビット数・RAM が /logs に出ていれば一目で分かった)
+  logEnvironmentOnce()
   logDiagEvent('[OCR] Worker 起動')
   spawnedAt = performance.now()
   handledLoadError = false
