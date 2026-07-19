@@ -108,6 +108,21 @@ function elapsedSec(): string {
   return ((performance.now() - spawnedAt) / 1000).toFixed(1)
 }
 
+// 復旧 (作り直し / フォールバック) までの待ち時間。
+//
+// **すぐに次を試してはいけない** (実測: constrained な Windows Chrome)。
+// terminate した realm の wasm メモリの回収は非同期で、失敗直後に次の realm で
+// OpenCV + ORT を積むと、死んだ realm のぶんがまだ返っておらず同じ確保失敗を
+// 繰り返す。実機ログでは 6 秒間に realm を 3 つ渡り歩いて全滅した
+// (フォールバックのメインスレッドまで巻き添え)。待てば返る見込みがある —
+// 同じ機械で v0.18.0 のメインスレッド実行 (連続確保なし) は動いていた
+const RESPAWN_DELAY_MS = 1_000
+const FALLBACK_DELAY_MS = 3_000
+
+// 進行中の復旧待ちタイマー。disposeOcr (画面離脱) で取り消す —
+// 放っておくと、誰も待っていないのにモデルの取得が始まる
+let recoveryTimer: ReturnType<typeof setTimeout> | null = null
+
 // Worker の初期化失敗 (load-error / 起動不能) を三段構えで進める。
 function handleInitFailure(message: string): void {
   if (handledLoadError) {
@@ -116,27 +131,32 @@ function handleInitFailure(message: string): void {
   handledLoadError = true
   console.warn('OCR モデルを Worker で読み込めませんでした', message)
 
-  if (!retriedInit) {
-    retriedInit = true
-    logDiagEvent('[OCR] 読み込み失敗 → Worker を作り直して再試行')
-    spawnWorker()
-    return
-  }
-  switchToFallback()
-}
-
-// メインスレッド・フォールバックへ切り替え、待っている要求を流し込む。
-function switchToFallback(): void {
-  useFallback = true
-  logDiagEvent('[OCR] Worker で組めないためメインスレッドで実行 (フォールバック)')
+  // まず捨てて、メモリの回収を始めさせる (次を積むのは待ってから)
   worker?.terminate()
   worker = null
   spawnedAt = null
-  const entries = [...pending.values()]
-  pending.clear()
-  for (const entry of entries) {
-    runFallback(entry.blob).then(entry.resolve, entry.reject)
+
+  if (!retriedInit) {
+    retriedInit = true
+    logDiagEvent('[OCR] 読み込み失敗 → 1秒待って Worker を作り直す')
+    recoveryTimer = setTimeout(() => {
+      recoveryTimer = null
+      spawnWorker()
+    }, RESPAWN_DELAY_MS)
+    return
   }
+
+  useFallback = true
+  logDiagEvent('[OCR] Worker で組めない → 3秒待ってメインスレッドで実行 (フォールバック)')
+  recoveryTimer = setTimeout(() => {
+    recoveryTimer = null
+    // 待っている間に増えた要求も含めて流し込む
+    const entries = [...pending.values()]
+    pending.clear()
+    for (const entry of entries) {
+      runFallback(entry.blob).then(entry.resolve, entry.reject)
+    }
+  }, FALLBACK_DELAY_MS)
 }
 
 // フォールバック実行 1 件。進捗 % は同じ購読チャネルへ流し、結末で
@@ -255,15 +275,20 @@ export function preloadOcr(): void {
 // 実機調査で「画像検索の前に OCR は本当に死んでいたか」を /logs で
 // 証明するのに要る。
 export function disposeOcr(reason: string): void {
-  if (!worker) {
-    return
+  // 復旧待ちも取り消す。放っておくと、誰も待っていないのに
+  // モデルの取得 (Worker 作り直し / フォールバック) が始まる
+  if (recoveryTimer !== null) {
+    clearTimeout(recoveryTimer)
+    recoveryTimer = null
   }
-  logDiagEvent(`[OCR] Worker 破棄 (${reason})`)
-  worker.terminate()
-  worker = null
-  ready = false
-  spawnedAt = null
-  lastNotifiedPercent = null
+  if (worker) {
+    logDiagEvent(`[OCR] Worker 破棄 (${reason})`)
+    worker.terminate()
+    worker = null
+    ready = false
+    spawnedAt = null
+    lastNotifiedPercent = null
+  }
   rejectPending('OCR を終了しました')
 }
 
@@ -273,6 +298,15 @@ export function disposeOcr(reason: string): void {
 // 認識は Worker の中で走るので、メインスレッド (入力・描画) は塞がらない
 // (フォールバックに落ちた環境を除く)。
 export function ocrImageToQuote(blob: Blob): Promise<string> {
+  // 復旧待ちの間に来た要求は積むだけにする (Worker を今すぐ起こすと、
+  // メモリの回収を待つという復旧の意味が消える)。作り直し時の出し直し /
+  // フォールバックの流し込みが拾ってくれる
+  if (recoveryTimer !== null) {
+    const id = nextId++
+    return new Promise<string>((resolve, reject) => {
+      pending.set(id, { resolve, reject, blob })
+    })
+  }
   if (useFallback) {
     return runFallback(blob)
   }

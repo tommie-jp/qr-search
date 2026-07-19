@@ -58,3 +58,22 @@ export function needsWasmRespawn(
 ): boolean {
   return prev.phase !== 'retrying-wasm' && next.phase === 'retrying-wasm'
 }
+
+// メモリが逼迫した端末とみなす JS ヒープ上限 (MB)。通常の x64 Chrome は
+// 約 4GB。実測した constrained な Windows Chrome は 1120MB で、WebGPU の
+// 初回試行 (asyncify ランタイム + ヒープ) の途中で OOM した
+export const CONSTRAINED_HEAP_LIMIT_MB = 2048
+
+// 1 回目から WASM で組むべきか。
+//
+// WebGPU → 失敗 → WASM の再試行は普通の端末では無害だが、ヒープ上限が
+// 小さい端末では **WebGPU の試行自体が OOM の引き金**になる (実測:
+// DevTools が「メモリ不足クラッシュの発生前に一時停止」で止めた先は
+// WebGPU 用 asyncify ランタイムのヒープ構築だった)。数値が取れて、かつ
+// 小さいときだけ最初から WASM にする。iPhone (WebKit) は数値が取れない
+// (null) ので従来どおり WebGPU から試す — そちらは WebGPU が正常に動く
+export function shouldStartWithWasm(
+  snapshot: { limitMB: number } | null,
+): boolean {
+  return snapshot !== null && snapshot.limitMB < CONSTRAINED_HEAP_LIMIT_MB
+}

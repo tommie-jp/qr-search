@@ -3,6 +3,7 @@ import {
   INITIAL_EMBEDDER_LOAD_STATE,
   needsWasmRespawn,
   reduceEmbedderLoad,
+  shouldStartWithWasm,
   type EmbedderLoadState,
 } from './embedderLoadState'
 
@@ -114,5 +115,30 @@ describe('needsWasmRespawn', () => {
   test('does not ask when the first load succeeds', () => {
     const ready = reduceEmbedderLoad(INITIAL_EMBEDDER_LOAD_STATE, { type: 'ready' })
     expect(needsWasmRespawn(INITIAL_EMBEDDER_LOAD_STATE, ready)).toBe(false)
+  })
+})
+
+describe('shouldStartWithWasm', () => {
+  test('starts with WASM on a heap-constrained device', () => {
+    // Arrange: 実測した constrained な Windows Chrome (上限 1120MB)。
+    // WebGPU の試行自体が OOM の引き金になる
+    const snapshot = { limitMB: 1120 }
+
+    // Act / Assert
+    expect(shouldStartWithWasm(snapshot)).toBe(true)
+  })
+
+  test('tries WebGPU first on a normal desktop', () => {
+    // Arrange: 通常の x64 Chrome (上限 ~4GB)
+    const snapshot = { limitMB: 4192 }
+
+    // Act / Assert
+    expect(shouldStartWithWasm(snapshot)).toBe(false)
+  })
+
+  test('tries WebGPU first when the heap limit is unknown (iPhone)', () => {
+    // Arrange: WebKit は performance.memory を持たない。iPhone の WebGPU は
+    // 正常に動くので、数値が無いだけで WASM に倒してはいけない
+    expect(shouldStartWithWasm(null)).toBe(false)
   })
 })

@@ -211,6 +211,9 @@ export default function MemoEditorInner({
     } catch (e) {
       replaceToken(view, insertion, "");
       setError(e instanceof Error ? e.message : String(e));
+      // 「準備しています…」を畳む。残すとエラーと並んで
+      // 「まだ待てば直る」と誤解される (実機で確認)
+      setOcrNote(null);
     } finally {
       setOcrCount((n) => n - 1);
     }

@@ -8,7 +8,7 @@
 // Worker は jsdom に無いので差し替える。OCR の中身 (SDK・モデル) は
 // ocrWorker.ts / ocrMainFallback.ts 側なので、ここでは一切読み込まない。
 
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { FromOcrWorker, ToOcrWorker } from './ocrWorkerMessages'
 
 // 診断イベント (diagLog) は fetch へ直行するのでテストでは黙らせて記録する
@@ -147,25 +147,72 @@ describe('ocrImageToQuote (正常系)', () => {
 })
 
 describe('三段構え (Worker 失敗 → 作り直し → メインスレッド)', () => {
+  // 復旧は待ってから進む (terminate した realm のメモリ回収を待つ) ので、
+  // タイマーを進めて次の段へ送る
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   test('respawns a fresh worker on the first load failure and re-sends the request', async () => {
     // Arrange
     const ocr = await loadService()
     const quote = ocr.ocrImageToQuote(new Blob())
     const [request] = workers[0].ocrRequests()
 
-    // Act: 初期化失敗 → 作り直し
+    // Act: 初期化失敗 → 前の Worker は即捨てる (メモリ回収を始めさせる)
     workers[0].emit({ type: 'load-error', message: 'boom' })
 
-    // Assert: 新しい Worker に同じ id で出し直され、要求はまだ生きている
-    expect(workers).toHaveLength(2)
+    // Assert: 待ちの間はまだ作り直さない
     expect(workers[0].terminate).toHaveBeenCalled()
-    expect(workers[1].ocrRequests().map((m) => m.id)).toEqual([request.id])
+    expect(workers).toHaveLength(1)
 
-    // Act: 作り直した Worker が成功する
+    // Act: 待ちが明けると、新しい Worker に同じ id で出し直される
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(workers).toHaveLength(2)
+    expect(workers[1].ocrRequests().map((m) => m.id)).toEqual([request.id])
     workers[1].emit({ type: 'result', id: request.id, quote: '> 救えた' })
 
     // Assert
     await expect(quote).resolves.toBe('> 救えた')
+  })
+
+  test('queues requests made during the recovery wait', async () => {
+    // Arrange: 待ちの間に来た要求で Worker を今すぐ起こすと、
+    // メモリの回収を待つ意味が消える
+    const ocr = await loadService()
+    const first = ocr.ocrImageToQuote(new Blob())
+    workers[0].emit({ type: 'load-error', message: 'boom' })
+
+    // Act: 待ちの間の 2 本目
+    const second = ocr.ocrImageToQuote(new Blob())
+    expect(workers).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    // Assert: 明けた時点で両方出し直される
+    const ids = workers[1].ocrRequests().map((m) => m.id)
+    expect(ids).toHaveLength(2)
+    workers[1].emit({ type: 'result', id: ids[0], quote: '1 本目' })
+    workers[1].emit({ type: 'result', id: ids[1], quote: '2 本目' })
+    await expect(first).resolves.toBe('1 本目')
+    await expect(second).resolves.toBe('2 本目')
+  })
+
+  test('cancels a pending recovery when the screen is left', async () => {
+    // Arrange: 誰も待っていないのにモデルの取得が始まるのを防ぐ
+    const ocr = await loadService()
+    const abandoned = expectRejection(ocr.ocrImageToQuote(new Blob()))
+    workers[0].emit({ type: 'load-error', message: 'boom' })
+
+    // Act
+    ocr.disposeOcr('編集画面を離脱')
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    // Assert: 作り直しは起きない
+    expect(workers).toHaveLength(1)
+    await abandoned
   })
 
   test('ignores a duplicated load failure from the same worker', async () => {
@@ -176,6 +223,7 @@ describe('三段構え (Worker 失敗 → 作り直し → メインスレッド
     // Act
     workers[0].emit({ type: 'load-error', message: 'boom' })
     workers[0].emit({ type: 'load-error', message: 'boom' })
+    await vi.advanceTimersByTimeAsync(10_000)
 
     // Assert: 作り直しは 1 回だけ (2 重に作ると 21MB の取得が並走する)
     expect(workers).toHaveLength(2)
@@ -186,16 +234,18 @@ describe('三段構え (Worker 失敗 → 作り直し → メインスレッド
     const ocr = await loadService()
     const quote = ocr.ocrImageToQuote(new Blob())
 
-    // Act: 1 度目の失敗 → 作り直し、2 度目の失敗 → フォールバック
+    // Act: 1 度目の失敗 → (1秒) 作り直し、2 度目の失敗 → (3秒) フォールバック
     workers[0].emit({ type: 'load-error', message: 'boom' })
+    await vi.advanceTimersByTimeAsync(1_000)
     workers[1].emit({ type: 'load-error', message: 'boom again' })
+    await vi.advanceTimersByTimeAsync(3_000)
 
     // Assert: 待っていた要求はメインスレッドで処理される
     await expect(quote).resolves.toBe('> フォールバックの結果')
     expect(fallback.calls).toHaveLength(1)
     expect(workers[1].terminate).toHaveBeenCalled()
     expect(diag.events).toContain(
-      '[OCR] Worker で組めないためメインスレッドで実行 (フォールバック)',
+      '[OCR] Worker で組めない → 3秒待ってメインスレッドで実行 (フォールバック)',
     )
   })
 
@@ -204,7 +254,9 @@ describe('三段構え (Worker 失敗 → 作り直し → メインスレッド
     const ocr = await loadService()
     const first = ocr.ocrImageToQuote(new Blob())
     workers[0].emit({ type: 'load-error', message: 'boom' })
+    await vi.advanceTimersByTimeAsync(1_000)
     workers[1].emit({ type: 'load-error', message: 'boom again' })
+    await vi.advanceTimersByTimeAsync(3_000)
     await first
 
     // Act: 次の要求
@@ -222,7 +274,9 @@ describe('三段構え (Worker 失敗 → 作り直し → メインスレッド
 
     // Act
     workers[0].onerror?.({ message: 'Importing a module script failed.' } as ErrorEvent)
+    await vi.advanceTimersByTimeAsync(1_000)
     workers[1].onerror?.({ message: 'Importing a module script failed.' } as ErrorEvent)
+    await vi.advanceTimersByTimeAsync(3_000)
 
     // Assert
     await expect(quote).resolves.toBe('> フォールバックの結果')
@@ -235,13 +289,18 @@ describe('三段構え (Worker 失敗 → 作り直し → メインスレッド
     const seen: number[] = []
     ocr.subscribeModelProgress((p) => seen.push(p))
     const quote = ocr.ocrImageToQuote(new Blob())
+    // タイマーを進める間に reject が確定するので、先に待ち受けを張る
+    // (張らないと未処理の rejection として警告される)
+    const rejection = expect(quote).rejects.toThrow('Out of memory')
 
     // Act
     workers[0].emit({ type: 'load-error', message: 'boom' })
+    await vi.advanceTimersByTimeAsync(1_000)
     workers[1].emit({ type: 'load-error', message: 'boom again' })
+    await vi.advanceTimersByTimeAsync(3_000)
 
     // Assert
-    await expect(quote).rejects.toThrow('Out of memory')
+    await rejection
     expect(seen).toContain(ocr.MODEL_READY_PERCENT)
   })
 })
@@ -330,6 +389,13 @@ describe('disposeOcr', () => {
 })
 
 describe('subscribeModelProgress', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   test('relays download percentages from the worker', async () => {
     // Arrange
     const ocr = await loadService()
@@ -384,6 +450,7 @@ describe('subscribeModelProgress', () => {
 
     // Act
     workers[0].emit({ type: 'load-error', message: 'boom' })
+    await vi.advanceTimersByTimeAsync(1_000)
     workers[1].emit({ type: 'model-progress', percent: 10 })
     workers[1].emit({ type: 'model-progress', percent: 99 })
 

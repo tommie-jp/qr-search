@@ -7,11 +7,12 @@
 // 書いた。再試行するかどうかの判断は embedderLoadState の純関数が持つ。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { logDiagEvent } from '@/lib/diagLog'
+import { logDiagEvent, readMemorySnapshot } from '@/lib/diagLog'
 import {
   INITIAL_EMBEDDER_LOAD_STATE,
   needsWasmRespawn,
   reduceEmbedderLoad,
+  shouldStartWithWasm,
   type EmbedderLoadState,
 } from './embedderLoadState'
 import type { FromEmbedWorker, ToEmbedWorker } from './workerMessages'
@@ -138,7 +139,11 @@ export function useImageEmbedder(): ImageEmbedder {
       worker.postMessage({ type: 'preload', forceWasm } satisfies ToEmbedWorker)
     }
 
-    spawn(false)
+    // ヒープ上限が小さい端末 (実測: constrained な Windows Chrome) では
+    // 最初から WASM で組み、WebGPU の試行が OOM の引き金になるのを避ける。
+    // 判断は shouldStartWithWasm (純関数)。数値が取れない端末 (iPhone) は
+    // 従来どおり WebGPU から試す
+    spawn(shouldStartWithWasm(readMemorySnapshot()))
 
     return () => {
       disposed = true
