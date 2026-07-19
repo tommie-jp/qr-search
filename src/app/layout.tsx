@@ -99,7 +99,9 @@ export default async function RootLayout({
             isProd ? "border-gray-200 bg-white/95" : "border-pink-300 bg-pink-100/95"
           }`}
         >
-          <div className="mx-auto flex max-w-2xl items-center gap-2 px-safe pt-safe pb-3">
+          {/* 帯は低く抑える。ボタン側が min-h-11 (44px) を負のマージンで
+              はみ出させているので、見た目 40px でもタップ目標は 44px を保つ */}
+          <div className="mx-auto flex max-w-2xl items-center gap-2 px-safe pt-safe">
             {/* 項目はハンバーガーメニューへ畳む (docs/11-アプリ的UIUX計画.md §6)。
                 横に並べていたときは iPhone の幅で 1 文字ずつ折り返れて崩れた。
                 左端に置くのは、片手持ちの親指が届く側だから */}
@@ -149,7 +151,16 @@ export default async function RootLayout({
               )}
             </HeaderMenu>
             <StandaloneBackButton />
-            <Link href="/" className="text-lg font-bold">
+            {/* アイコンもホームリンクに含める。押せる的が広がるうえ、
+                アイコンとサイト名が別々の当たり判定に割れるのを避ける。
+                /icon.svg は app/icon.svg が規約で配信するもの (PNG より
+                拡大に強い)。alt は空 — 隣の文字が同じことを言っている */}
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-lg font-bold"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/icon.svg" alt="" className="size-6 rounded-[5px]" />
               {SITE_NAME}
             </Link>
             <span className="text-xs text-gray-400">v{pkg.version}</span>

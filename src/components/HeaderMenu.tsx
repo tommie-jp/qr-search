@@ -65,7 +65,9 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
   }, [isOpen]);
 
   return (
-    <div className="relative">
+    // flex にしておくこと。block のままだとボタンは行ボックスに乗るため、
+    // 下の負マージンが高さに効かず帯が縮まない
+    <div className="relative flex">
       <button
         ref={triggerRef}
         type="button"
@@ -77,7 +79,10 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
         // 下に居ると ✕ を押しても覆いがタップを横取りし、この onClick が
         // 動かない。結果的に閉じはする (覆いが閉じる) が、押した物と
         // 動いた物が食い違う状態になり、開閉が二重に走る余地も残る
-        className="relative z-40 inline-flex min-h-11 items-center rounded px-2 text-gray-500 transition-colors hover:text-gray-900 active:bg-gray-100"
+        // -mb-2 … 44px のタップ目標は保ったまま、帯の高さへの寄与だけ 36px に
+        // 減らす。はみ出しは下向きだけにすること。上へ伸ばすと standalone で
+        // ステータスバーに潜り込む
+        className="relative z-40 -mb-3 inline-flex min-h-11 items-center rounded px-2 text-gray-500 transition-colors hover:text-gray-900 active:bg-gray-100"
       >
         {/* アイコンは inline SVG で持つ。この 2 本のためにライブラリを
             足さない (currentColor なので文字色にそのまま追従する) */}

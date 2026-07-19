@@ -15,7 +15,8 @@ export function StandaloneBackButton() {
       type="button"
       onClick={() => window.history.back()}
       aria-label="前の画面に戻る"
-      className="hidden min-h-11 items-center rounded pr-2 text-lg text-gray-500 transition-colors active:bg-gray-100 standalone:inline-flex"
+      // -mb-2 の意図は HeaderMenu のボタンと同じ (帯を低くしつつ 44px を保つ)
+      className="hidden -mb-3 min-h-11 items-center rounded pr-2 text-lg text-gray-500 transition-colors active:bg-gray-100 standalone:inline-flex"
     >
       ←
     </button>

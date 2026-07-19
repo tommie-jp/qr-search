@@ -50,9 +50,11 @@ summary {
 }
 
 /* ヘッダ用。standalone はステータスバーの下から始まる (viewport-fit=cover) ため
-   その分を空ける。ブラウザで開いているときは inset が 0 で py-3 と同じ */
+   その分を空ける。ブラウザで開いているときは inset が 0 で pt-1 と同じ。
+   下限を詰めてあるのは帯を低く保つため — 帯の見た目の高さはここと
+   ボタンの min-h-11 (負マージンで詰めている) でほぼ決まる */
 @utility pt-safe {
-  padding-top: max(0.75rem, env(safe-area-inset-top));
+  padding-top: max(0.25rem, env(safe-area-inset-top));
 }
 
 /* ハンバーガーメニューのボトムシート (docs/11-アプリ的UIUX計画.md §6)。
