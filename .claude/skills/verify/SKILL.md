@@ -51,6 +51,23 @@ async (page) => (await page.context().cookies('http://localhost:3001'))
 - **`browser_run_code_unsafe` の中に `Buffer` / `btoa` は無い。** base64 が要る
   ときは Bash 側で作って文字列で渡す。
 
+- **ハイドレーションを待つこと (dev は初回コンパイルが挟まる)。** 1.5 秒では
+  足りず 4 秒ほど要る。待たずに触ると「クリックしても React のハンドラが
+  動かない」状態を観測してしまい、アプリのバグに見える。**打鍵で URL が
+  変わるかなど、React が生きている証拠を取ってから本題に入る**:
+
+  ```js
+  await page.keyboard.type('npn', { delay: 80 });
+  await page.waitForTimeout(1200);
+  const hydrated = page.url().includes('q=npn');   // false なら待ちが足りない
+  ```
+
+- **タッチの挙動は `hasTouch: true` の別コンテキストで。** `touchmove` を
+  使う実装 (スクロールでキーボードを閉じる等) は、既定のコンテキストでは
+  そもそもイベントが出ない。`browser.newContext({ hasTouch: true, isMobile: true,
+  storageState: { cookies: await page.context().cookies(url), origins: [] } })`
+  で cookie を引き継いで開き、`new TouchEvent(...)` を dispatch して確かめる。
+
 - **ファイル選択は直接注入する。** MCP がネイティブ chooser を横取りするため、
   `chooser.setFiles` と `browser_file_upload` が二重に走って change が 2 回
   配送される (アプリのバグに見える)。`input.files = dataTransfer.files` +

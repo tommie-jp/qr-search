@@ -44,6 +44,7 @@ export function SearchForm({ initialQuery, tags }: SearchFormProps) {
   // 入力中かどうか (URL の反映を止める判断に使う)
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   // 補完適用後にキャレット位置を復元するための保留値。
   const pendingCaret = useRef<number | null>(null);
   // 打ち終わり待ちのタイマーと、IME で変換中かどうか。
@@ -65,6 +66,45 @@ export function SearchForm({ initialQuery, tags }: SearchFormProps) {
       }
     };
   }, []);
+
+  // 結果をスクロールし始めたらキーボードを閉じる
+  // (docs/31-下部操作バー計画.md §8-3)。iOS 純正アプリ (メール・設定の検索) の
+  // keyboardDismissMode = .onDrag と同じ作法。
+  //
+  // 動機は 2 つ。1 つは iOS がキーボード表示中のスクロールで position:fixed を
+  // ビジュアルビューポートの下端へ貼り直すため、下部バーが一覧の途中にせり上がって
+  // 浮くこと。もう 1 つは、結果を読みに行く段になってもキーボードが画面の半分を
+  // 占め続けること。閉じれば両方が同時に片付く。
+  //
+  // **scroll ではなく touchmove で拾う。** キーボードが開くとき iOS は入力欄を
+  // 見せるために自前でスクロールするので、scroll だと開いた直後に自分で閉じてしまう。
+  // touchmove なら必ず指が動かした合図になる。
+  //
+  // 入力欄の中で始まった指の動き (文字列選択) では閉じない。フォームの中から
+  // 始まったかどうかを touchstart で覚えておいて判別する。
+  useEffect(() => {
+    if (!isFocused) {
+      return;
+    }
+    let startedInsideForm = false;
+    const onTouchStart = (e: TouchEvent) => {
+      const target = e.target;
+      startedInsideForm =
+        target instanceof Node && (formRef.current?.contains(target) ?? false);
+    };
+    const onTouchMove = () => {
+      if (startedInsideForm) {
+        return;
+      }
+      inputRef.current?.blur();
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [isFocused]);
 
   // URL の検索語が外から変わったら窓も合わせる (スキャン・タグリンク・戻る)。
   // 入力中 (窓にフォーカスがある) は反映しない: 自分が投げた検索の結果が返る頃には
@@ -192,6 +232,7 @@ export function SearchForm({ initialQuery, tags }: SearchFormProps) {
     // 320px でも 1 行に収まり折り返しは要らなくなった。入力窓の min-w だけは
     // 残す (これが無いと窓が潰れて横スクロールが出る)
     <form
+      ref={formRef}
       method="GET"
       action="/"
       onSubmit={handleSubmit}
