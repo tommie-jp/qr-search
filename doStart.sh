@@ -49,7 +49,18 @@ done
 [ -f .env ] || die ".env がない。cp .env.example .env して値を設定すること"
 
 APP_PORT="$(grep -oP '^APP_PORT=\K.*' .env || true)"
-APP_URL="http://127.0.0.1:${APP_PORT:-3000}/"
+
+# ヘルスチェックは compose がバインドしているアドレスを直に叩く。
+# compose.yaml の指定は 127.0.0.1:<port>:3000 (IPv4 のみ) なので、
+# localhost だと ::1 を先に引いて空振りしうる
+HEALTH_URL="http://127.0.0.1:${APP_PORT:-3000}/"
+
+# 画面に出すのは localhost のほう。**パスキー (WebAuthn) は rpID に
+# ドメイン名を要求し、IP アドレスでは使えない** (docs/29-パスキー計画.md §7)。
+# 127.0.0.1:3000 で開くとパスキーの登録もログインもできないので、
+# 案内する URL 自体を localhost にしておく
+APP_URL="http://localhost:${APP_PORT:-3000}/"
+
 HEALTH_RETRIES=30
 
 if [ "$DO_BUILD" = 1 ]; then
@@ -73,9 +84,9 @@ npx prisma migrate deploy
 log "app 起動"
 docker compose up -d app
 
-log "ヘルスチェック ($APP_URL)"
+log "ヘルスチェック ($HEALTH_URL)"
 for i in $(seq 1 "$HEALTH_RETRIES"); do
-  status="$(curl -fsS -o /dev/null -w '%{http_code}' "$APP_URL" || true)"
+  status="$(curl -fsS -o /dev/null -w '%{http_code}' "$HEALTH_URL" || true)"
   if [ "$status" = "200" ]; then
     echo "OK: HTTP $status"
     log "起動完了: $APP_URL"
