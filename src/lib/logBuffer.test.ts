@@ -4,6 +4,7 @@ import {
   installConsoleCapture,
   LOG_BUFFER_SIZE,
   LOG_TEXT_LIMIT,
+  pushBrowserLogs,
   recentLogs,
   uninstallConsoleCapture,
 } from './logBuffer'
@@ -83,4 +84,47 @@ test('uninstall で元の console に戻る (テストの後始末)', () => {
   uninstallConsoleCapture()
   console.warn('包みが外れた後')
   expect(recentLogs()).toHaveLength(0)
+})
+
+// --- ブラウザから届いたログ (docs/30-ブラウザログ計画.md §1) ---
+
+test('ブラウザのログは source と端末の印を持つ', () => {
+  pushBrowserLogs([{ level: 'error', text: 'モデルを読み込めませんでした' }], 'iPhone')
+
+  const [entry] = recentLogs()
+  expect(entry.source).toBe('browser')
+  expect(entry.device).toBe('iPhone')
+  expect(entry.text).toBe('モデルを読み込めませんでした')
+})
+
+test('サーバとブラウザは時刻順に混ざる', () => {
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(new Date('2026-07-19T00:00:00.000Z'))
+    console.warn('サーバの警告')
+    vi.setSystemTime(new Date('2026-07-19T00:00:01.000Z'))
+    pushBrowserLogs([{ level: 'error', text: 'ブラウザの失敗' }], 'iPhone')
+
+    // 新しい順。「クライアントが失敗した直後にサーバが何を言ったか」を
+    // 並べて読めることが要点
+    expect(recentLogs().map((log) => log.text)).toEqual([
+      'ブラウザの失敗',
+      'サーバの警告',
+    ])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('ブラウザ側が溢れてもサーバ側は押し流されない (バッファが別)', () => {
+  console.warn('消えては困るサーバの警告')
+  for (let i = 0; i < LOG_BUFFER_SIZE + 10; i += 1) {
+    pushBrowserLogs([{ level: 'error', text: `暴走 ${i}` }], 'iPhone')
+  }
+
+  const logs = recentLogs()
+  expect(logs.filter((log) => log.source === 'browser')).toHaveLength(LOG_BUFFER_SIZE)
+  expect(logs.filter((log) => log.source === 'server').map((log) => log.text)).toEqual([
+    '消えては困るサーバの警告',
+  ])
 })

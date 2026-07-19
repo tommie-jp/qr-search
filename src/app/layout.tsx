@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import QRCode from "qrcode";
 import pkg from "../../package.json";
+import { ClientLogCapture } from "@/components/ClientLogCapture";
+import { DebugConsole } from "@/components/DebugConsole";
+import { DebugConsoleButton } from "@/components/DebugConsoleButton";
 import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { LoginButton } from "@/components/LoginButton";
@@ -120,6 +123,10 @@ export default async function RootLayout({
                   <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
                     ログ
                   </Link>
+                  {/* その場で見る側のログ (docs/30-ブラウザログ計画.md §2)。
+                      /logs は事後に読むもので、network まで見たいときは
+                      端末の上に DevTools 相当を出すしかない */}
+                  <DebugConsoleButton />
                   {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
                       ここが登録への唯一の導線なので、ログイン中は常に出す */}
                   <Link
@@ -166,6 +173,13 @@ export default async function RootLayout({
         {/* 遷移アニメーションは各ページの <PageTransition> が持つ
             (layout の要素は unmount されず enter/exit が起きないため) */}
         <main className="mx-auto max-w-2xl px-safe pt-6 pb-safe">{children}</main>
+        {/* どちらも何も描かない (docs/30-ブラウザログ計画.md)。
+            転送はログイン中だけ仕掛ける — 受け口は 401 を返すので、
+            未ログインで拾っても運べず、無駄な要求になる。
+            eruda は逆に未ログインでも要る。「ログインできない不具合」の
+            手掛かりはブラウザ側にしか無く、そのとき転送は使えない */}
+        {user && <ClientLogCapture />}
+        <DebugConsole />
       </body>
     </html>
   );

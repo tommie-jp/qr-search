@@ -7,13 +7,14 @@ import { recentLogs } from "@/lib/logBuffer";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "サーバログ",
+  title: "ログ",
 };
 
-// サーバログの表示 (docs/21-ログ表示計画.md)。
-// 書影・書誌・商品情報の取得失敗はサーバの警告にしか出ないため、
-// スマホからでも原因に届くようにする。ログインは proxy が門番
-// (publicPaths に無いパスは既定で閉じる)。
+// ログの表示 (docs/21-ログ表示計画.md、docs/30-ブラウザログ計画.md)。
+// 書影・書誌・商品情報の取得失敗はサーバの警告にしか出ず、画像検索や OCR の
+// 失敗はブラウザの console にしか出ない。iPhone は Mac 無しでインスペクタを
+// 繋げないため、どちらもスマホから原因に届くようにする。ログインは proxy が
+// 門番 (publicPaths に無いパスは既定で閉じる)。
 //
 // 読み直しはブラウザの再読み込みで足りる (ポーリングはしない。docs/21 §4)。
 
@@ -32,6 +33,13 @@ const LEVEL_BADGE: Record<string, string> = {
   error: "bg-red-100 text-red-800",
 };
 
+// どこで起きたかを色でも分ける。サーバとブラウザが時刻順に混ざるので、
+// 文字だけだと目で追うときに拾い分けられない
+const SOURCE_BADGE: Record<string, string> = {
+  server: "bg-gray-200 text-gray-700",
+  browser: "bg-sky-100 text-sky-800",
+};
+
 export default function LogsPage() {
   const logs = recentLogs();
 
@@ -39,18 +47,19 @@ export default function LogsPage() {
     <PageTransition>
       <div className="space-y-4">
         <div className="flex items-baseline justify-between">
-          <h1 className="text-xl font-bold">サーバログ</h1>
+          <h1 className="text-xl font-bold">ログ</h1>
           <Link href="/" transitionTypes={["nav-back"]} className={ACTION_LINK_CLASS}>
             検索へ
           </Link>
         </div>
         <p className="text-gray-500">
-          直近の警告・エラー (新しい順、最大 200 件)。サーバが再起動すると消えます。
+          直近の警告・エラー (新しい順、サーバ・ブラウザ各 200 件)。
+          サーバが再起動すると消えます。
         </p>
         {logs.length === 0 ? (
           // 「壊れて出ない」と見分けが付く文言にする (docs/21 §3)
           <p className="text-gray-500">
-            ログはありません (起動後、サーバ側の警告・エラーはまだ発生していません)。
+            ログはありません (起動後、警告・エラーはまだ発生していません)。
           </p>
         ) : (
           <ul className="space-y-2">
@@ -64,6 +73,13 @@ export default function LogsPage() {
                     className={`rounded px-1.5 py-0.5 font-bold ${LEVEL_BADGE[log.level]}`}
                   >
                     {log.level}
+                  </span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 ${SOURCE_BADGE[log.source]}`}
+                  >
+                    {log.source === "browser"
+                      ? `ブラウザ${log.device ? ` (${log.device})` : ""}`
+                      : "サーバ"}
                   </span>
                   <time>{TIME_FORMAT.format(log.at)}</time>
                 </div>

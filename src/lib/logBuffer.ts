@@ -1,65 +1,54 @@
-// サーバログの控え (設計は docs/21-ログ表示計画.md)。
+// ログの控え (設計は docs/21-ログ表示計画.md / docs/30-ブラウザログ計画.md)。
 //
 // console.warn / console.error を包み、元の console へ流しつつメモリ上の
 // リングバッファに控える。/logs ページ (スマホ) から直近の失敗を見るため。
 // 書影・書誌・商品情報の失敗は全部 console.warn/error に集約されているので、
 // ここを包めば既存コードを 1 行も変えずに拾える。
 //
+// ブラウザで起きた失敗は /api/client-logs から pushBrowserLogs() で届く
+// (docs/30 §1)。**サーバ用と別のバッファに積む** — 混ぜると多弁な側が
+// 寡黙な側を押し流し、クライアントの暴走ループがサーバの肝心の 1 行を消す。
+//
 // 起動時に instrumentation.ts が installConsoleCapture() を 1 回呼ぶ。
 
-export interface LogEntry {
-  // epoch ms。表示のときに Asia/Tokyo で整形する (サーバの TZ に依存させない)
-  at: number
-  level: 'warn' | 'error'
-  text: string
-}
+import type { ClientLogItem } from './clientLogPayload'
+import { LOG_BUFFER_SIZE, type LogEntry, type LogLevel } from './logEntry'
+import { formatLogArgs } from './logText'
 
-export const LOG_BUFFER_SIZE = 200
-export const LOG_TEXT_LIMIT = 2000
+export { LOG_BUFFER_SIZE, LOG_TEXT_LIMIT } from './logEntry'
+export type { LogEntry, LogLevel, LogSource } from './logEntry'
 
 // バッファと「包んだか」は globalThis に持つ (db.ts と同じ理由)。
 // dev のホットリロードでこのモジュールが再評価されても、控えが消えたり
 // console が二重に包まれたりしない
 interface LogGlobal {
-  buffer: LogEntry[]
+  server: LogEntry[]
+  browser: LogEntry[]
   original: { warn: typeof console.warn; error: typeof console.error } | null
 }
 
 const globalForLog = globalThis as unknown as { qrSearchLog?: LogGlobal }
 
 function state(): LogGlobal {
-  globalForLog.qrSearchLog ??= { buffer: [], original: null }
+  globalForLog.qrSearchLog ??= { server: [], browser: [], original: null }
   return globalForLog.qrSearchLog
 }
 
-// console の引数 1 つを表示できる文字列にする。
-// Error は message だけ採る (stack は 1 行の一覧では読めない。詳細は
-// docker compose logs に残っている)。文字列化に失敗する値 (循環参照など) は
-// String() に落とす — 拾う側の失敗でログ自体を落とさない
-function formatArg(arg: unknown): string {
-  if (typeof arg === 'string') {
-    return arg
-  }
-  if (arg instanceof Error) {
-    return arg.message
-  }
-  try {
-    return JSON.stringify(arg)
-  } catch {
-    return String(arg)
-  }
-}
-
-function push(level: LogEntry['level'], args: unknown[]): void {
-  const { buffer } = state()
-  buffer.push({
-    at: Date.now(),
-    level,
-    text: args.map(formatArg).join(' ').slice(0, LOG_TEXT_LIMIT),
-  })
+// 末尾に足し、溢れたぶんを古い順に捨てる
+function append(buffer: LogEntry[], entry: LogEntry): void {
+  buffer.push(entry)
   if (buffer.length > LOG_BUFFER_SIZE) {
     buffer.splice(0, buffer.length - LOG_BUFFER_SIZE)
   }
+}
+
+function push(level: LogLevel, args: unknown[]): void {
+  append(state().server, {
+    at: Date.now(),
+    level,
+    text: formatLogArgs(args),
+    source: 'server',
+  })
 }
 
 // console.warn / console.error を包む。何度呼んでも包みは 1 重。
@@ -90,11 +79,27 @@ export function uninstallConsoleCapture(): void {
   s.original = null
 }
 
-// 新しい順で返す (画面は最新が知りたい)
+// ブラウザから届いたログを控える (/api/client-logs が呼ぶ)。
+// 時刻はここで打つ — クライアントの時計は信じない (docs/30 §1)
+export function pushBrowserLogs(items: ClientLogItem[], device: string): void {
+  const at = Date.now()
+  const { browser } = state()
+  for (const item of items) {
+    append(browser, { at, level: item.level, text: item.text, source: 'browser', device })
+  }
+}
+
+// 新しい順で返す (画面は最新が知りたい)。サーバとブラウザを時刻順に混ぜる —
+// 「クライアントが失敗した直後にサーバが何を言ったか」は並べて初めて読める
 export function recentLogs(): LogEntry[] {
-  return [...state().buffer].reverse()
+  const s = state()
+  // sort は安定なので、同じ時刻なら積んだ順が保たれる。
+  // 昇順に並べてから反転させ、新しい順にする
+  return [...s.server, ...s.browser].sort((a, b) => a.at - b.at).reverse()
 }
 
 export function clearLogBuffer(): void {
-  state().buffer = []
+  const s = state()
+  s.server = []
+  s.browser = []
 }

@@ -10,10 +10,21 @@
 
 /// <reference lib="webworker" />
 
+import { type CaptureScope, installClientLogCapture } from '@/lib/clientLogCapture'
+import { sendClientLogs } from '@/lib/clientLogTransport'
 import { embed, getAttemptedDevice, preloadEmbedder } from '@/lib/embedding/embedder'
 import type { FromEmbedWorker, ToEmbedWorker } from './workerMessages'
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope
+
+// ここのログは**どこにも出ない**まま消える (docs/30-ブラウザログ計画.md §3)。
+// Worker は別スレッドで console も別なので、メインスレッドの拾い手にも
+// eruda にも乗らない。モデル読み込みの失敗はこの中で起きるので、
+// 同じ仕掛けをここでも掛ける (拾い手は window に依存しない作りにしてある)
+installClientLogCapture({
+  scope: ctx as unknown as CaptureScope,
+  send: sendClientLogs,
+})
 
 // 初回モデル読み込みが済んだら 1 度だけ ready を送る。
 let announcedReady = false
