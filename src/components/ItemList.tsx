@@ -6,6 +6,7 @@ import type { Item } from "@/generated/prisma/client";
 import type { Sort } from "@/lib/validation";
 import { DEFAULT_VIEW_MODE, type ViewMode } from "@/lib/viewMode";
 import { BulkTagToolbar } from "./BulkTagToolbar";
+import { ImageMasonry } from "./ImageMasonry";
 import { ItemRow } from "./ItemRow";
 import { useSelectMode } from "./SelectModeProvider";
 import { ACTION_LINK_CLASS, PRIMARY_BUTTON_CLASS } from "./ui";
@@ -139,11 +140,34 @@ export function ItemList({
       ? "grid gap-2 grid-cols-[repeat(auto-fill,minmax(min(20rem,100%),1fr))]"
       : "divide-y divide-gray-200 rounded border border-gray-200 bg-white";
 
+  // 画像モードの行はない (masonry が描く)。選択モード中のフォールバックなど
+  // ItemRow に流すときは compact に畳む — ItemRow に 'image' が来ないことを
+  // 型 (RowViewMode) で保証する
+  const rowView = view === "image" ? "compact" : view;
+
+  // 画像モードは描画を ImageMasonry に丸ごと委譲する (docs/32 §2)。
+  //
+  //   0 件 (検索ヒットなし) … 該当なしの案内と新規登録/ゴミ箱の導線は
+  //     画像モードでも失わない。compact の枠でそのまま出す。
+  //   選択モード中 … タイルは画像単位でノート単位ではなく、画像なしノートが
+  //     選択対象から漏れるので、下の compact 一覧 (rowView) に畳んで受ける。
+  //     抜ければ masonry に戻る (docs/32 §5)
+  if (view === "image" && !selectMode) {
+    if (items.length === 0) {
+      return (
+        <ul className={listClass}>
+          {emptyState(items, query, registerHref, trashedMatches, "compact")}
+        </ul>
+      );
+    }
+    return <ImageMasonry items={items} />;
+  }
+
   if (!selectMode) {
     return (
       <ul className={listClass}>
         {items.map((item) => (
-          <ItemRow key={item.itemNo} item={item} view={view} />
+          <ItemRow key={item.itemNo} item={item} view={rowView} />
         ))}
         {emptyState(items, query, registerHref, trashedMatches, view)}
       </ul>
@@ -168,7 +192,7 @@ export function ItemList({
           <ItemRow
             key={item.itemNo}
             item={item}
-            view={view}
+            view={rowView}
             checkbox={
               <input
                 type="checkbox"

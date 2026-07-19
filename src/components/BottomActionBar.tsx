@@ -1,10 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   GridViewIcon,
   ImageSearchIcon,
+  ImageViewIcon,
   ListViewIcon,
   ScanIcon,
   SelectIcon,
@@ -90,12 +91,27 @@ export function BottomActionBar({
   const [isImageSearching, setIsImageSearching] = useState(false);
   const { selectMode, enter, exit } = useSelectMode();
 
-  // 表示・並び順はどちらも 2 択なので、セグメントではなく 1 スロットの
-  // トグルにする。ラベルには**現在の値**を出す — ViewModeToggle が
-  // セグメントを選んだ理由 (いま何が選ばれているか常に見える) は、
-  // 現在値をラベルに出すことで保たれる (docs/31 §3-4)
-  const isCard = view === "card";
-  const nextView: ViewMode = isCard ? "compact" : "card";
+  // 表示は 小→大→画像 の 3 値を 1 スロットで循環するトグル (docs/32 §3)、
+  // 並び順は 2 択のトグル。どちらもセグメントにはしない。ラベルには
+  // **現在の値**を出す — ViewModeToggle がセグメントを選んだ理由 (いま何が
+  // 選ばれているか常に見える) は、現在値をラベルに出すことで保たれる
+  // (docs/31 §3-4)
+  const viewLabel: Record<ViewMode, string> = {
+    compact: "小",
+    card: "大",
+    image: "画像",
+  };
+  const viewIcon: Record<ViewMode, ReactNode> = {
+    compact: <ListViewIcon />,
+    card: <GridViewIcon />,
+    image: <ImageViewIcon />,
+  };
+  const nextViewOf: Record<ViewMode, ViewMode> = {
+    compact: "card",
+    card: "image",
+    image: "compact",
+  };
+  const nextView = nextViewOf[view];
   const isItemNoSort = sort === "itemNo";
   const nextSort: Sort = isItemNoSort ? "updated" : "itemNo";
 
@@ -137,21 +153,17 @@ export function BottomActionBar({
           </button>
 
           {/* 表示モード。cookie を書くフォーム送信なのでクライアント JS は
-              要らない (JS 無効でも切り替わる)。value は**もう一方のモード** */}
+              要らない (JS 無効でも切り替わる)。value は**循環の次のモード** */}
           <form action={viewAction} className="flex flex-1">
             <button
               type="submit"
               name={VIEW_MODE_COOKIE}
               value={nextView}
-              aria-label={`表示: ${isCard ? "大" : "小"} (押すと${
-                isCard ? "小" : "大"
-              }に切替)`}
+              aria-label={`表示: ${viewLabel[view]} (押すと${viewLabel[nextView]}に切替)`}
               className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
             >
-              <SlotIcon color="text-emerald-600">
-                {isCard ? <GridViewIcon /> : <ListViewIcon />}
-              </SlotIcon>
-              {isCard ? "大" : "小"}
+              <SlotIcon color="text-emerald-600">{viewIcon[view]}</SlotIcon>
+              {viewLabel[view]}
             </button>
           </form>
 

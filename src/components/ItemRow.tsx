@@ -7,19 +7,23 @@ import { memoSummary } from "@/lib/memoSummary";
 import { tagSearchHref } from "@/lib/tags";
 import { DEFAULT_VIEW_MODE, type ViewMode } from "@/lib/viewMode";
 
+// 画像モードは ImageMasonry が描くのでここには来ない (ItemList が
+// compact に畳んでから渡す)。型で 'image' を締め出して前提を保証する
+export type RowViewMode = Exclude<ViewMode, "image">;
+
 interface ItemRowProps {
   item: Item;
   // 選択モードで先頭に差し込むチェックボックス (通常時は undefined)。
   checkbox?: ReactNode;
   // 表示モード (docs/23-検索結果表示モード計画.md)。既定は今までの 2 行表示。
-  view?: ViewMode;
+  view?: RowViewMode;
 }
 
 // サムネの一辺 (px)。行の高さに合わせる: 小は 2 行分、大は 5 行分。
 // width/height 属性にも渡して、読み込み前から場所を取らせる (画像が届いた
 // 瞬間に行が飛び跳ねないように)。
-const THUMB_PX: Record<ViewMode, number> = { compact: 40, card: 96 };
-const THUMB_SIZE_CLASS: Record<ViewMode, string> = {
+const THUMB_PX: Record<RowViewMode, number> = { compact: 40, card: 96 };
+const THUMB_SIZE_CLASS: Record<RowViewMode, string> = {
   compact: "size-10",
   card: "size-24",
 };

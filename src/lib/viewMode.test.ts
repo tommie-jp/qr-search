@@ -9,6 +9,10 @@ test('compact を受け付ける', () => {
   expect(parseViewMode('compact')).toBe('compact')
 })
 
+test('image を受け付ける', () => {
+  expect(parseViewMode('image')).toBe('image')
+})
+
 test('既定は今までの見た目 (compact)', () => {
   // この機能が入っても、何もしていない人の画面は変わらない
   expect(DEFAULT_VIEW_MODE).toBe('compact')

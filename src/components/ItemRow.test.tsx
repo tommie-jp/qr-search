@@ -1,8 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import type { Item } from "@/generated/prisma/client";
-import type { ViewMode } from "@/lib/viewMode";
-import { ItemRow } from "./ItemRow";
+import { ItemRow, type RowViewMode } from "./ItemRow";
 
 const IMAGE = "0421547b-ee29-4613-a6d4-da0f41f94054.jpg";
 
@@ -26,7 +25,7 @@ function makeItem(overrides: Partial<Item> = {}): Item {
 const renderRow = (
   item: Item,
   checkbox?: React.ReactNode,
-  view: ViewMode = "compact",
+  view: RowViewMode = "compact",
 ) =>
   renderToStaticMarkup(
     <ul>

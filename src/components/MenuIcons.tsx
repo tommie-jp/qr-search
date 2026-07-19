@@ -200,6 +200,22 @@ export function GridViewIcon() {
   );
 }
 
+// 表示切替: masonry (画像表示用)。高さ不揃いのタイルで「画像が敷き詰まる」
+// 形にする。GridViewIcon (均等 2×2) との差は高さの不揃いだけに抑えて、
+// 同じ「表示」スロットの仲間だと判るようにする。虫眼鏡付きの
+// ImageSearchIcon は流用しない — 隣の「画像検索」スロットと同じ絵になり
+// 狙えなくなる (docs/31 §11-1 の色と形で狙う原則)
+export function ImageViewIcon() {
+  return (
+    <StrokeIconLarge>
+      <rect {...TINT} x="3" y="3" width="8" height="11" rx="1" />
+      <rect {...TINT} x="13" y="3" width="8" height="7" rx="1" />
+      <rect {...TINT} x="3" y="16" width="8" height="5" rx="1" />
+      <rect {...TINT} x="13" y="12" width="8" height="9" rx="1" />
+    </StrokeIconLarge>
+  );
+}
+
 // 並び順: 上下矢印。面になるシェイプが無いのでティントは敷かない
 export function SortIcon() {
   return (

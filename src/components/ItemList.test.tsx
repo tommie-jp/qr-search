@@ -147,3 +147,44 @@ test("0 件の案内はカード表示でも全カラムに渡す", () => {
   expect(html).toContain("該当する部品がありません");
   expect(html).toContain("col-span-full");
 });
+
+// 画像表示 (docs/32-画像表示モード計画.md)。描画は ImageMasonry に丸ごと
+// 委譲する (タイルの中身は ImageMasonry.test.tsx が見る)。
+//
+// 選択モード中は compact の一覧へ畳む (タイルは画像単位でノート単位ではなく、
+// 画像なしノートが選択対象から漏れるため) が、選択モードの描画は静的には
+// 作れない (SelectModeProvider の state を外から入れられない —
+// BottomActionBar.test.tsx の色反転と同じ制約) ので、そこはブラウザで確認する
+
+const IMAGE = "0421547b-ee29-4613-a6d4-da0f41f94054.jpg";
+
+test("画像表示は画像だけを masonry で敷き詰め、画像なしノートを出さない", () => {
+  const html = render(
+    [
+      makeItem({ itemNo: "10", memo: `![](/api/images/${IMAGE})` }),
+      makeItem({ itemNo: "20", memo: "画像なしのノート" }),
+    ],
+    "",
+    null,
+    0,
+    "image",
+  );
+  expect(html).toContain("columns-");
+  expect(html).toContain(`/api/images/${IMAGE}?thumb=1`);
+  expect(html).toContain('href="/item/10"');
+  // 一覧の行 (divide-y) ではなく、画像なしノートはどこにも出ない
+  expect(html).not.toContain("divide-y");
+  expect(html).not.toContain('href="/item/20"');
+});
+
+test("画像表示でも 0 件時は該当なしの案内と新規登録の導線を失わない", () => {
+  const html = render(
+    [],
+    "9784873115658",
+    "/edit/4952?code=9784873115658",
+    0,
+    "image",
+  );
+  expect(html).toContain("該当する部品がありません");
+  expect(html).toContain("新規登録");
+});

@@ -4,6 +4,8 @@
 //                  一覧して番号を拾う・ざっと眺めるための密な表示。
 //   card    (大) … タイトル / タグ / 本文 3 行 + 大きめのサムネ。
 //                  カラム数は画面幅が決める (スマホ 1 列 / PC 2 列以上)。
+//   image (画像) … 本文に貼られた画像だけを masonry で敷き詰める
+//                  (docs/32-画像表示モード計画.md)。写真からノートを探す入口。
 //
 // **URL ではなく cookie に持つ**。sort やページ番号は「何を見ているか」なので
 // URL が正 (docs/11-アプリ的UIUX計画.md §3) だが、表示モードは「どう見たいか」
@@ -14,18 +16,20 @@
 // cookie ならサーバコンポーネントが描画前に読めるので、初回描画から正しい
 // レイアウトで出る (localStorage だと一度描いてから跳ねる)。
 
-export type ViewMode = 'compact' | 'card'
+export type ViewMode = 'compact' | 'card' | 'image'
 
 export const VIEW_MODE_COOKIE = 'view'
 
 // 未設定・不正値のときの既定。今までの見た目 (2 行の一覧) を既定にすることで、
 // この機能が入っても何もしていない人の画面は変わらない。
-export const DEFAULT_VIEW_MODE: ViewMode = 'compact'
+// satisfies … 型注釈だと 'compact' が ViewMode に広がり、compact/card しか
+// 受けない ItemRow の既定値に使えなくなる。リテラル型のまま整合だけ検査する
+export const DEFAULT_VIEW_MODE = 'compact' satisfies ViewMode
 
 // cookie は利用者が自由に書き換えられる外部入力なので、素通しせず畳む
 // (parseSort と同じ流儀)。
 export function parseViewMode(value: unknown): ViewMode {
-  return value === 'card' ? 'card' : DEFAULT_VIEW_MODE
+  return value === 'card' || value === 'image' ? value : DEFAULT_VIEW_MODE
 }
 
 // cookie の寿命 (秒)。1 年。好みなので、次に自分で変えるまで続くのが期待どおり。
