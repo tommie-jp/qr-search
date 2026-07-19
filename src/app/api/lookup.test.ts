@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs'
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { GET as BooksGet } from './books/[isbn]/route'
 import type { GET as ProductsGet } from './products/[jan]/route'
@@ -10,18 +9,38 @@ import type { GET as ProductsGet } from './products/[jan]/route'
 // route を関数として直接呼ぶため headers() が投げる。ログイン検査だけ
 // 差し替える (images.test.ts と同じ流儀)。検査そのもの (bcrypt 照合) は
 // 本物を通す — モックすると認証が壊れていても拒否系が緑のままになる
-const mocks = vi.hoisted(() => ({ authorization: null as string | null }))
-vi.mock('next/headers', () => ({
-  headers: async () =>
-    new Headers(mocks.authorization ? { authorization: mocks.authorization } : {}),
-  // パスキー (docs/29-パスキー計画.md) で認証が Cookie も見るようになった。
-  // ここで扱うのは Basic 認証の口なので、セッションは常に「無い」を返す
-  cookies: async () => ({ get: () => undefined }),
+const mocks = vi.hoisted(() => ({
+  sessionToken: null as string | null,
+  validToken: 'valid-session-token',
 }))
 
-const PASSWORD = 'test-password'
-const HASH = bcrypt.hashSync(PASSWORD, 4)
-const AUTH_HEADER = `Basic ${Buffer.from(`tommie:${PASSWORD}`, 'utf8').toString('base64')}`
+// route を関数として直接呼ぶため、Next.js のリクエストスコープが無く
+// cookies() が投げる。そこだけ差し替える。
+//
+// 認証はセッション Cookie で行う (docs/18-ログイン計画.md §11)。
+// 判定そのもの (requestAuth.ts) は本物を通し、DB を叩く findActiveSession
+// だけを差し替える — 判定ごとモックすると、認証が壊れていても拒否系の
+// テストが緑のままになる
+vi.mock('next/headers', async () => {
+  const { SESSION_COOKIE_NAME } = await import('@/lib/sessionToken')
+  return {
+    headers: async () => new Headers(),
+    cookies: async () => ({
+      get: (name: string) =>
+        name === SESSION_COOKIE_NAME && mocks.sessionToken !== null
+          ? { name, value: mocks.sessionToken }
+          : undefined,
+    }),
+  }
+})
+
+vi.mock('@/lib/sessionStore', () => ({
+  findActiveSession: async (token: string) =>
+    token === mocks.validToken
+      ? { userName: 'tommie', expiresAt: new Date('2099-01-01T00:00:00.000Z') }
+      : null,
+}))
+
 
 const ISBN = '9784873115658'
 const JAN = '4901777018686'
@@ -29,12 +48,10 @@ const JAN = '4901777018686'
 // 既定はログイン済み。拒否系が見たいのは「ログインの先にある検査」なので、
 // ログインで落ちると何も検査できない
 beforeEach(() => {
-  vi.stubEnv('BASIC_AUTH_USER', 'tommie')
-  vi.stubEnv('BASIC_AUTH_HASH_B64', Buffer.from(HASH, 'utf8').toString('base64'))
   // 外部 API のキーは伏せる。ここに来る前に弾かれるのが期待値
   vi.stubEnv('YAHOO_SHOPPING_APP_ID', '')
   vi.stubEnv('RAKUTEN_APP_ID', '')
-  mocks.authorization = AUTH_HEADER
+  mocks.sessionToken = mocks.validToken
 })
 
 afterEach(() => {
@@ -121,7 +138,7 @@ describe('事前入力の口の拒否系 (実 DB・外部 API 不要)', () => {
   test('未ログインはクロスサイト判定より先に 401', async () => {
     // 断る理由の順が入れ替わっても、どちらでも断ってはいる。
     // ログインを先に見るのは既存の流儀 (uploads.ts) に揃えるため
-    mocks.authorization = null
+    mocks.sessionToken = null
     const [request, ctx] = booksRequest({ 'sec-fetch-site': 'cross-site' })
     expect((await books(request, ctx)).status).toBe(401)
   })

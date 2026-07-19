@@ -13,14 +13,14 @@ import {
   PROD_THEME_COLOR,
 } from "@/lib/appEnv";
 import { PASSKEY_SETTINGS_PATH } from "@/lib/authPaths";
-import { canLogOut, currentUser } from "@/lib/session";
+import { currentUser } from "@/lib/session";
 import { qrBaseUrl, SITE_DESCRIPTION, SITE_NAME, siteTitle } from "@/lib/site";
 import "./globals.css";
 
 // 静的な metadata / viewport オブジェクトではなく関数で出す。静的オブジェクトは
 // モジュール読み込み時に一度だけ評価されるため、prerender されるルートができた
 // 瞬間にビルド時 (APP_ENV なし = 非本番) の値が焼き付く。いまは layout が
-// currentUser() 経由で headers() を呼ぶので全ルートが動的だが、それは APP_ENV とは
+// currentUser() 経由で cookies() を呼ぶので全ルートが動的だが、それは APP_ENV とは
 // 無関係な事情であり、目印の正しさをその偶然に預けたくない
 export function generateMetadata(): Metadata {
   const title = siteTitle();
@@ -67,12 +67,11 @@ export default async function RootLayout({
 
   // ヘッダの帯はログインしていなくても出す (docs/18-ログイン計画.md)。
   // 未ログインならユーザー名の代わりにログインボタンを置く。
-  // 中身を守るのは proxy.ts と requireUser() の役目で、この帯ではない
+  // 中身を守るのは proxy.ts と requireUser() の役目で、この帯ではない。
+  //
+  // ログイン手段 (パスワード / パスキー) によらず必ずセッションを持つので
+  // (docs/18 §11)、ログイン中なら常にログアウトを出してよい
   const user = await currentUser();
-
-  // ログアウトはセッション (パスキー) で入っているときだけ出す。
-  // Basic 認証には忘れさせる手段がない (docs/29-パスキー計画.md §4)
-  const showLogout = user !== null && (await canLogOut());
 
   // 非本番は画面全体をピンクに塗る。Tailwind はソース中のクラス名を文字列として
   // 探すため、`bg-${color}-50` のような組み立てをすると CSS が生成されない。
@@ -140,7 +139,7 @@ export default async function RootLayout({
                   >
                     パスキー
                   </Link>
-                  {showLogout && <LogoutButton />}
+                  <LogoutButton />
                 </>
               ) : (
                 <>

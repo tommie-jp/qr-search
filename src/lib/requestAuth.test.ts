@@ -1,110 +1,85 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { verifyBasicAuthUser } from './auth'
-import { resolveAuth, resolveUser } from './requestAuth'
+import { resolveSession, resolveUser } from './requestAuth'
 import { findActiveSession } from './sessionStore'
 
-vi.mock('./auth', () => ({ verifyBasicAuthUser: vi.fn() }))
 vi.mock('./sessionStore', () => ({ findActiveSession: vi.fn() }))
 
 const findActiveSessionMock = vi.mocked(findActiveSession)
-const verifyBasicAuthUserMock = vi.mocked(verifyBasicAuthUser)
 
-const BASIC_HEADER = `Basic ${Buffer.from('tommie:secret', 'utf8').toString('base64')}`
+const EXPIRES_AT = new Date('2026-10-17T00:00:00.000Z')
 
 beforeEach(() => {
   vi.clearAllMocks()
   findActiveSessionMock.mockResolvedValue(null)
-  verifyBasicAuthUserMock.mockResolvedValue(null)
 })
 
-describe('resolveUser', () => {
+describe('resolveSession', () => {
   test('returns the user behind a valid session cookie', async () => {
-    findActiveSessionMock.mockResolvedValue({
+    findActiveSessionMock.mockResolvedValue({ userName: 'tommie', expiresAt: EXPIRES_AT })
+
+    expect(await resolveSession('token')).toEqual({
       userName: 'tommie',
-      expiresAt: new Date('2026-10-17T00:00:00.000Z'),
+      expiresAt: EXPIRES_AT,
     })
-
-    expect(await resolveUser('token', null)).toBe('tommie')
   })
 
-  test('does not run the bcrypt path when the session cookie already matched', async () => {
-    findActiveSessionMock.mockResolvedValue({
-      userName: 'tommie',
-      expiresAt: new Date('2026-10-17T00:00:00.000Z'),
-    })
-
-    await resolveUser('token', BASIC_HEADER)
-
-    // パスキーで入っている人に毎回 bcrypt を回すと、vps2 では 1.75 秒
-    // 待たされる (docs/18 §8)。Cookie が通った時点で終わりにする
-    expect(verifyBasicAuthUserMock).not.toHaveBeenCalled()
+  test('returns null when the cookie is unknown or expired', async () => {
+    expect(await resolveSession('stale-token')).toBe(null)
   })
 
-  test('falls back to Basic auth when there is no cookie', async () => {
-    verifyBasicAuthUserMock.mockResolvedValue('tommie')
-
-    expect(await resolveUser(null, BASIC_HEADER)).toBe('tommie')
+  test('returns null when there is no cookie at all', async () => {
+    expect(await resolveSession(null)).toBe(null)
   })
 
-  test('falls back to Basic auth when the cookie is unknown or expired', async () => {
-    verifyBasicAuthUserMock.mockResolvedValue('tommie')
+  test('does not hit the database for an empty cookie value', async () => {
+    await resolveSession('')
 
-    expect(await resolveUser('stale-token', BASIC_HEADER)).toBe('tommie')
+    expect(findActiveSessionMock).not.toHaveBeenCalled()
   })
 
-  test('returns null when neither the cookie nor the header is valid', async () => {
-    expect(await resolveUser('stale-token', BASIC_HEADER)).toBe(null)
-  })
-
-  test('returns null when nothing was sent at all', async () => {
-    expect(await resolveUser(null, null)).toBe(null)
-  })
-
-  test('still lets Basic auth through when the session lookup fails (DB down)', async () => {
+  test('returns null when the session lookup fails (DB down), never a user', async () => {
     findActiveSessionMock.mockRejectedValue(new Error('connection refused'))
-    verifyBasicAuthUserMock.mockResolvedValue('tommie')
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    // DB が落ちてもパスワードで入れる = 復旧経路が生きている (docs/29 §2)
-    expect(await resolveUser('token', BASIC_HEADER)).toBe('tommie')
-    // 握りつぶさず必ず記録する
+    // 認証できないものは未ログインに倒す。DB が死んでいるあいだ入れないのは
+    // 承知のうえ (中身も読めない以上、実害は無い)
+    expect(await resolveSession('token')).toBe(null)
+    // 握りつぶさない
     expect(consoleError).toHaveBeenCalled()
 
     consoleError.mockRestore()
   })
-
-  test('does not treat a failed session lookup as a logged-in user', async () => {
-    findActiveSessionMock.mockRejectedValue(new Error('connection refused'))
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    expect(await resolveUser('token', null)).toBe(null)
-
-    consoleError.mockRestore()
-  })
 })
 
-describe('resolveAuth', () => {
-  test('reports a session login with the expiry so proxy.ts can extend it', async () => {
-    const expiresAt = new Date('2026-10-17T00:00:00.000Z')
-    findActiveSessionMock.mockResolvedValue({ userName: 'tommie', expiresAt })
+describe('resolveUser', () => {
+  test('returns just the name for callers that need nothing else', async () => {
+    findActiveSessionMock.mockResolvedValue({ userName: 'tommie', expiresAt: EXPIRES_AT })
 
-    expect(await resolveAuth('token', null)).toEqual({
-      via: 'session',
-      userName: 'tommie',
-      expiresAt,
-    })
-  })
-
-  test('reports a Basic login without an expiry (nothing to extend)', async () => {
-    verifyBasicAuthUserMock.mockResolvedValue('tommie')
-
-    expect(await resolveAuth(null, BASIC_HEADER)).toEqual({
-      via: 'basic',
-      userName: 'tommie',
-    })
+    expect(await resolveUser('token')).toBe('tommie')
   })
 
   test('returns null when nobody is logged in', async () => {
-    expect(await resolveAuth(null, null)).toBe(null)
+    expect(await resolveUser(null)).toBe(null)
+  })
+})
+
+describe('the Authorization header is no longer an authentication path', () => {
+  // ここが今回の変更の要。Basic ヘッダはブラウザが毎リクエスト自動で
+  // 付け直すため、これを認証として受け付けている限りログアウトが成立しない
+  // (サーバが何を消しても次のリクエストで復活する。docs/18 §11)。
+  // 資格情報を検証してよいのは /login だけ。
+  const BASIC_HEADER = `Basic ${Buffer.from('tommie:secret', 'utf8').toString('base64')}`
+
+  test('resolveSession takes no header argument and ignores extra arguments', async () => {
+    // 引数として渡されても認証には一切使われない
+    const resolve = resolveSession as (...args: unknown[]) => Promise<unknown>
+
+    expect(await resolve(null, BASIC_HEADER)).toBe(null)
+  })
+
+  test('a valid-looking Basic header alone never authenticates', async () => {
+    const resolve = resolveUser as (...args: unknown[]) => Promise<unknown>
+
+    expect(await resolve(null, BASIC_HEADER)).toBe(null)
   })
 })

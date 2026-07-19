@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import bcrypt from 'bcryptjs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { POST as PostFn } from './route'
 import type { GET as GetFn } from './[name]/route'
@@ -10,26 +9,43 @@ import type { PrismaClient } from '@/generated/prisma/client'
 // 投げる。ログイン検査 (lib/session.ts) が headers() を読むので、そこだけ差し替える。
 // 検査そのもの (bcrypt 照合) は本物を通す — モックすると、認証が壊れていても
 // 拒否系のテストが緑のままになる
-const mocks = vi.hoisted(() => ({ authorization: null as string | null }))
-vi.mock('next/headers', () => ({
-  headers: async () =>
-    new Headers(mocks.authorization ? { authorization: mocks.authorization } : {}),
-  // パスキー (docs/29-パスキー計画.md) で認証が Cookie も見るようになった。
-  // ここで扱うのは Basic 認証の口なので、セッションは常に「無い」を返す
-  cookies: async () => ({ get: () => undefined }),
+const mocks = vi.hoisted(() => ({
+  sessionToken: null as string | null,
+  validToken: 'valid-session-token',
 }))
 
-const PASSWORD = 'test-password'
-// コスト 4 で生成する (既定の 10 より速い。検算はハッシュ内のコストに従うため結果は同じ)
-const HASH = bcrypt.hashSync(PASSWORD, 4)
-const AUTH_HEADER = `Basic ${Buffer.from(`tommie:${PASSWORD}`, 'utf8').toString('base64')}`
+// route を関数として直接呼ぶため、Next.js のリクエストスコープが無く
+// cookies() が投げる。そこだけ差し替える。
+//
+// 認証はセッション Cookie で行う (docs/18-ログイン計画.md §11)。
+// 判定そのもの (requestAuth.ts) は本物を通し、DB を叩く findActiveSession
+// だけを差し替える — 判定ごとモックすると、認証が壊れていても拒否系の
+// テストが緑のままになる
+vi.mock('next/headers', async () => {
+  const { SESSION_COOKIE_NAME } = await import('@/lib/sessionToken')
+  return {
+    headers: async () => new Headers(),
+    cookies: async () => ({
+      get: (name: string) =>
+        name === SESSION_COOKIE_NAME && mocks.sessionToken !== null
+          ? { name, value: mocks.sessionToken }
+          : undefined,
+    }),
+  }
+})
+
+vi.mock('@/lib/sessionStore', () => ({
+  findActiveSession: async (token: string) =>
+    token === mocks.validToken
+      ? { userName: 'tommie', expiresAt: new Date('2099-01-01T00:00:00.000Z') }
+      : null,
+}))
+
 
 // 既定はログイン済み。拒否系が見たいのは「ログインの先にある検査」なので、
 // ログインで落ちてしまうと何も検査できない
 beforeEach(() => {
-  vi.stubEnv('BASIC_AUTH_USER', 'tommie')
-  vi.stubEnv('BASIC_AUTH_HASH_B64', Buffer.from(HASH, 'utf8').toString('base64'))
-  mocks.authorization = AUTH_HEADER
+  mocks.sessionToken = mocks.validToken
 })
 
 afterEach(() => {
@@ -173,7 +189,7 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
   // それは楽観的な検査でしかないので、route 自身が断れることをここで確かめる
   describe('未ログイン', () => {
     beforeEach(() => {
-      mocks.authorization = null
+      mocks.sessionToken = null
     })
 
     test('POST は 401 を返す', async () => {
@@ -189,7 +205,7 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
     test('GET: 不正なファイル名はログイン検査より先に 400 (DB を引かせない)', async () => {
       // 名前を position() へ渡す前に書式を確かめる、という順序の担保。
       // この DB は到達不能なので、順序が壊れれば接続エラーで落ちる
-      mocks.authorization = null
+      mocks.sessionToken = null
       const [req, ctx] = getRequest('..%2F..%2Fetc%2Fpasswd')
       const res = await GET(req, ctx)
       expect(res.status).toBe(400)
@@ -399,7 +415,7 @@ describe.skipIf(!runDbTests)(
         })
         noteItemNos.push(itemNo)
         // ここまではログイン済みで用意する。検証だけを未ログインで行う
-        mocks.authorization = null
+        mocks.sessionToken = null
         return name
       }
 
@@ -468,7 +484,7 @@ describe.skipIf(!runDbTests)(
 
       test('どのノートにも貼られていない画像は 401', async () => {
         const name = await upload(pngFile())
-        mocks.authorization = null
+        mocks.sessionToken = null
 
         const [req, ctx] = getRequest(name)
         const res = await GET(req, ctx)

@@ -1,11 +1,6 @@
 import bcrypt from 'bcryptjs'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import {
-  __resetBasicAuthCacheForTest,
-  BASIC_AUTH_CACHE_MAX,
-  parseBasicAuthUser,
-  verifyBasicAuthUser,
-} from './auth'
+import { parseBasicAuthUser, verifyBasicAuthUser } from './auth'
 
 // base64 は Buffer で組み立てる (テスト側で手書きしないことで意図を明確にする)
 function basicHeader(credentials: string): string {
@@ -71,9 +66,6 @@ describe('verifyBasicAuthUser', () => {
   const b64 = (hash: string) => Buffer.from(hash, 'utf8').toString('base64')
 
   beforeEach(() => {
-    // キャッシュは Authorization ヘッダを鍵に持つ。テスト間で持ち越すと
-    // 「env を変えたのに前の判定が返る」で緑になってしまう
-    __resetBasicAuthCacheForTest()
     vi.stubEnv('BASIC_AUTH_USER', 'tommie')
     vi.stubEnv('BASIC_AUTH_HASH_B64', b64(HASH))
   })
@@ -131,61 +123,25 @@ describe('verifyBasicAuthUser', () => {
     expect(await verifyBasicAuthUser(basicHeader(`tommie:${PASSWORD}`))).toBe(null)
   })
 
-  // bcrypt はわざと遅く、vps2 ではコスト 12 で約 1.75 秒かかる。毎リクエスト
-  // 照合し直すと実用にならないので、成功したヘッダは覚える。
-  // 「本当に省けているか」は compare の呼び出し回数で見る
-  test('runs bcrypt once for a repeated valid header', async () => {
+  // 照合結果は覚えない (docs/18 §11)。かつては毎リクエスト呼ばれていたので
+  // 一度通ったヘッダを覚えていたが、いまは呼ぶのは /login だけで、
+  // 1 回のログインにつき 1 回しか通らない。覚える意味がなくなったぶん、
+  // 「パスワードを変えたのに古い資格情報が通り続ける」余地も消えている
+  test('verifies every time instead of remembering a previous result', async () => {
     const header = basicHeader(`tommie:${PASSWORD}`)
     const compare = vi.spyOn(bcrypt, 'compare')
 
     expect(await verifyBasicAuthUser(header)).toBe('tommie')
     expect(await verifyBasicAuthUser(header)).toBe('tommie')
 
-    expect(compare).toHaveBeenCalledTimes(1)
+    expect(compare).toHaveBeenCalledTimes(2)
   })
 
-  // 鍵は「設定 + ヘッダ」の組。ヘッダだけを鍵にすると、パスワードを
-  // 変えても古い資格情報がプロセス再起動まで通り続ける
-  test('does not serve a cached user after the hash changes', async () => {
+  test('stops accepting the old password as soon as the hash changes', async () => {
     const header = basicHeader(`tommie:${PASSWORD}`)
     expect(await verifyBasicAuthUser(header)).toBe('tommie')
 
     vi.stubEnv('BASIC_AUTH_HASH_B64', b64(bcrypt.hashSync('rotated', 4)))
     expect(await verifyBasicAuthUser(header)).toBe(null)
-  })
-
-  // 失敗を覚えると、当てずっぽうを送りつけるだけで上限つきキャッシュを
-  // 埋められ、正しいエントリを追い出せてしまう
-  test('does not cache failures', async () => {
-    const header = basicHeader('tommie:wrong')
-    const compare = vi.spyOn(bcrypt, 'compare')
-
-    expect(await verifyBasicAuthUser(header)).toBe(null)
-    expect(await verifyBasicAuthUser(header)).toBe(null)
-
-    expect(compare).toHaveBeenCalledTimes(2)
-  })
-
-  // 覚える数に上限がないと、ヘッダを変えながら送りつけるだけでメモリを
-  // 食い潰せる。上限を超えたら古いものから捨てる
-  test('bounds the cache so that distinct headers cannot grow it forever', async () => {
-    const header = basicHeader(`tommie:${PASSWORD}`)
-    expect(await verifyBasicAuthUser(header)).toBe('tommie')
-
-    // 通らないヘッダは覚えないので、上限を溢れさせるには通るヘッダが要る。
-    // Basic 認証のヘッダは base64 なので、末尾の padding 相当を変えても
-    // 同じ資格情報にデコードされる … という手は使えない。代わりに
-    // ユーザ名と設定を差し替えて別エントリを積む
-    for (let i = 0; i < BASIC_AUTH_CACHE_MAX; i++) {
-      const password = `pw-${i}`
-      vi.stubEnv('BASIC_AUTH_HASH_B64', b64(bcrypt.hashSync(password, 4)))
-      expect(await verifyBasicAuthUser(basicHeader(`tommie:${password}`))).toBe('tommie')
-    }
-
-    vi.stubEnv('BASIC_AUTH_HASH_B64', b64(HASH))
-    const compare = vi.spyOn(bcrypt, 'compare')
-    // 最初のエントリは押し出されているはずなので、bcrypt をやり直す
-    expect(await verifyBasicAuthUser(header)).toBe('tommie')
-    expect(compare).toHaveBeenCalledTimes(1)
   })
 })

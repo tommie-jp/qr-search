@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { LOGIN_REQUIRED_PATH } from '@/lib/loginRedirect'
 import { isPublicPath, isSelfGuardedPath } from '@/lib/publicPaths'
-import { resolveAuth } from '@/lib/requestAuth'
+import { resolveSession } from '@/lib/requestAuth'
 import { renewSession } from '@/lib/sessionStore'
 import {
   SESSION_COOKIE_NAME,
@@ -45,14 +45,12 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next()
   }
 
-  // 判定の順番 (Cookie が先、Basic が後) は requestAuth.ts が持つ。
+  // 判定 (セッション Cookie だけを見る) は requestAuth.ts が持つ。
   // ここと session.ts の二か所に書くと、片方だけ直して穴が開く
   const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? null
-  const auth = await resolveAuth(sessionToken, request.headers.get('authorization'))
-  if (auth !== null) {
-    return auth.via === 'session' && sessionToken !== null
-      ? withRenewedSession(sessionToken, auth.expiresAt)
-      : NextResponse.next()
+  const session = await resolveSession(sessionToken)
+  if (session !== null && sessionToken !== null) {
+    return withRenewedSession(sessionToken, session.expiresAt)
   }
 
   // 画面の取得は、URL をそのままに案内へ差し替える (redirect ではなく rewrite)。

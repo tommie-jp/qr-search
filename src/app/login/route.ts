@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { verifyBasicAuthUser } from '@/lib/auth'
 import { safeNextPath } from '@/lib/loginRedirect'
+import { issueSession } from '@/lib/sessionStore'
+import { SESSION_COOKIE_NAME, sessionCookieOptions } from '@/lib/sessionToken'
 
 // ログインの口 (docs/18-ログイン計画.md)。
 //
@@ -10,9 +12,14 @@ import { safeNextPath } from '@/lib/loginRedirect'
 // 「ここへ普通に画面遷移する」形にしてある (fetch や router.push では
 // ダイアログが出ない。LoginButton.tsx のコメントも参照)。
 //
-// realm の保護空間はこの URL のディレクトリ、つまり '/' 配下。よって一度ここで
-// 通れば、ブラウザは以後サイト全体へ資格情報を自分から送る (RFC 7617)。
-// ログイン用のページを別に持たなくてよいのはこのため。
+// **Authorization ヘッダを認証として見てよいのはこの route だけ**
+// (docs/18 §11)。通ったらパスキーと同じセッションを発行し、以後の
+// リクエストは Cookie だけで通す。
+//
+// こうしないとログアウトが成立しない。realm の保護空間はこの URL の
+// ディレクトリ = '/' 配下なので、一度ここを通るとブラウザはサイト全体へ
+// 資格情報を自分から送り続ける (RFC 7617)。それを毎リクエスト認証として
+// 受け付けている限り、サーバが何を消しても次のリクエストで復活してしまう。
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const user = await verifyBasicAuthUser(request.headers.get('authorization'))
@@ -33,13 +40,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // next は外から来る値。素通しすると他所へ運ぶ踏み台になるので必ず検算する
   const next = safeNextPath(request.nextUrl.searchParams.get('next'))
 
+  // 資格情報が正しいと確かめたこの 1 回だけ、セッションを発行する。
+  // 以後 requestAuth.ts はこの Cookie だけを見る
+  const session = await issueSession(user)
+
   // Location は相対パスのまま返す (RFC 7231 が認めている)。
   // NextResponse.redirect() は絶対 URL を要求するため使わない — 絶対 URL に
   // すると、アプリが自分のホスト名を組み立てることになり、実測で
   // `http://0.0.0.0:3100/...` が出た。本番はアプリの前に nginx が居るので、
   // アプリが見ているホストとスキーム (http, コンテナの内側) は、ブラウザが
   // 居る場所 (https://qr.tommie.jp) と一致しない。相対なら組み立てずに済む
-  return new NextResponse(null, {
+  const response = new NextResponse(null, {
     // 303 = 「GET で取り直せ」。307 だと POST が来たとき POST のまま
     // 転送されてしまう (ここは GET しか受けないが、意図を明示しておく)
     status: 303,
@@ -48,4 +59,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       'Cache-Control': 'no-store',
     },
   })
+  response.cookies.set(SESSION_COOKIE_NAME, session.token, sessionCookieOptions())
+  return response
 }

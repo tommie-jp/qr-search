@@ -8,9 +8,12 @@
 //
 // 照合は BASIC_AUTH_USER と BASIC_AUTH_HASH_B64 (bcrypt ハッシュの base64) で行う。
 //
-// この階層は next/headers に触らないこと。proxy.ts (リクエスト前) と
-// route handler (リクエスト中) の両方から呼ぶため。リクエストから
-// ユーザーを取るのは session.ts の役目。
+// **この照合を通してよいのは app/login/route.ts だけ** (docs/18 §11)。
+// 毎リクエスト見てしまうと、ブラウザが自動で付け直すヘッダによって
+// ログアウトが成立しなくなる。あちらは通ったらセッションを発行し、
+// 以後の判定は requestAuth.ts が Cookie だけで行う。
+//
+// この階層は next/headers に触らないこと。値を渡してもらう側に徹する。
 
 import bcrypt from 'bcryptjs'
 
@@ -100,33 +103,13 @@ function readBasicAuthConfig(): BasicAuthConfig | null {
   return { user, hash }
 }
 
-// 照合済みヘッダーの記憶。bcrypt はわざと遅く、vps2 (非力) では
-// コスト 12 で約 1.75 秒かかる (コスト 14 だと実測 7 秒で、遅すぎたので下げた)。
-// 毎リクエスト回すと使い物にならないので、一度通ったヘッダーは覚える。
-//
-// 鍵に設定を含めるのは、パスワードを変えたとき古い資格情報がプロセス再起動まで
-// 通り続けるのを防ぐため。失敗は覚えない — 覚えると、当てずっぽうを送りつける
-// だけで上限までキャッシュを埋め、正しいエントリを追い出せてしまう。
-//
-// 上限つき。ヘッダーを変えながら送りつけるだけでメモリを食い潰せる作りにしない。
-export const BASIC_AUTH_CACHE_MAX = 8
-
-const verifiedHeaders = new Map<string, string>()
-
-function cacheKey(config: BasicAuthConfig, header: string): string {
-  // 区切りに \n を使う。base64 と bcrypt ハッシュのどちらにも現れないため、
-  // 別々の (設定, ヘッダー) の組が同じ鍵に潰れることがない
-  return `${config.user}\n${config.hash}\n${header}`
-}
-
-export function __resetBasicAuthCacheForTest(): void {
-  verifiedHeaders.clear()
-}
-
 // Authorization ヘッダーを検証し、通ればユーザー名を返す。通らなければ null。
 //
-// proxy.ts と session.ts の両方がこれを呼ぶ (Next.js は proxy を別バンドルに
-// するため、キャッシュは共有されない。どちらも自前で温まる)。
+// **呼ぶのは app/login/route.ts だけ** (docs/18 §11)。かつては proxy.ts と
+// session.ts が毎リクエスト呼んでいたため、一度通ったヘッダーを覚える
+// キャッシュを持っていたが、いまは 1 回のログインにつき 1 回しか通らないので
+// 消した。bcrypt が遅い (vps2 でコスト 12 = 約 1.75 秒) のは変わらないが、
+// それを踏むのはログインの瞬間だけになる。
 export async function verifyBasicAuthUser(header: string | null): Promise<string | null> {
   const config = readBasicAuthConfig()
   if (config === null || header === null) {
@@ -137,12 +120,6 @@ export async function verifyBasicAuthUser(header: string | null): Promise<string
   const password = parseBasicAuthPassword(header)
   if (user === null || password === null) {
     return null
-  }
-
-  const key = cacheKey(config, header)
-  const cached = verifiedHeaders.get(key)
-  if (cached !== undefined) {
-    return cached
   }
 
   // ユーザー名が違えば bcrypt を回さずに落とす。ユーザー名は秘密ではない
@@ -176,15 +153,6 @@ export async function verifyBasicAuthUser(header: string | null): Promise<string
   if (!matches) {
     return null
   }
-
-  // Map は挿入順を保つので、先頭 = 最も古い
-  if (verifiedHeaders.size >= BASIC_AUTH_CACHE_MAX) {
-    const oldest = verifiedHeaders.keys().next().value
-    if (oldest !== undefined) {
-      verifiedHeaders.delete(oldest)
-    }
-  }
-  verifiedHeaders.set(key, user)
 
   return user
 }
