@@ -138,6 +138,30 @@ test("末尾が数字でない | は幅指定として扱わない", () => {
   expect(html).not.toContain("width=");
 });
 
+// 音声 (docs/12-添付ファイル種類拡張メモ.md)。エディタは音声を ![audio](url)
+// で挿入し、レンダラは src の拡張子を見て <audio> に振り分ける
+test("音声 URL の画像記法は <audio> プレイヤーにする", () => {
+  const html = render("![audio](/api/images/abc.mp3)");
+  expect(html).toContain("<audio");
+  expect(html).toContain('src="/api/images/abc.mp3"');
+  expect(html).toContain("controls");
+  // 画像 (<img>) にはしない
+  expect(html).not.toContain("<img");
+  // 勝手に鳴らさない
+  expect(html).not.toContain("autoplay");
+});
+
+test.each(["mp3", "m4a", "wav"])("%s も <audio> にする", (ext) => {
+  const html = render(`![audio](/api/images/x.${ext})`);
+  expect(html).toContain("<audio");
+});
+
+test("画像 URL は従来どおり <img> のまま (音声に巻き込まれない)", () => {
+  const html = render("![](/api/images/a.png)");
+  expect(html).toContain("<img");
+  expect(html).not.toContain("<audio");
+});
+
 test("本文中の #タグ を検索リンクにする", () => {
   const html = render("これは #抵抗 のメモ");
   expect(html).toContain(`href="/?q=${encodeURIComponent("#抵抗")}"`);

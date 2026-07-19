@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
-import { saveImage } from '@/lib/imageStore'
+import { saveAudio, saveImage } from '@/lib/imageStore'
 import { normalizeImage } from '@/lib/normalizeImage'
 import {
+  audioSaveInfo,
   checkUploadRequest,
+  type ImageFormat,
   MAX_IMAGE_BYTES,
+  sniffAudioFormat,
   sniffImageFormat,
   tooLargeMessage,
 } from '@/lib/uploads'
@@ -48,15 +51,33 @@ export async function POST(request: Request): Promise<NextResponse> {
   const bytes = new Uint8Array(await file.arrayBuffer())
 
   // 形式はクライアント申告の MIME ではなく中身の先頭バイトで決める。
-  // MIME を空で送る端末 (iOS の HEIC など) でも拾え、詐称にも強い
-  const format = sniffImageFormat(bytes)
-  if (!format) {
-    return errorResponse(
-      400,
-      '対応していない画像形式です (png/jpg/gif/webp/avif/heic/tiff)',
-    )
+  // MIME を空で送る端末 (iOS の HEIC など) でも拾え、詐称にも強い。
+  // まず画像として判定し、外れたら音声 (mp3/m4a/wav) を試す。
+  const imageFormat = sniffImageFormat(bytes)
+  if (imageFormat) {
+    return saveImageUpload(bytes, imageFormat)
   }
 
+  const audioFormat = sniffAudioFormat(bytes)
+  if (audioFormat) {
+    // 音声は変換もサムネも要らない。中身をそのまま保存する
+    const { mime, ext } = audioSaveInfo(audioFormat)
+    const url = await saveAudio(bytes, mime, ext)
+    return NextResponse.json({ success: true, data: { url }, error: null })
+  }
+
+  return errorResponse(
+    400,
+    '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav)',
+  )
+}
+
+// 画像の保存 (HEIC/TIFF は WebP へ変換してから)。POST から切り出して
+// 「画像なら」の分岐を素直に読めるようにする。
+async function saveImageUpload(
+  bytes: Uint8Array<ArrayBuffer>,
+  format: ImageFormat,
+): Promise<NextResponse> {
   // ブラウザが表示できない形式 (HEIC/TIFF) は保存前に WebP へ変換する。
   // 復号に失敗する = 壊れた画像なので 400 で断る (500 にしない)
   let normalized

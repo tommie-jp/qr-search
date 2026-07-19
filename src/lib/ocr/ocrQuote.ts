@@ -19,6 +19,11 @@ const IMAGE_SYNTAX = /!\[[^\]]*\]\(([^)\s]+)\)/g
 // そもそもこのアプリが預かっていないので対象外。
 const OWN_IMAGE_PREFIX = '/api/images/'
 
+// 音声も `![audio](/api/images/x.mp3)` という画像記法で本文に入る
+// (docs/12-添付ファイル種類拡張メモ.md)。OCR の対象は画像だけなので、
+// 音声の URL は「後から OCR」の候補から外す
+const AUDIO_URL_RE = /\.(?:mp3|m4a|wav)$/i
+
 // 認識結果 (改行区切り or 行の配列) を引用ブロックへ整形する。
 // 日本語優先の正規化をかけ、空行を落とし、各行に `> ` を付ける。
 // 中身が無ければ空文字を返す (呼び手はこれを「見つからなかった」の合図に使う)。
@@ -66,7 +71,7 @@ export function imageAtCursor(doc: string, cursor: number): ImageAtCursor | null
 
   for (const match of doc.matchAll(IMAGE_SYNTAX)) {
     const url = match[1]
-    if (!url.startsWith(OWN_IMAGE_PREFIX)) {
+    if (!url.startsWith(OWN_IMAGE_PREFIX) || AUDIO_URL_RE.test(url)) {
       continue
     }
     const start = match.index

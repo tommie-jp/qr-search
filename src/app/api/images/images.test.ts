@@ -106,6 +106,29 @@ function pngFile(): File {
   return new File([PNG_BYTES], 'photo.png', { type: 'image/png' })
 }
 
+// 最小の WAV (RIFF....WAVE + 詰め物)。sniffAudioFormat は先頭の "RIFF"/"WAVE"
+// だけを見るので、再生可能である必要はない。Range で切り出せるよう 64B にする
+const WAV_BYTES = Buffer.concat([
+  Buffer.from('RIFF'),
+  Buffer.from([0x38, 0x00, 0x00, 0x00]),
+  Buffer.from('WAVE'),
+  Buffer.alloc(52, 0x41),
+])
+
+function wavFile(): File {
+  return new File([WAV_BYTES], 'memo.wav', { type: 'audio/wav' })
+}
+
+function rangeRequest(
+  name: string,
+  range: string,
+): [Request, { params: Promise<{ name: string }> }] {
+  return [
+    new Request(`http://localhost/api/images/${name}`, { headers: { range } }),
+    { params: Promise.resolve({ name }) },
+  ]
+}
+
 // HEIC フィクスチャ (src/lib/__fixtures__)。iOS が MIME を空で送る経路も
 // 兼ねて確かめるため type は空にする — 形式判定は中身の先頭バイトで行う
 const HEIC_FIXTURE = join(__dirname, '..', '..', '..', 'lib', '__fixtures__', 'sample.heic')
@@ -156,6 +179,16 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
   test('MIME 偽装 (image/png を名乗る HTML) は 400 を返す', async () => {
     const fake = new File(['<html><script>alert(1)</script></html>'], 'x.png', {
       type: 'image/png',
+    })
+    const res = await POST(uploadRequest(fake))
+    expect(res.status).toBe(400)
+  })
+
+  // 音声を名乗るが中身が音声でないもの (詐称) は保存前に弾く。
+  // 画像でも音声でもないので、中身判定 (sniff) が両方外れて 400 になる
+  test('音声を名乗る HTML (中身が音声でない) は 400 を返す', async () => {
+    const fake = new File(['<html>not audio</html>'], 'x.mp3', {
+      type: 'audio/mpeg',
     })
     const res = await POST(uploadRequest(fake))
     expect(res.status).toBe(400)
@@ -274,6 +307,61 @@ describe.skipIf(!runDbTests)(
       expect(getRes.headers.get('content-type')).toBe('image/png')
       const bytes = Buffer.from(await getRes.arrayBuffer())
       expect(bytes.equals(PNG_BYTES)).toBe(true)
+    })
+
+    // 音声 (docs/12-添付ファイル種類拡張メモ.md)。画像と違い変換・サムネ・
+    // 埋め込みを作らず、そのまま images テーブルへ保存してそのまま配信する
+    test('WAV をアップロードすると .wav 名で保存し、GET で同じバイト列を配る', async () => {
+      const res = await POST(uploadRequest(wavFile()))
+      expect(res.status).toBe(200)
+
+      const body = await res.json()
+      expect(body.success).toBe(true)
+      expect(body.data.url).toMatch(/^\/api\/images\/[0-9a-f-]{36}\.wav$/)
+
+      const name = body.data.url.split('/').pop() as string
+      created.push(name)
+
+      const [req, ctx] = getRequest(name)
+      const getRes = await GET(req, ctx)
+      expect(getRes.status).toBe(200)
+      expect(getRes.headers.get('content-type')).toBe('audio/wav')
+      // <audio> のシークに応えるため Range 可を知らせる
+      expect(getRes.headers.get('accept-ranges')).toBe('bytes')
+      const bytes = Buffer.from(await getRes.arrayBuffer())
+      expect(bytes.equals(WAV_BYTES)).toBe(true)
+    })
+
+    test('音声はサムネも埋め込みも作らず、そのまま保存される', async () => {
+      const name = await upload(wavFile())
+      const row = await prisma.image.findUnique({ where: { name } })
+      expect(row?.mime).toBe('audio/wav')
+      expect(row?.thumb).toBeNull()
+      expect(row?.embedding).toBeNull()
+      expect(Buffer.from(row?.data as Uint8Array).equals(WAV_BYTES)).toBe(true)
+    })
+
+    test('Range 要求には 206 で部分を返す (音声のシーク)', async () => {
+      const name = await upload(wavFile())
+
+      const [req, ctx] = rangeRequest(name, 'bytes=0-9')
+      const res = await GET(req, ctx)
+
+      expect(res.status).toBe(206)
+      expect(res.headers.get('content-range')).toBe(`bytes 0-9/${WAV_BYTES.length}`)
+      expect(res.headers.get('content-type')).toBe('audio/wav')
+      const bytes = Buffer.from(await res.arrayBuffer())
+      expect(bytes.equals(WAV_BYTES.subarray(0, 10))).toBe(true)
+    })
+
+    test('範囲外の Range は 416 を返す', async () => {
+      const name = await upload(wavFile())
+
+      const [req, ctx] = rangeRequest(name, `bytes=${WAV_BYTES.length + 10}-`)
+      const res = await GET(req, ctx)
+
+      expect(res.status).toBe(416)
+      expect(res.headers.get('content-range')).toBe(`bytes */${WAV_BYTES.length}`)
     })
 
     // HEIC (iPhone 標準) は保存時に WebP へ変換する (docs/26-画像形式対応計画.md)。

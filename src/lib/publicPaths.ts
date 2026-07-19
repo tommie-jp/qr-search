@@ -10,7 +10,7 @@
 import manifest from '@/app/manifest'
 import { PUBLIC_AUTH_PATHS } from './authPaths'
 import { LOGIN_PATH, LOGIN_REQUIRED_PATH } from './loginRedirect'
-import { isValidImageName } from './uploads'
+import { isValidAttachmentName } from './uploads'
 import { isValidItemNo } from './validation'
 
 // PWA: ブラウザは manifest とアイコンを Authorization ヘッダなしで取りに行く。
@@ -76,8 +76,8 @@ export function isPublicPath(pathname: string): boolean {
 // (公開ビューにも QR ボタンを出すため。docs/22 §5)
 const ITEM_NO_PREFIXES = ['/item/', '/print/']
 
-// メモに貼った画像。閉じたままだと公開ノートを開いた人に画像だけ割れて出る
-// (docs/22 §6)
+// メモに貼った画像・音声。閉じたままだと公開ノートを開いた人に画像だけ割れ、
+// 音声も再生できない (docs/22 §6, docs/12-添付ファイル種類拡張メモ.md)
 const IMAGE_PREFIX = '/api/images/'
 
 // 末尾は itemNo / 画像名の書式に**完全一致**すること。前方一致で通すと
@@ -89,7 +89,7 @@ export function isSelfGuardedPath(pathname: string): boolean {
   }
 
   if (pathname.startsWith(IMAGE_PREFIX)) {
-    return isValidImageName(pathname.slice(IMAGE_PREFIX.length))
+    return isValidAttachmentName(pathname.slice(IMAGE_PREFIX.length))
   }
 
   return false

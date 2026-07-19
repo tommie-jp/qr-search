@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { resolveByteRange } from '@/lib/httpRange'
 import { isPublicImageName } from '@/lib/items'
 import { currentUser } from '@/lib/session'
 import { THUMB_MIME } from '@/lib/thumbnail'
-import { extForMime, isValidImageName } from '@/lib/uploads'
+import { isAllowedContentMime, isValidAttachmentName } from '@/lib/uploads'
 
 interface RouteContext {
   params: Promise<{ name: string }>
@@ -40,8 +41,9 @@ export async function GET(
     new URL(request.url).searchParams.get('thumb') === '1'
 
   // 名前の検算が先。この後の isPublicImageName は名前を SQL の
-  // position() へ渡すので、書式を確かめてから渡す
-  if (!isValidImageName(name)) {
+  // position() へ渡すので、書式を確かめてから渡す。
+  // 画像・音声のどちらの保存名も許す (docs/12-添付ファイル種類拡張メモ.md)
+  if (!isValidAttachmentName(name)) {
     return NextResponse.json(
       { success: false, data: null, error: '不正なファイル名です' },
       { status: 400 },
@@ -90,10 +92,11 @@ export async function GET(
     )
   }
 
-  return imageResponse(
+  return dataResponse(
+    request,
     image.data,
-    // 保存時に検証済みだが、DB の値をそのまま信用せず既知の画像 MIME のときだけ採用する
-    extForMime(image.mime) ? image.mime : 'application/octet-stream',
+    // 保存時に検証済みだが、DB の値をそのまま信用せず既知の MIME のときだけ採用する
+    isAllowedContentMime(image.mime) ? image.mime : 'application/octet-stream',
     wantThumb ? FALLBACK_CACHE : IMMUTABLE_CACHE,
   )
 }
@@ -111,6 +114,45 @@ function imageResponse(
       'X-Content-Type-Options': 'nosniff',
     },
   })
+}
+
+// 原寸データの配信。音声 (<audio>) のシークに応えるため Range に対応する
+// (docs/12-添付ファイル種類拡張メモ.md)。画像も同じ経路を通るが、Range
+// ヘッダが無ければ従来どおり 200 で全体を返すので挙動は変わらない。
+function dataResponse(
+  request: Request,
+  data: Uint8Array,
+  contentType: string,
+  cacheControl: string,
+): NextResponse {
+  const size = data.byteLength
+  const headers: Record<string, string> = {
+    'Content-Type': contentType,
+    'Cache-Control': cacheControl,
+    'X-Content-Type-Options': 'nosniff',
+    // Range を解さないクライアントにも「部分取得できる」と知らせる
+    'Accept-Ranges': 'bytes',
+  }
+
+  const range = resolveByteRange(request.headers.get('range'), size)
+  if (range === 'unsatisfiable') {
+    return new NextResponse(null, {
+      status: 416,
+      headers: { ...headers, 'Content-Range': `bytes */${size}` },
+    })
+  }
+  if (range) {
+    const slice = data.subarray(range.start, range.end + 1)
+    return new NextResponse(new Uint8Array(slice), {
+      status: 206,
+      headers: {
+        ...headers,
+        'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
+      },
+    })
+  }
+
+  return new NextResponse(new Uint8Array(data), { headers })
 }
 
 // 配ってよい画像か。ログイン中なら全部、未ログインなら公開ノートに

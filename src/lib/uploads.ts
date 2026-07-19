@@ -72,7 +72,10 @@ const HEIC_BRANDS = new Set([
   'mif1', 'msf1',
 ])
 
-function sniffIsoBmff(bytes: Uint8Array): ImageFormat | null {
+// ISO-BMFF の ftyp ボックスから brand 一覧 (major + compatible) を読む。
+// ISO-BMFF でない・短すぎる入力は null。画像 (HEIC/AVIF) と音声 (m4a) の
+// どちらもこの一覧を見て種別を決めるので、読み取り自体はここに集約する。
+function readIsoBmffBrands(bytes: Uint8Array): string[] | null {
   // ボックス長(4) + "ftyp"(4) + major brand(4) の最低 12 バイトが無ければ
   // ISO-BMFF ではない。下の getUint32 が短い入力で throw しないための明示ガード
   // でもある (この関数は throw しない契約。呼び出し側は try/catch しない)
@@ -93,6 +96,14 @@ function sniffIsoBmff(bytes: Uint8Array): ImageFormat | null {
   const brands: string[] = [decoder.decode(bytes.subarray(8, 12))]
   for (let off = 16; off + 4 <= end; off += 4) {
     brands.push(decoder.decode(bytes.subarray(off, off + 4)))
+  }
+  return brands
+}
+
+function sniffIsoBmff(bytes: Uint8Array): ImageFormat | null {
+  const brands = readIsoBmffBrands(bytes)
+  if (!brands) {
+    return null
   }
   // AVIF を先に見る: mif1 を兼ねる AVIF を HEIC と誤判定しないため
   if (brands.some((b) => AVIF_BRANDS.has(b))) {
@@ -116,6 +127,100 @@ export function sniffImageFormat(bytes: Uint8Array): ImageFormat | null {
     return 'webp'
   }
   return sniffIsoBmff(bytes)
+}
+
+// --- 音声 (docs/12-添付ファイル種類拡張メモ.md) ---
+//
+// 音声は画像と違い、変換もサムネも埋め込みもしない。ブラウザが直接再生できる
+// 形式 (mp3/m4a/wav) だけを受け付け、images テーブルへそのまま bytes で保存し、
+// そのまま配信する。images テーブルを流用するのは、pg_dump 一発でメモと一緒に
+// バックアップできる利点 (imageStore.ts) を音声にも効かせるため。
+
+export type AudioFormat = 'mp3' | 'm4a' | 'wav'
+
+// 保存できる音声形式 (final mime) → 拡張子。画像の MIME_TO_EXT と同じ役割で、
+// 配信時に「DB の mime を信じてよいか」の判定にも使う (未知 mime を配らない)。
+const AUDIO_MIME_TO_EXT: Record<string, string> = {
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/wav': 'wav',
+}
+
+const AUDIO_FORMAT_TO_MIME: Record<AudioFormat, string> = {
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+}
+
+// 保存名は画像と同じ「UUID + 対応拡張子」だけ。拡張子は形式名がそのまま入る。
+const AUDIO_NAME_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(mp3|m4a|wav)$/
+
+// sniff で決めた形式を、保存に使う mime / ext へ写す (mp3/m4a/wav は形式名=拡張子)。
+export function audioSaveInfo(format: AudioFormat): { mime: string; ext: string } {
+  return { mime: AUDIO_FORMAT_TO_MIME[format], ext: format }
+}
+
+export function isValidAudioName(name: string): boolean {
+  return AUDIO_NAME_PATTERN.test(name)
+}
+
+// 画像・音声のどちらの保存名も許すか。配信ゲート (route.ts) と proxy の
+// 素通し判定 (publicPaths.ts) が使う。**memoImages などの「画像だけ」を
+// 拾う経路は isValidImageName のままにする** — 音声を一覧サムネや画像検索の
+// 対象に混ぜないため (この 2 つを分けているのが肝)。
+export function isValidAttachmentName(name: string): boolean {
+  return isValidImageName(name) || isValidAudioName(name)
+}
+
+// 配信時に Content-Type としてそのまま返してよい mime か。画像・音声とも
+// 保存時に中身を検証済みだが、DB の値を鵜呑みにせず既知の mime のときだけ採用する。
+export function isAllowedContentMime(mime: string): boolean {
+  return mime in MIME_TO_EXT || mime in AUDIO_MIME_TO_EXT
+}
+
+// WAV は RIFF コンテナ: "RIFF"(0) + "WAVE"(8)
+function isWav(bytes: Uint8Array): boolean {
+  return (
+    startsWith(bytes, [0x52, 0x49, 0x46, 0x46]) &&
+    [0x57, 0x41, 0x56, 0x45].every((byte, i) => bytes[8 + i] === byte)
+  )
+}
+
+// MP3: ID3v2 タグ ("ID3") で始まるか、生フレームの同期語で始まる。
+// 同期語は 11bit すべて 1 = 先頭 0xFF かつ次バイトの上位 3bit が立っている。
+// JPEG (FF D8 …) は次バイトの上位 3bit が 110 なので当たらない (画像と衝突しない)。
+function isMp3(bytes: Uint8Array): boolean {
+  if (startsWith(bytes, [0x49, 0x44, 0x33])) {
+    return true
+  }
+  return bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0
+}
+
+// m4a を名乗る ISO-BMFF ブランド。動画 (mp42/isom 単独) を音声として受けない
+// よう、音声専用の M4A / M4B だけを見る。iPhone のボイスメモ (.m4a) は major
+// brand が "M4A " なのでこれで拾える。他ツール由来の mp42 単独 m4a は弾かれるが、
+// 動画混入を防ぐことを優先する (docs/12)。
+const M4A_BRANDS = new Set(['M4A ', 'M4B '])
+
+function sniffIsoBmffAudio(bytes: Uint8Array): AudioFormat | null {
+  const brands = readIsoBmffBrands(bytes)
+  if (!brands) {
+    return null
+  }
+  return brands.some((b) => M4A_BRANDS.has(b)) ? 'm4a' : null
+}
+
+// 先頭バイトから音声形式を判定する。判定できなければ null (=非対応)。
+// route.ts は画像判定 (sniffImageFormat) が外れたときにこれを試す。
+export function sniffAudioFormat(bytes: Uint8Array): AudioFormat | null {
+  if (isMp3(bytes)) {
+    return 'mp3'
+  }
+  if (isWav(bytes)) {
+    return 'wav'
+  }
+  return sniffIsoBmffAudio(bytes)
 }
 
 // multipart のヘッダ等のオーバーヘッド分を上限に足す

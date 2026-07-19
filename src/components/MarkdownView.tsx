@@ -97,6 +97,12 @@ function preOrDiagram(circuits: CircuitMap) {
   };
 }
 
+// 音声の配信 URL (`/api/images/<uuid>.mp3` など)。エディタは音声を画像記法
+// `![audio](url)` で挿入するので (docs/12-添付ファイル種類拡張メモ.md)、img の
+// src が音声ならここで <audio> に振り分ける。この <audio> は sanitize 後に
+// React が組み立てる要素なので、生 HTML の許可リスト (sanitizeSchema) は要らない。
+const AUDIO_SRC_RE = /\.(?:mp3|m4a|wav)(?:[?#]|$)/i;
+
 // alt 末尾の "|数字" を表示幅 (px) として解釈する (例: ![スクショ|200](/api/images/x.png))。
 // 生 HTML を無効にしたまま画像ごとに幅を指定できるようにするための独自記法。
 // 画像はクリックで拡大できるよう ZoomableImage で描画する
@@ -105,6 +111,18 @@ function imgWithWidth({
   alt,
   ...props
 }: MarkdownComponentProps<"img">) {
+  if (typeof props.src === "string" && AUDIO_SRC_RE.test(props.src)) {
+    // 音声プレイヤー。autoplay は付けない (勝手に鳴らさない)。preload は
+    // metadata にして、開いただけで全データを取りに行かないようにする
+    return (
+      <audio
+        controls
+        preload="metadata"
+        src={props.src}
+        className="w-full max-w-md"
+      />
+    );
+  }
   const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
   if (match) {
     return <ZoomableImage {...props} alt={match[1]} width={Number(match[2])} />;

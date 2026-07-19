@@ -45,9 +45,24 @@ const MAX_TEXT_LENGTH = 10000;
 const ACCEPTED_IMAGE_TYPES =
   "image/png,image/jpeg,image/gif,image/webp,image/avif,image/heic,image/heif,image/tiff,.png,.jpg,.jpeg,.gif,.webp,.avif,.heic,.heif,.tif,.tiff";
 
+// 音声 (docs/12-添付ファイル種類拡張メモ.md)。mp3/m4a/wav を受け付ける。
+// audio/x-m4a は一部ブラウザが m4a に付ける別名。最終判定はサーバの
+// sniffAudioFormat が中身を見て行う
+const ACCEPTED_AUDIO_TYPES =
+  "audio/mpeg,audio/mp4,audio/wav,audio/x-m4a,.mp3,.m4a,.wav";
+
+const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES}`;
+
 // ペースト/ドロップで拾う画像の判定。MIME が image/* のもの、または
 // 対応拡張子を持つもの (MIME を空で送る HEIC 対策)。実体の検査はサーバが行う
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|tiff?)$/i;
+
+// 音声の判定。MIME が audio/* のもの、または対応拡張子を持つもの。
+const AUDIO_EXT_RE = /\.(?:mp3|m4a|wav)$/i;
+
+function isAudioFile(file: File): boolean {
+  return file.type.startsWith("audio/") || AUDIO_EXT_RE.test(file.name);
+}
 
 // アップロード済みの画像を Blob として取り直す。OCR は元 File ではなく
 // これを読む: HEIC など Chrome/Firefox が createImageBitmap で復号できない
@@ -83,9 +98,11 @@ function replaceToken(view: EditorView, token: string, replacement: string): voi
   });
 }
 
-function imageFiles(list: FileList | undefined | null): File[] {
+// アップロード対象に拾うファイル (画像または音声)。
+function pickFiles(list: FileList | undefined | null): File[] {
   return Array.from(list ?? []).filter(
-    (f) => f.type.startsWith("image/") || IMAGE_EXT_RE.test(f.name),
+    (f) =>
+      f.type.startsWith("image/") || IMAGE_EXT_RE.test(f.name) || isAudioFile(f),
   );
 }
 
@@ -219,7 +236,7 @@ export default function MemoEditorInner({
     }
   };
 
-  const insertImages = async (view: EditorView, files: File[]) => {
+  const insertFiles = async (view: EditorView, files: File[]) => {
     setError(null);
     try {
       for (const [index, file] of files.entries()) {
@@ -229,12 +246,19 @@ export default function MemoEditorInner({
         try {
           // 送信 % はボタンラベル (React state) だけに出す。本文トークンを
           // % で書き換えると undo が壊れる (ocrIntoDoc の同旨コメント参照)。
-          // アップロードは直列なので、ボタンの % が常に今のファイルの %
+          // アップロードは直列なので、ボタンの % が常に今のファイルの %。
+          // 画像・音声とも同じ /api/images へ送る (サーバが中身で振り分ける)
           const url = await uploadImageWithProgress(file, (percent) => {
             setUpload({ current: index + 1, total: files.length, percent });
           });
-          const markup = `![](${url})`;
+          // 音声は ![audio](url) で挿入し、MarkdownView が <audio> に振り分ける。
+          // 画像は従来どおり ![](url)
+          const isAudio = isAudioFile(file);
+          const markup = isAudio ? `![audio](${url})` : `![](${url})`;
           replaceToken(view, token, markup);
+          if (isAudio) {
+            continue; // 音声は OCR しない
+          }
           // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
           // アップロードの流れは止めない (url は UUID で一意なので位置を引ける)。
           // OCR には元 File ではなく保存後の画像 (url) を読ませる。HEIC など
@@ -274,16 +298,16 @@ export default function MemoEditorInner({
       EditorState.changeFilter.of((tr) => tr.newDoc.length <= MAX_TEXT_LENGTH),
       EditorView.domEventHandlers({
         paste: (event, view) => {
-          const files = imageFiles(event.clipboardData?.files);
+          const files = pickFiles(event.clipboardData?.files);
           if (files.length === 0) {
             return false;
           }
           event.preventDefault();
-          void insertImages(view, files);
+          void insertFiles(view, files);
           return true;
         },
         drop: (event, view) => {
-          const files = imageFiles(event.dataTransfer?.files);
+          const files = pickFiles(event.dataTransfer?.files);
           if (files.length === 0) {
             return false;
           }
@@ -293,7 +317,7 @@ export default function MemoEditorInner({
           if (pos !== null) {
             view.dispatch({ selection: { anchor: pos } });
           }
-          void insertImages(view, files);
+          void insertFiles(view, files);
           return true;
         },
       }),
@@ -341,9 +365,9 @@ export default function MemoEditorInner({
 
   const handleFilePick = (files: FileList | null) => {
     const view = editorRef.current?.view;
-    const picked = imageFiles(files);
+    const picked = pickFiles(files);
     if (view && picked.length > 0) {
-      void insertImages(view, picked);
+      void insertFiles(view, picked);
     }
     // 同じファイルを続けて選べるようリセットする
     if (fileInputRef.current) {
@@ -419,7 +443,7 @@ export default function MemoEditorInner({
         {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
             幅が狭いときは畳んでボタンの場所を空ける */}
         <span className="hidden text-gray-400 sm:inline">
-          画像はペースト・ドラッグ&ドロップでも挿入できます
+          画像・音声はペースト・ドラッグ&ドロップでも挿入できます
         </span>
         <span
           className={`ml-auto ${
@@ -451,7 +475,7 @@ export default function MemoEditorInner({
       <input
         ref={fileInputRef}
         type="file"
-        accept={ACCEPTED_IMAGE_TYPES}
+        accept={ACCEPTED_FILE_TYPES}
         multiple
         hidden
         onChange={(e) => handleFilePick(e.target.files)}

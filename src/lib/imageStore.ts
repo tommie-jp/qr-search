@@ -38,3 +38,19 @@ export async function saveImage(
   generateEmbeddingInBackground(name, bytes, mime)
   return `/api/images/${name}`
 }
+
+// 音声を保存し、本文から参照する URL を返す (docs/12-添付ファイル種類拡張メモ.md)。
+//
+// 画像と同じ images テーブルに置くが、変換もサムネも埋め込みも作らない:
+// ブラウザが直接再生でき (mp3/m4a/wav)、一覧に並べる絵でも画像検索の対象でも
+// ないため、thumb / embedding は null のままにする。名前の作り方は saveImage と
+// 同じ「サーバ生成 UUID + 対応拡張子」で、トラバーサル対策を 1 か所に揃える。
+export async function saveAudio(
+  bytes: Uint8Array<ArrayBuffer>,
+  mime: string,
+  ext: string,
+): Promise<string> {
+  const name = `${randomUUID()}.${ext}`
+  await prisma.image.create({ data: { name, mime, data: bytes } })
+  return `/api/images/${name}`
+}

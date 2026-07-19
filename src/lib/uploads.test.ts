@@ -1,9 +1,14 @@
 import { expect, test } from 'vitest'
 import {
+  audioSaveInfo,
   checkUploadRequest,
   extForMime,
+  isAllowedContentMime,
+  isValidAttachmentName,
+  isValidAudioName,
   isValidImageName,
   MAX_IMAGE_BYTES,
+  sniffAudioFormat,
   sniffImageFormat,
 } from './uploads'
 
@@ -114,6 +119,80 @@ test('切り詰めた入力でも throw しない (呼び出し側は try/catch 
       expect(sniffImageFormat(slice)).toBeNull() // major brand まで揃っていない
     }
   }
+})
+
+// --- 音声 (docs/12-添付ファイル種類拡張メモ.md) ---
+
+test('先頭バイトから音声形式を判定する (mp3/wav/m4a)', () => {
+  // mp3: ID3v2 タグ始まり
+  expect(sniffAudioFormat(new TextEncoder().encode('ID3\x04\x00'))).toBe('mp3')
+  // mp3: ID3 無しの生フレーム同期語 (0xFF 0xFB)
+  expect(sniffAudioFormat(Uint8Array.from([0xff, 0xfb, 0x90, 0x00]))).toBe('mp3')
+  // wav: RIFF....WAVE
+  expect(sniffAudioFormat(new TextEncoder().encode('RIFF\0\0\0\0WAVE'))).toBe('wav')
+  // m4a: ISO-BMFF の ftyp に音声ブランド (iPhone ボイスメモは "M4A ")
+  expect(sniffAudioFormat(ftypBox('M4A ', ['M4A ', 'mp42', 'isom']))).toBe('m4a')
+  expect(sniffAudioFormat(ftypBox('M4B ', ['M4B ']))).toBe('m4a')
+})
+
+test('音声でない・動画の ftyp は null (音声判定)', () => {
+  // 画像 (PNG) は音声ではない
+  expect(sniffAudioFormat(PNG_HEAD)).toBeNull()
+  // JPEG (FF D8) は mp3 の同期語 (FF E0 マスク) と衝突しない
+  expect(sniffAudioFormat(JPEG_HEAD)).toBeNull()
+  // 動画の ftyp (mp42/isom 単独) は音声として受けない
+  expect(sniffAudioFormat(ftypBox('isom', ['isom', 'mp42']))).toBeNull()
+  expect(sniffAudioFormat(new TextEncoder().encode('<html>'))).toBeNull()
+  expect(sniffAudioFormat(new Uint8Array(0))).toBeNull()
+})
+
+test('画像と音声の判定は互いに混ざらない', () => {
+  // 画像判定は音声を拾わない
+  expect(sniffImageFormat(new TextEncoder().encode('ID3\x04\x00'))).toBeNull()
+  expect(sniffImageFormat(new TextEncoder().encode('RIFF\0\0\0\0WAVE'))).toBeNull()
+  expect(sniffImageFormat(ftypBox('M4A ', ['M4A ']))).toBeNull()
+})
+
+test('音声形式を保存用の mime / ext に写す', () => {
+  expect(audioSaveInfo('mp3')).toEqual({ mime: 'audio/mpeg', ext: 'mp3' })
+  expect(audioSaveInfo('m4a')).toEqual({ mime: 'audio/mp4', ext: 'm4a' })
+  expect(audioSaveInfo('wav')).toEqual({ mime: 'audio/wav', ext: 'wav' })
+})
+
+test('音声の保存名 (UUID + mp3/m4a/wav) を許可する', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidAudioName(`${uuid}.mp3`)).toBe(true)
+  expect(isValidAudioName(`${uuid}.m4a`)).toBe(true)
+  expect(isValidAudioName(`${uuid}.wav`)).toBe(true)
+  expect(isValidAudioName(`${uuid}.png`)).toBe(false) // 画像は音声名ではない
+  expect(isValidAudioName('../../etc/passwd.mp3')).toBe(false)
+})
+
+test('isValidImageName は音声名を拾わない (一覧サムネ・画像検索に混ぜない)', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidImageName(`${uuid}.mp3`)).toBe(false)
+  expect(isValidImageName(`${uuid}.m4a`)).toBe(false)
+  expect(isValidImageName(`${uuid}.wav`)).toBe(false)
+})
+
+test('isValidAttachmentName は画像・音声の両方を許可する', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidAttachmentName(`${uuid}.png`)).toBe(true)
+  expect(isValidAttachmentName(`${uuid}.mp3`)).toBe(true)
+  expect(isValidAttachmentName(`${uuid}.svg`)).toBe(false)
+  expect(isValidAttachmentName('../secret.mp3')).toBe(false)
+})
+
+test('配信 Content-Type は既知の画像・音声 mime だけ採用する', () => {
+  expect(isAllowedContentMime('image/png')).toBe(true)
+  expect(isAllowedContentMime('image/webp')).toBe(true)
+  expect(isAllowedContentMime('audio/mpeg')).toBe(true)
+  expect(isAllowedContentMime('audio/mp4')).toBe(true)
+  expect(isAllowedContentMime('audio/wav')).toBe(true)
+  // 未知・危険な mime は採用しない (route.ts が octet-stream に落とす)
+  expect(isAllowedContentMime('image/svg+xml')).toBe(false)
+  expect(isAllowedContentMime('text/html')).toBe(false)
+  expect(isAllowedContentMime('video/mp4')).toBe(false)
 })
 
 function uploadRequest(headers: Record<string, string>): Request {
