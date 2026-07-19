@@ -10,6 +10,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { FromOcrWorker, ToOcrWorker } from './ocrWorkerMessages'
 
+// 診断イベント (diagLog) は fetch へ直行するのでテストでは黙らせて記録する
+const diag = vi.hoisted(() => ({ events: [] as string[] }))
+vi.mock('@/lib/diagLog', () => ({
+  logDiagEvent: (text: string) => {
+    diag.events.push(text)
+  },
+}))
+
 // 生成された偽 Worker を順に記録する (terminate 後の作り直しを見るため)
 const workers: FakeWorker[] = []
 
@@ -45,6 +53,7 @@ async function loadService() {
 
 beforeEach(() => {
   workers.length = 0
+  diag.events.length = 0
 })
 
 // terminate で落とされる要求を受け取っておくヘルパ。放っておくと未処理の
@@ -137,7 +146,7 @@ describe('disposeOcr', () => {
     const abandoned = expectRejection(ocr.ocrImageToQuote(new Blob()))
 
     // Act
-    ocr.disposeOcr()
+    ocr.disposeOcr('テスト')
 
     // Assert: dispose() ではヒープが縮まないので terminate でなければ意味がない
     expect(workers[0].terminate).toHaveBeenCalledTimes(1)
@@ -148,7 +157,7 @@ describe('disposeOcr', () => {
     // Arrange
     const ocr = await loadService()
     const abandoned = expectRejection(ocr.ocrImageToQuote(new Blob()))
-    ocr.disposeOcr()
+    ocr.disposeOcr('テスト')
 
     // Act
     ocr.ocrImageToQuote(new Blob())
@@ -164,7 +173,7 @@ describe('disposeOcr', () => {
     const ocr = await loadService()
 
     // Act
-    ocr.disposeOcr()
+    ocr.disposeOcr('テスト')
 
     // Assert
     expect(workers).toHaveLength(0)
@@ -176,10 +185,25 @@ describe('disposeOcr', () => {
     const quote = ocr.ocrImageToQuote(new Blob())
 
     // Act
-    ocr.disposeOcr()
+    ocr.disposeOcr('テスト')
 
     // Assert
     await expect(quote).rejects.toThrow('OCR を終了しました')
+  })
+
+  test('logs why the worker was killed (device-side diagnosis)', async () => {
+    // Arrange: 実機調査では「画像検索の前に OCR は本当に死んでいたか」を
+    // /logs で証明する必要がある
+    const ocr = await loadService()
+    const abandoned = expectRejection(ocr.ocrImageToQuote(new Blob()))
+
+    // Act
+    ocr.disposeOcr('画像検索を開く')
+
+    // Assert
+    expect(diag.events).toContain('[OCR] Worker 起動')
+    expect(diag.events).toContain('[OCR] Worker 破棄 (画像検索を開く)')
+    await abandoned
   })
 
   test('forgets that the model was ready', async () => {
@@ -190,7 +214,7 @@ describe('disposeOcr', () => {
     expect(ocr.isOcrReady()).toBe(true)
 
     // Act
-    ocr.disposeOcr()
+    ocr.disposeOcr('テスト')
 
     // Assert: 次は読み直しになるので UI は「準備中」を出さないといけない
     expect(ocr.isOcrReady()).toBe(false)

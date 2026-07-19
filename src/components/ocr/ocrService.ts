@@ -19,6 +19,7 @@
 //
 // このモジュールはブラウザでのみ呼ぶ。サーバ側からは絶対に import しないこと。
 
+import { logDiagEvent } from '@/lib/diagLog'
 import type { FromOcrWorker, ToOcrWorker } from './ocrWorkerMessages'
 
 // 「モデルの準備が終わった」の合図。バイト計は 99 で頭打ちにしてあるので、
@@ -34,6 +35,9 @@ let worker: Worker | null = null
 let ready = false
 const pending = new Map<number, Pending>()
 let nextId = 1
+
+// Worker を起こした時刻 (performance.now)。準備完了までの秒数を診断ログに出す
+let spawnedAt: number | null = null
 
 // モデルダウンロードの進捗 % の購読者 (バナー表示用)。Worker は 1 本なので
 // 進捗のチャネルもモジュールに 1 本でよい
@@ -79,11 +83,18 @@ function handleMessage(msg: FromOcrWorker): void {
     return
   }
   if (msg.type === 'ready') {
+    if (!ready) {
+      // ready は OCR のたびに届くが、診断に要るのは初回 (モデル準備) だけ
+      logDiagEvent(`[OCR] モデル準備完了 (${elapsedSec()}秒)`)
+    }
     ready = true
     notifyModelProgress(MODEL_READY_PERCENT)
     return
   }
   if (msg.type === 'load-error') {
+    // /logs へも残す (warn)。UI のエラー表示はページ遷移で消えるが、
+    // 実機調査ではこれが唯一の手掛かりになる
+    console.warn('OCR モデルを読み込めませんでした', msg.message)
     // 準備バナーを畳ませる。伝えないと「準備しています… 47%」が永久に残る
     // (バイト計は 99 止まりで完了に届かないため)
     notifyModelProgress(MODEL_READY_PERCENT)
@@ -102,10 +113,20 @@ function handleMessage(msg: FromOcrWorker): void {
   entry.reject(new Error(msg.message))
 }
 
+// Worker 起動からの経過秒 (表示用に 1 桁で丸める)
+function elapsedSec(): string {
+  if (spawnedAt === null) {
+    return '?'
+  }
+  return ((performance.now() - spawnedAt) / 1000).toFixed(1)
+}
+
 function getWorker(): Worker {
   if (worker) {
     return worker
   }
+  logDiagEvent('[OCR] Worker 起動')
+  spawnedAt = performance.now()
   const created = new Worker(new URL('./ocrWorker.ts', import.meta.url), {
     type: 'module',
   })
@@ -144,13 +165,19 @@ export function preloadOcr(): void {
 // 走っている OCR があっても待たない: 呼ぶのは編集画面が閉じた後か、
 // メモリを空けたい画像検索の直前で、どちらも結果の行き先が無い。
 // 待っている呼び手には理由を伝えて落とす。
-export function disposeOcr(): void {
+//
+// reason は診断ログに出す「なぜ落としたか」(例: '編集画面を離脱')。
+// 実機調査で「画像検索の前に OCR は本当に死んでいたか」を /logs で
+// 証明するのに要る。
+export function disposeOcr(reason: string): void {
   if (!worker) {
     return
   }
+  logDiagEvent(`[OCR] Worker 破棄 (${reason})`)
   worker.terminate()
   worker = null
   ready = false
+  spawnedAt = null
   lastNotifiedPercent = null
   rejectPending('OCR を終了しました')
 }

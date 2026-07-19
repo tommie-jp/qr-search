@@ -86,7 +86,7 @@ describe('拒否系 (バッファに触れる前に弾く)', () => {
   test('形の違う本文は 400', async () => {
     const POST = await importPost()
 
-    const res = await POST(postRequest({ items: [{ level: 'info', text: 'ログ' }] }))
+    const res = await POST(postRequest({ items: [{ level: 'debug', text: 'ログ' }] }))
 
     expect(res.status).toBe(400)
   })

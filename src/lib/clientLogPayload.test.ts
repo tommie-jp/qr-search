@@ -35,12 +35,23 @@ test.each([
   ['items が無い', {}],
   ['items が配列でない', { items: 'ログ' }],
   ['items が空', { items: [] }],
-  ['level が warn / error でない', { items: [{ level: 'info', text: 'ログ' }] }],
+  ['level が info / warn / error でない', { items: [{ level: 'debug', text: 'ログ' }] }],
   ['text が文字列でない', { items: [{ level: 'warn', text: 42 }] }],
   ['text が空', { items: [{ level: 'warn', text: '' }] }],
   ['項目がオブジェクトでない', { items: ['ログ'] }],
 ])('形が違えば断る: %s', (_name, body) => {
   expect(parseClientLogPayload(body)).toBeNull()
+})
+
+test('info (診断イベント) も受け付ける', () => {
+  // Arrange
+  const body = { items: [{ level: 'info', text: '[OCR] Worker 起動' }] }
+
+  // Act
+  const items = parseClientLogPayload(body)
+
+  // Assert
+  expect(items).toEqual([{ level: 'info', text: '[OCR] Worker 起動' }])
 })
 
 test('1 回の件数の上限を超えたら断る', () => {

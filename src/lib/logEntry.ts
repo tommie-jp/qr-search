@@ -4,7 +4,9 @@
 // 両方が使うので、状態を持たないここに置く。logBuffer.ts に置くと、console を
 // 包む処理まるごとがクライアントのバンドルに載る。
 
-export type LogLevel = 'warn' | 'error'
+// info は診断イベント (diagLog.ts) 用。console は包まず、明示的に送った
+// ものだけがこのレベルになる (warn/error の「失敗の印」を薄めないため)
+export type LogLevel = 'info' | 'warn' | 'error'
 
 // どこで起きたログか。/logs はバッジで見分けを付ける
 export type LogSource = 'server' | 'browser'

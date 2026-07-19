@@ -143,7 +143,7 @@ export default function MemoEditorInner({
   // メモリが OS へ返る (ocrService.disposeOcr)
   useEffect(() => {
     return () => {
-      disposeOcr();
+      disposeOcr("編集画面を離脱");
     };
   }, []);
 

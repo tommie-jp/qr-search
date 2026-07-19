@@ -72,7 +72,7 @@ export function ImageSearchModal({ onClose }: ImageSearchModalProps) {
   // 後ろだと埋め込み Worker がモデルを取り始めた後に解放することになる。
   // 空けてから積むためにこの位置に置いてある
   useEffect(() => {
-    disposeOcr();
+    disposeOcr("画像検索を開く");
   }, []);
 
   const {

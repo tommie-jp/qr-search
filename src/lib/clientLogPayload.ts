@@ -18,7 +18,7 @@ export const CLIENT_LOG_MAX_PENDING = 50
 
 export const CLIENT_LOG_PATH = '/api/client-logs'
 
-const LEVELS: readonly string[] = ['warn', 'error'] satisfies LogLevel[]
+const LEVELS: readonly string[] = ['info', 'warn', 'error'] satisfies LogLevel[]
 
 function parseItem(value: unknown): ClientLogItem | null {
   if (typeof value !== 'object' || value === null) {

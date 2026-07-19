@@ -3,6 +3,7 @@ import Link from "next/link";
 import { PageTransition } from "@/components/PageTransition";
 import { ACTION_LINK_CLASS } from "@/components/ui";
 import { recentLogs } from "@/lib/logBuffer";
+import { ClearLogsButton } from "./ClearLogsButton";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,8 @@ const TIME_FORMAT = new Intl.DateTimeFormat("ja-JP", {
 });
 
 const LEVEL_BADGE: Record<string, string> = {
+  // info は診断イベント (diagLog.ts)。失敗ではないので警告色にしない
+  info: "bg-gray-100 text-gray-600",
   warn: "bg-amber-100 text-amber-800",
   error: "bg-red-100 text-red-800",
 };
@@ -52,10 +55,13 @@ export default function LogsPage() {
             検索へ
           </Link>
         </div>
-        <p className="text-gray-500">
-          直近の警告・エラー (新しい順、サーバ・ブラウザ各 200 件)。
-          サーバが再起動すると消えます。
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-gray-500">
+            直近のログ (新しい順、サーバ・ブラウザ各 200 件)。warn/error
+            は警告・エラー、info は診断イベント。サーバが再起動すると消えます。
+          </p>
+          <ClearLogsButton />
+        </div>
         {logs.length === 0 ? (
           // 「壊れて出ない」と見分けが付く文言にする (docs/21 §3)
           <p className="text-gray-500">
