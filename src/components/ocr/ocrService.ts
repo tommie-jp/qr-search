@@ -15,6 +15,7 @@
 // サーバ側からは絶対に import しないこと。
 
 import { formatOcrQuote } from '@/lib/ocr/ocrQuote'
+import { quietOrtSessionLogs } from '@/lib/ort/quietOrtLogs'
 import { orderOcrItems } from '@/lib/ocr/orderOcrItems'
 import { aggregatePercent } from '@/lib/progress'
 import { createProgressFetch } from '@/lib/progressFetch'
@@ -56,6 +57,17 @@ const MAX_OCR_SIDE = 2048
 
 type SdkModule = typeof import('@paddleocr/paddleocr-js')
 type OcrService = Awaited<ReturnType<SdkModule['PaddleOCR']['create']>>
+
+// モデル由来の ORT 警告で /logs と eruda が埋まるのを止める。
+// 理由と仕組みは quietOrtLogs.ts に書いた。**セッションを作る前に**呼ぶこと。
+//
+// SDK が内部で import する onnxruntime-web と、ここで import するものは
+// 同じインスタンス (SDK は onnxruntime-web を入れ子に持たず、巻き上げられた
+// 1 つを共有する)。だからここで包めば SDK のセッションにも効く
+async function quietenOrtWarnings(): Promise<void> {
+  const ort = await import('onnxruntime-web')
+  quietOrtSessionLogs(ort)
+}
 
 // 初期化は 1 度だけ。複数の画像を続けて OCR しても使い回す。
 let servicePromise: Promise<OcrService> | null = null
@@ -103,6 +115,7 @@ async function createService(): Promise<OcrService> {
 }
 
 async function initService(): Promise<OcrService> {
+  await quietenOrtWarnings()
   const { PaddleOCR } = await import('@paddleocr/paddleocr-js')
 
   const service = await PaddleOCR.create({

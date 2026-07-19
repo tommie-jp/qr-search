@@ -87,6 +87,11 @@ async function loadLib(): Promise<Transformers> {
   if (!isNodeRuntime() && wasm) {
     wasm.wasmPaths = '/embedding-onnx/'
   }
+  // 注: ORT の警告 (「Removing initializer …」) を黙らせる細工はここには
+  // 置いていない。DINOv2 では出ていないうえ、transformers.js は ort の
+  // モジュール本体を外へ出さず、env.logLevel だけではセッション側の既定
+  // (logSeverityLevel ?? 2) を変えられないため (理由は lib/ort/quietOrtLogs.ts)。
+  // 出るようになったら、この Worker でも同じ細工を掛ける
   if (isNodeRuntime()) {
     // モデルキャッシュを書き込める場所に移す。既定はパッケージ相対の
     // node_modules/@huggingface/transformers/.cache で、本番 Docker は
