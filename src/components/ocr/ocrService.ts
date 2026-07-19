@@ -12,10 +12,18 @@
 // 作り直しで伸びて悪化した (v0.18.0 で実証)。**terminate して realm ごと捨てる**
 // のが唯一メモリを OS へ返す方法なので、そのために Worker へ移した。
 //
+// **Worker で組めない環境への三段構え** (docs/24 §9-2):
+//   1. Worker で初期化 (本命。iPhone・普通の PC はここで終わる)
+//   2. 失敗したら Worker を 1 度だけ作り直して再試行 (embedder と同じ。
+//      一時的な失敗を新しい realm で救う)
+//   3. それでも駄目ならメインスレッドで実行 (ocrMainFallback.ts)。実測:
+//      constrained な Windows Chrome (ヒープ上限 1120MB) は Worker realm で
+//      認識モデルの 16.5MB を確保できないが、メインスレッドでは組めていた
+//
 // **公式 SDK を使う理由 (縦書き)**: 以前使っていた ppu-paddle-ocr は検出した
 // 矩形をそのまま認識にかけるため、日本語の縦書きがほぼ読めなかった。公式 SDK は
-// 公式パイプラインと同じく「縦横比 1.5 以上のクロップは 90 度回してから認識」を
-// 実装しており、縦書きの列を認識できる (docs/24 §2)。
+// 「縦横比 1.5 以上のクロップは 90 度回してから認識」を実装しており、
+// 縦書きの列を認識できる (docs/24 §2)。
 //
 // このモジュールはブラウザでのみ呼ぶ。サーバ側からは絶対に import しないこと。
 
@@ -29,6 +37,9 @@ export const MODEL_READY_PERCENT = 100
 interface Pending {
   resolve: (quote: string) => void
   reject: (error: Error) => void
+  // Worker を作り直したとき・フォールバックへ落ちたときに要求を出し直すため、
+  // 入力も持っておく (Worker へは structured clone で渡るので手元に残る)
+  blob: Blob
 }
 
 let worker: Worker | null = null
@@ -39,8 +50,20 @@ let nextId = 1
 // Worker を起こした時刻 (performance.now)。準備完了までの秒数を診断ログに出す
 let spawnedAt: number | null = null
 
-// モデルダウンロードの進捗 % の購読者 (バナー表示用)。Worker は 1 本なので
-// 進捗のチャネルもモジュールに 1 本でよい
+// いまの Worker の初期化失敗を処理済みか。preload と要求の両方が失敗すると
+// load-error が二重に届くため、二重に作り直さないための印
+let handledLoadError = false
+
+// 作り直しは 1 度だけ (ページの寿命の中で)。数えないと失敗が続く環境で
+// 「作り直し → 21MB 取得 → 失敗」を無限に繰り返す
+let retriedInit = false
+
+// メインスレッド・フォールバックに落ちたか。一度落ちたら以後の OCR は
+// 直接そちらへ (この環境の Worker は組めないと分かっているため)
+let useFallback = false
+
+// モデルダウンロードの進捗 % の購読者 (バナー表示用)。実行系 (Worker /
+// フォールバック) がどれでも、進捗のチャネルはこの 1 本を通る
 let modelProgressListeners: readonly ((percent: number) => void)[] = []
 
 // 直前に通知した %。チャンク到着ごとに同じ整数を流すと購読者 (React state)
@@ -77,6 +100,60 @@ function rejectPending(reason: string): void {
   pending.clear()
 }
 
+// Worker 起動からの経過秒 (表示用に 1 桁で丸める)
+function elapsedSec(): string {
+  if (spawnedAt === null) {
+    return '?'
+  }
+  return ((performance.now() - spawnedAt) / 1000).toFixed(1)
+}
+
+// Worker の初期化失敗 (load-error / 起動不能) を三段構えで進める。
+function handleInitFailure(message: string): void {
+  if (handledLoadError) {
+    return // preload と要求の二重報告。1 回だけ進める
+  }
+  handledLoadError = true
+  console.warn('OCR モデルを Worker で読み込めませんでした', message)
+
+  if (!retriedInit) {
+    retriedInit = true
+    logDiagEvent('[OCR] 読み込み失敗 → Worker を作り直して再試行')
+    spawnWorker()
+    return
+  }
+  switchToFallback()
+}
+
+// メインスレッド・フォールバックへ切り替え、待っている要求を流し込む。
+function switchToFallback(): void {
+  useFallback = true
+  logDiagEvent('[OCR] Worker で組めないためメインスレッドで実行 (フォールバック)')
+  worker?.terminate()
+  worker = null
+  spawnedAt = null
+  const entries = [...pending.values()]
+  pending.clear()
+  for (const entry of entries) {
+    runFallback(entry.blob).then(entry.resolve, entry.reject)
+  }
+}
+
+// フォールバック実行 1 件。進捗 % は同じ購読チャネルへ流し、結末で
+// バナーを畳ませる (成功・失敗どちらでも MODEL_READY_PERCENT を流す)
+async function runFallback(blob: Blob): Promise<string> {
+  try {
+    const { ocrOnMainThread } = await import('./ocrMainFallback')
+    const quote = await ocrOnMainThread(blob, notifyModelProgress)
+    ready = true
+    notifyModelProgress(MODEL_READY_PERCENT)
+    return quote
+  } catch (err) {
+    notifyModelProgress(MODEL_READY_PERCENT)
+    throw err
+  }
+}
+
 function handleMessage(msg: FromOcrWorker): void {
   if (msg.type === 'model-progress') {
     notifyModelProgress(msg.percent)
@@ -92,13 +169,9 @@ function handleMessage(msg: FromOcrWorker): void {
     return
   }
   if (msg.type === 'load-error') {
-    // /logs へも残す (warn)。UI のエラー表示はページ遷移で消えるが、
-    // 実機調査ではこれが唯一の手掛かりになる
-    console.warn('OCR モデルを読み込めませんでした', msg.message)
-    // 準備バナーを畳ませる。伝えないと「準備しています… 47%」が永久に残る
-    // (バイト計は 99 止まりで完了に届かないため)
-    notifyModelProgress(MODEL_READY_PERCENT)
-    rejectPending(msg.message)
+    // ここではバナーを畳まない (作り直し・フォールバックでまだ準備は続く)。
+    // 最終的な結末は runFallback が流す
+    handleInitFailure(msg.message)
     return
   }
   const entry = pending.get(msg.id)
@@ -113,20 +186,14 @@ function handleMessage(msg: FromOcrWorker): void {
   entry.reject(new Error(msg.message))
 }
 
-// Worker 起動からの経過秒 (表示用に 1 桁で丸める)
-function elapsedSec(): string {
-  if (spawnedAt === null) {
-    return '?'
-  }
-  return ((performance.now() - spawnedAt) / 1000).toFixed(1)
-}
-
-function getWorker(): Worker {
-  if (worker) {
-    return worker
-  }
+// Worker を起こし、待っている要求を出し直す (作り直し時)。
+function spawnWorker(): void {
+  worker?.terminate()
   logDiagEvent('[OCR] Worker 起動')
   spawnedAt = performance.now()
+  handledLoadError = false
+  // 作り直しでは % を最初から流し直す
+  lastNotifiedPercent = null
   const created = new Worker(new URL('./ocrWorker.ts', import.meta.url), {
     type: 'module',
   })
@@ -134,13 +201,26 @@ function getWorker(): Worker {
     handleMessage(event.data)
   }
   // Worker 自体が起動できない (チャンクの 404、import の失敗など) と onmessage は
-  // 一生呼ばれない。拾わないと「準備しています」で固まる
+  // 一生呼ばれない。拾わないと「準備しています」で固まる。初期化失敗と同じ
+  // 三段構えに乗せる
   created.onerror = (event: ErrorEvent) => {
-    notifyModelProgress(MODEL_READY_PERCENT)
-    rejectPending(event.message || 'OCR を起動できませんでした')
+    handleInitFailure(event.message || 'OCR の Worker を起動できませんでした')
   }
   worker = created
-  return created
+  // 最初の要求を待たずにモデルを読み始める。初期化の失敗をここで確実に
+  // 拾えるようにする意味もある (要求が無いと失敗も届かない)
+  created.postMessage({ type: 'preload' } satisfies ToOcrWorker)
+  // 待っている要求を新しい Worker へ出し直す
+  for (const [id, entry] of pending) {
+    created.postMessage({ type: 'ocr', id, blob: entry.blob } satisfies ToOcrWorker)
+  }
+}
+
+function getWorker(): Worker {
+  if (!worker) {
+    spawnWorker()
+  }
+  return worker!
 }
 
 // 初回のモデル読み込みが済んでいるか。UI が「準備中」と「処理中」を
@@ -152,7 +232,9 @@ export function isOcrReady(): boolean {
 // 初回ロードを前もって温めたいとき用 (今は未使用だが、編集画面を開いた時点で
 // 走らせる導線を足せるようにしておく)。
 export function preloadOcr(): void {
-  getWorker().postMessage({ type: 'preload' } satisfies ToOcrWorker)
+  if (!useFallback) {
+    getWorker()
+  }
 }
 
 // OCR の Worker を落とし、抱えていたメモリを OS へ返す。
@@ -165,6 +247,9 @@ export function preloadOcr(): void {
 // 走っている OCR があっても待たない: 呼ぶのは編集画面が閉じた後か、
 // メモリを空けたい画像検索の直前で、どちらも結果の行き先が無い。
 // 待っている呼び手には理由を伝えて落とす。
+//
+// フォールバック (メインスレッド) に落ちた環境では解放できるものが無い
+// (realm を捨てられないのがフォールバックの代償。ocrMainFallback.ts 参照)。
 //
 // reason は診断ログに出す「なぜ落としたか」(例: '編集画面を離脱')。
 // 実機調査で「画像検索の前に OCR は本当に死んでいたか」を /logs で
@@ -185,11 +270,18 @@ export function disposeOcr(reason: string): void {
 // 画像 1 枚を OCR し、日本語優先で整えた引用ブロックを返す。
 // 文字が取れなければ空文字を返す (呼び手はこれを「見つからなかった」に使う)。
 //
-// 認識は Worker の中で走るので、メインスレッド (入力・描画) は塞がらない。
+// 認識は Worker の中で走るので、メインスレッド (入力・描画) は塞がらない
+// (フォールバックに落ちた環境を除く)。
 export function ocrImageToQuote(blob: Blob): Promise<string> {
+  if (useFallback) {
+    return runFallback(blob)
+  }
+  // 先に Worker を確保してから pending に載せる。逆にすると、初回 spawn の
+  // 「待っている要求の出し直し」がこの要求も拾い、二重に送ってしまう
+  const target = getWorker()
   const id = nextId++
   return new Promise<string>((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    getWorker().postMessage({ type: 'ocr', id, blob } satisfies ToOcrWorker)
+    pending.set(id, { resolve, reject, blob })
+    target.postMessage({ type: 'ocr', id, blob } satisfies ToOcrWorker)
   })
 }
