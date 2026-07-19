@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { isProductionEnv } from '@/lib/appEnv'
 import { LOGIN_REQUIRED_PATH } from '@/lib/loginRedirect'
+import { loopbackRedirectUrl } from '@/lib/loopbackRedirect'
 import { isPublicPath, isSelfGuardedPath } from '@/lib/publicPaths'
 import { resolveSession } from '@/lib/requestAuth'
 import { renewSession } from '@/lib/sessionStore'
@@ -27,6 +29,26 @@ import {
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl
+
+  // ループバック IP で開かれたら localhost へ送り直す (非本番だけ)。
+  // パスキーは rpID にドメイン名を要求し 127.0.0.1 では使えないのに、
+  // VS Code の「Open in Browser」は必ず 127.0.0.1 を開くため
+  // (理由と出典は loopbackRedirect.ts)。
+  //
+  // ログイン検査より前に置く。未ログインの案内を 127.0.0.1 で見せてから
+  // 送り直しても、そこで押したログインが結局使えない
+  // 判定は Host ヘッダで行う。request.nextUrl のホストは Next.js が
+  // localhost に正規化してしまい、127.0.0.1 で開いても見分けられない
+  const loopbackTarget = loopbackRedirectUrl(
+    request.headers.get('host'),
+    request.nextUrl,
+    isProductionEnv(),
+  )
+  if (loopbackTarget !== null) {
+    // 307 = 一時的 + メソッドを保つ。308 だとブラウザに恒久的に覚えられ、
+    // あとで挙動を変えたくなったときに古い転送が残る
+    return NextResponse.redirect(loopbackTarget, 307)
+  }
 
   if (isPublicPath(pathname)) {
     return NextResponse.next()
