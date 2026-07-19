@@ -101,7 +101,10 @@ export default async function RootLayout({
         >
           {/* 帯は低く抑える。ボタン側が min-h-11 (44px) を負のマージンで
               はみ出させているので、見た目 40px でもタップ目標は 44px を保つ */}
-          <div className="mx-auto flex max-w-2xl items-center gap-2 px-safe pt-safe">
+          {/* items-baseline … サイト名 (text-lg)・バージョン (text-xs)・
+              ユーザー名 (text-base) と文字の大きさが揃わないので、中央揃えでは
+              下端がバラバラに見える。全員の文字のベースラインを 1 本に載せる */}
+          <div className="mx-auto flex max-w-2xl items-baseline gap-2 px-safe pt-safe">
             {/* 項目はハンバーガーメニューへ畳む (docs/11-アプリ的UIUX計画.md §6)。
                 横に並べていたときは iPhone の幅で 1 文字ずつ折り返れて崩れた。
                 左端に置くのは、片手持ちの親指が届く側だから */}
@@ -157,10 +160,13 @@ export default async function RootLayout({
                 拡大に強い)。alt は空 — 隣の文字が同じことを言っている */}
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 text-lg font-bold"
+              className="inline-flex items-baseline gap-1.5 text-lg font-bold"
             >
+              {/* h-[1cap] … アイコンの高さをサイト名の大文字 (Q) と同じにする。
+                  items-baseline で img の下端 (= 置換要素のベースライン) が
+                  文字のベースラインに載り、上端が Q の頭と揃う */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/icon.svg" alt="" className="size-6 rounded-[5px]" />
+              <img src="/icon.svg" alt="" className="h-[1cap] w-auto rounded-[2px]" />
               {SITE_NAME}
             </Link>
             <span className="text-xs text-gray-400">v{pkg.version}</span>

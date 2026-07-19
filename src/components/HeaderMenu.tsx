@@ -82,21 +82,29 @@ export function HeaderMenu({ children }: { children: React.ReactNode }) {
         // -mb-2 … 44px のタップ目標は保ったまま、帯の高さへの寄与だけ 36px に
         // 減らす。はみ出しは下向きだけにすること。上へ伸ばすと standalone で
         // ステータスバーに潜り込む
-        className="relative z-40 -mb-3 inline-flex min-h-11 items-center rounded px-2 text-gray-500 transition-colors hover:text-gray-900 active:bg-gray-100"
+        // text-lg … サイト名と同じ文字サイズにして、下の 1cap (= 大文字の高さ)
+        // がサイト名の Q と同じ寸法を指すようにする
+        className="relative z-40 -mb-3 inline-flex min-h-11 items-center rounded px-2 text-lg text-gray-500 transition-colors hover:text-gray-900 active:bg-gray-100"
       >
         {/* アイコンは inline SVG で持つ。この 2 本のためにライブラリを
-            足さない (currentColor なので文字色にそのまま追従する) */}
+            足さない (currentColor なので文字色にそのまま追従する)。
+
+            viewBox は線のインク (stroke 2 + 丸キャップの張り出しを含む) に
+            ぴったり合わせる。余白を残すと、ヘッダーのベースライン揃えで
+            「svg の下端 = ベースライン」に載せたとき線だけ浮いて見える。
+            h-[1cap] で 3 本線の全高が大文字 Q と同じになり、下の線が
+            ベースラインに載る */}
         <svg
           aria-hidden
-          viewBox="0 0 24 24"
-          className="size-6"
+          viewBox="3 6 18 12"
+          className="h-[1cap] w-auto"
           fill="none"
           stroke="currentColor"
           strokeWidth={2}
           strokeLinecap="round"
         >
           {isOpen ? (
-            <path d="M6 6l12 12M18 6L6 18" />
+            <path d="M7 7l10 10M17 7L7 17" />
           ) : (
             <path d="M4 7h16M4 12h16M4 17h16" />
           )}
