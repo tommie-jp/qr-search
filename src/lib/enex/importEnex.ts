@@ -237,6 +237,10 @@ async function storeResources(
       // 待たないと最後の数枚が切断と競合して黙って欠ける
       awaitEmbedding: !deferEmbedding,
       maxBytes: options.maxAttachmentBytes,
+      // テキスト添付の拡張子 (txt/csv/md) をこの申告から決める。
+      // ENEX の mime は信用しないが、**名前は名前でしかない**ので使ってよい
+      // (保存名はサーバ発番の UUID + 既知の拡張子)
+      fileName: resource.fileName,
     })
     if (!stored.ok) {
       report.skipped.push({

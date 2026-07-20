@@ -12,6 +12,7 @@
 import { saveImage, type SaveImageOptions, savePlainAttachment } from './imageStore'
 import { moveMoovToFront } from './mp4Faststart'
 import { normalizeImage } from './normalizeImage'
+import { normalizeTextBytes } from './normalizeText'
 import {
   audioSaveInfo,
   type ImageFormat,
@@ -21,11 +22,12 @@ import {
   sniffAudioFormat,
   sniffImageFormat,
   sniffPdf,
+  textSaveInfo,
   tooLargeMessage,
 } from './uploads'
 
 export const UNSUPPORTED_ATTACHMENT_MESSAGE =
-  '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, PDF: pdf)'
+  '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, PDF: pdf, テキスト: txt/csv/md)'
 
 export interface StoreAttachmentOptions extends SaveImageOptions {
   // 1 件あたりの上限 (既定: MAX_IMAGE_BYTES = 10MB)。
@@ -41,6 +43,14 @@ export interface StoreAttachmentOptions extends SaveImageOptions {
   // 判定は**変換前のバイト列**に対して行う点に注意。HEIC は保存時に WebP へ
   // 縮むが、その前にここで弾かれる
   maxBytes?: number
+
+  // 元のファイル名 (アップロードなら File.name、ENEX なら file-name 属性)。
+  //
+  // **テキストだけがこれを要る。** 画像・音声・PDF は中身から形式が決まるが、
+  // txt / csv / md は中身が同じなので拡張子でしか区別できない (uploads.ts の
+  // textSaveInfo)。申告をそのまま保存名にはせず、既知の 3 つへ写すだけ。
+  // 無ければ txt として保存する
+  fileName?: string | null
 }
 
 export type AttachmentResult =
@@ -89,6 +99,26 @@ export async function storeAttachment(
   if (sniffPdf(bytes)) {
     // PDF もそのまま保存し、表示はブラウザ内蔵ビューアに任せる
     return succeed(await savePlainAttachment(bytes, PDF_MIME, PDF_EXT), false)
+  }
+
+  // テキストは**最後に試す**。署名で決まる形式をすべて外してから見る
+  // (先に置くと、たまたまテキストとして読めてしまう署名つきファイルを
+  // 横取りしてしまう)。
+  //
+  // 判定は 2 つとも通ったときだけ:
+  //   1. 名前が txt/csv/md であること (uploads.ts textSaveInfo)
+  //   2. 中身がテキストとして読めること (normalizeText.ts)
+  // 名前だけでは中身がバイナリのものを受けてしまい、中身だけでは HTML や SVG が
+  // 名前を偽ったまま通ってしまう。中身は UTF-8 へ正規化されて返る
+  const textInfo = textSaveInfo(options.fileName)
+  if (textInfo) {
+    const text = normalizeTextBytes(bytes)
+    if (text) {
+      return succeed(
+        await savePlainAttachment(text, textInfo.mime, textInfo.ext),
+        false,
+      )
+    }
   }
 
   return { ok: false, reason: UNSUPPORTED_ATTACHMENT_MESSAGE }

@@ -236,6 +236,26 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
     expect(res.status).toBe(400)
   })
 
+  // テキスト系 (docs/12-添付ファイル種類拡張メモ.md)。受け入れ条件は
+  // 「名前が txt/csv/md」かつ「中身がテキストとして読める」の両方。
+  // ここでは片方ずつ欠けたものが弾かれることを確かめる (どちらも DB に届かない)
+  test('.txt と名乗るバイナリは 400 を返す', async () => {
+    // ELF ヘッダ。テキストとしては制御文字だらけで読めない
+    const elf = new File(
+      [Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00])],
+      'memo.txt',
+      { type: 'text/plain' },
+    )
+    expect((await POST(uploadRequest(elf))).status).toBe(400)
+  })
+
+  test('テキストでも名前が txt/csv/md でなければ 400 を返す', async () => {
+    // 中身は読めるテキストだが、名前が別形式を名乗っている。
+    // 上の「x.png を名乗る HTML」と同じ扱いにする (偽装は受けない)
+    const fake = new File(['id,name\n1,x\n'], 'x.html', { type: 'text/html' })
+    expect((await POST(uploadRequest(fake))).status).toBe(400)
+  })
+
   test('クロスオリジンの POST (CSRF) は 403 を返す', async () => {
     const res = await POST(
       uploadRequest(pngFile(), { origin: 'https://evil.example.com' }),
@@ -372,6 +392,49 @@ describe.skipIf(!runDbTests)(
       expect(getRes.headers.get('accept-ranges')).toBe('bytes')
       const bytes = Buffer.from(await getRes.arrayBuffer())
       expect(bytes.equals(WAV_BYTES)).toBe(true)
+    })
+
+    // テキスト系 (docs/12-添付ファイル種類拡張メモ.md)。音声・PDF と同じく
+    // 素通しだが、**保存前に UTF-8 へ正規化する**ぶんだけ違う
+    test('CSV をアップロードすると .csv 名で保存し、charset つきで配る', async () => {
+      const csv = new File(['id,name\n1,ねじ\n'], '部品表.csv', {
+        type: 'text/csv',
+      })
+      const res = await POST(uploadRequest(csv))
+      expect(res.status).toBe(200)
+
+      const body = await res.json()
+      expect(body.data.url).toMatch(/^\/api\/images\/[0-9a-f-]{36}\.csv$/)
+
+      const name = body.data.url.split('/').pop() as string
+      created.push(name)
+
+      const [req, ctx] = getRequest(name)
+      const getRes = await GET(req, ctx)
+      expect(getRes.status).toBe(200)
+      expect(getRes.headers.get('content-type')).toBe('text/csv; charset=utf-8')
+      // ユーザー由来のバイト列なので、ブラウザに種別を推測させない
+      expect(getRes.headers.get('x-content-type-options')).toBe('nosniff')
+      expect(await getRes.text()).toBe('id,name\n1,ねじ\n')
+    })
+
+    test('Shift_JIS のテキストは UTF-8 に直して保存する', async () => {
+      // "日本語" (CP932)
+      const sjis = Uint8Array.from([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea, 0x0a])
+      const name = await upload(new File([sjis], 'メモ.txt', { type: '' }))
+
+      const [req, ctx] = getRequest(name)
+      const getRes = await GET(req, ctx)
+      expect(getRes.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+      expect(await getRes.text()).toBe('日本語\n')
+    })
+
+    test('テキストはサムネも埋め込みも作らない (一覧・画像検索に混ざらない)', async () => {
+      const name = await upload(new File(['# 設計メモ\n'], 'design.md'))
+      const row = await prisma.image.findUnique({ where: { name } })
+      expect(row?.mime).toBe('text/markdown; charset=utf-8')
+      expect(row?.thumb).toBeNull()
+      expect(row?.embedding).toBeNull()
     })
 
     test('音声はサムネも埋め込みも作らず、そのまま保存される', async () => {

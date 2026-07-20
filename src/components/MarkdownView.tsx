@@ -15,8 +15,10 @@ import { MermaidDiagram } from "./MermaidDiagram";
 import { CircuitDiagram } from "./CircuitDiagram";
 import { ZoomableImage } from "./ZoomableImage";
 import { PdfLink } from "./pdf/PdfLink";
+import { TextLink } from "./text/TextLink";
 import { BOX_CLASS } from "./ui";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
+import { TEXT_EXTENSION_ALTERNATION } from "@/lib/textFormats";
 import { CIRCUIT_LANG, MERMAID_LANG } from "@/lib/fenceLanguages";
 import type { CircuitMap } from "@/lib/circuitCache";
 import "katex/dist/katex.min.css";
@@ -113,6 +115,13 @@ const AUDIO_SRC_RE = new RegExp(
 // (iPhone との相性がよく、本文が重くならない)
 const PDF_SRC_RE = /\.pdf(?:[?#]|$)/i;
 
+// テキスト系 (txt/csv/md) も同じ画像記法で入る。PDF と同じくページ内の
+// ビューアで開く (docs/12-添付ファイル種類拡張メモ.md)
+const TEXT_SRC_RE = new RegExp(
+  `\\.(?:${TEXT_EXTENSION_ALTERNATION})(?:[?#]|$)`,
+  "i",
+);
+
 // alt 末尾の "|数字" を表示幅 (px) として解釈する (例: ![スクショ|200](/api/images/x.png))。
 // 生 HTML を無効にしたまま画像ごとに幅を指定できるようにするための独自記法。
 // 画像はクリックで拡大できるよう ZoomableImage で描画する
@@ -138,6 +147,10 @@ function imgWithWidth({
     // 押すとページ内のモーダルで開く (画面遷移しないので standalone PWA でも
     // 確実にノートへ戻れる。PdfLink.tsx の冒頭に経緯)
     return <PdfLink href={props.src} label={alt || "PDF"} />;
+  }
+  if (typeof props.src === "string" && TEXT_SRC_RE.test(props.src)) {
+    // PDF と同じ扱い。中身は解釈せず、そのままの文字として見せる
+    return <TextLink href={props.src} label={alt || "テキスト"} />;
   }
   const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
   if (match) {

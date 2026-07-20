@@ -11,8 +11,10 @@ import {
   MAX_IMAGE_BYTES,
   PDF_MIME,
   sniffAudioFormat,
+  isValidTextName,
   sniffImageFormat,
   sniffPdf,
+  textSaveInfo,
 } from './uploads'
 
 test('対応する画像 MIME は拡張子を返す', () => {
@@ -398,4 +400,67 @@ test('Content-Length が上限内なら通す', () => {
     'content-length': String(1024),
   })
   expect(checkUploadRequest(request)).toBeNull()
+})
+
+// --- テキスト系 (docs/12-添付ファイル種類拡張メモ.md) ---
+
+test('テキストの保存名は UUID + txt/csv/md だけ許可する', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidTextName(`${uuid}.txt`)).toBe(true)
+  expect(isValidTextName(`${uuid}.csv`)).toBe(true)
+  expect(isValidTextName(`${uuid}.md`)).toBe(true)
+  // 配信すると解釈されうる拡張子は保存名にしない (text/plain で配る前提が崩れる)
+  expect(isValidTextName(`${uuid}.html`)).toBe(false)
+  expect(isValidTextName(`${uuid}.svg`)).toBe(false)
+  expect(isValidTextName('../../etc/passwd')).toBe(false)
+  expect(isValidTextName('memo.txt')).toBe(false) // UUID 形式でない
+})
+
+test('テキストは配信ゲートを通るが、画像としては扱わない', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidAttachmentName(`${uuid}.txt`)).toBe(true)
+  expect(isValidAttachmentName(`${uuid}.csv`)).toBe(true)
+  expect(isValidAttachmentName(`${uuid}.md`)).toBe(true)
+  // 一覧サムネ・画像検索に混ぜない (音声・PDF と同じ線引き)
+  expect(isValidImageName(`${uuid}.txt`)).toBe(false)
+  expect(isValidImageName(`${uuid}.md`)).toBe(false)
+})
+
+test('テキストの配信 mime は charset つきの text/plain 系だけ', () => {
+  expect(isAllowedContentMime('text/plain; charset=utf-8')).toBe(true)
+  expect(isAllowedContentMime('text/csv; charset=utf-8')).toBe(true)
+  expect(isAllowedContentMime('text/markdown; charset=utf-8')).toBe(true)
+  // charset 無しは保存しないので採用しない (常に UTF-8 へ正規化してから保存する)
+  expect(isAllowedContentMime('text/plain')).toBe(false)
+  expect(isAllowedContentMime('text/html; charset=utf-8')).toBe(false)
+})
+
+test('元のファイル名から保存する mime / ext を決める (名前は保存名に使わない)', () => {
+  expect(textSaveInfo('memo.md')).toEqual({
+    mime: 'text/markdown; charset=utf-8',
+    ext: 'md',
+  })
+  expect(textSaveInfo('売上.CSV')).toEqual({
+    mime: 'text/csv; charset=utf-8',
+    ext: 'csv',
+  })
+  expect(textSaveInfo('notes.txt')).toEqual({
+    mime: 'text/plain; charset=utf-8',
+    ext: 'txt',
+  })
+})
+
+// **知らない拡張子は txt に倒さない。** テキストには署名が無く HTML も SVG も
+// 「テキストとしては妥当」なので、名前でも名乗らせないと何でも通ってしまう
+// (拡張子・MIME を偽装したものは弾く、という既存方針を保つ)
+test('txt/csv/md 以外の名前はテキストとして受けない', () => {
+  expect(textSaveInfo('evil.html')).toBeNull()
+  expect(textSaveInfo('drawing.svg')).toBeNull()
+  expect(textSaveInfo('archive.tar.gz')).toBeNull()
+  expect(textSaveInfo('名前に拡張子が無い')).toBeNull()
+  // 拡張子は「ドットのある末尾」だけ。名前そのものが csv でも拡張子ではない
+  expect(textSaveInfo('csv')).toBeNull()
+  expect(textSaveInfo(null)).toBeNull()
+  expect(textSaveInfo(undefined)).toBeNull()
+  expect(textSaveInfo('../../etc/passwd')).toBeNull()
 })

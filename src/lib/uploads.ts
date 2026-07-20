@@ -2,6 +2,11 @@ import {
   type AudioFormat,
   AUDIO_EXTENSION_ALTERNATION,
 } from './audioFormats'
+import {
+  TEXT_EXTENSION_ALTERNATION,
+  TEXT_EXTENSIONS,
+  type TextFormat,
+} from './textFormats'
 
 // 保存できる画像形式 (final mime) → 拡張子。
 // これは「そのまま DB に保存できる = ブラウザが表示できる」形式の表。
@@ -188,13 +193,23 @@ export function isValidAudioName(name: string): boolean {
 // 拾う経路は isValidImageName のままにする** — 音声や PDF を一覧サムネや画像
 // 検索の対象に混ぜないため (この 2 つを分けているのが肝)。
 export function isValidAttachmentName(name: string): boolean {
-  return isValidImageName(name) || isValidAudioName(name) || isValidPdfName(name)
+  return (
+    isValidImageName(name) ||
+    isValidAudioName(name) ||
+    isValidPdfName(name) ||
+    isValidTextName(name)
+  )
 }
 
 // 配信時に Content-Type としてそのまま返してよい mime か。画像・音声・PDF とも
 // 保存時に中身を検証済みだが、DB の値を鵜呑みにせず既知の mime のときだけ採用する。
 export function isAllowedContentMime(mime: string): boolean {
-  return mime in MIME_TO_EXT || mime in AUDIO_MIME_TO_EXT || mime === PDF_MIME
+  return (
+    mime in MIME_TO_EXT ||
+    mime in AUDIO_MIME_TO_EXT ||
+    mime === PDF_MIME ||
+    mime in TEXT_MIME_TO_EXT
+  )
 }
 
 // WAV は RIFF コンテナ: "RIFF"(0) + "WAVE"(8)
@@ -432,6 +447,62 @@ export function isValidPdfName(name: string): boolean {
 // offset 0 固定で見る (画像の署名判定と同じ厳しさ)。
 export function sniffPdf(bytes: Uint8Array): boolean {
   return startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])
+}
+
+// --- テキスト系 (docs/12-添付ファイル種類拡張メモ.md) ---
+//
+// txt / csv / md。音声・PDF と同じく変換もサムネも埋め込みもせず、そのまま
+// images テーブルへ保存する。違いは 2 つだけ:
+//
+// - **中身の判定は署名ではなく「テキストとして読めるか」** (normalizeText.ts)。
+// - **保存する拡張子はクライアントの申告 (ファイル名) から決める。** 中身からは
+//   txt / csv / md を区別できないため。ただし申告文字列を保存名に使うのではなく、
+//   下の 3 つのいずれかへ**写す**だけなので、トラバーサルの余地は無い。
+//
+// 配信 mime に charset を含めるのは、保存時に必ず UTF-8 へ正規化しているから
+// (normalizeText.ts)。表示側が文字コードを推測する必要が無くなる。
+
+const TEXT_FORMAT_TO_MIME: Record<TextFormat, string> = {
+  txt: 'text/plain; charset=utf-8',
+  csv: 'text/csv; charset=utf-8',
+  md: 'text/markdown; charset=utf-8',
+}
+
+// 保存できるテキスト形式 (final mime) → 拡張子。画像の MIME_TO_EXT と同じ役割で、
+// 配信時に「DB の mime を信じてよいか」の判定に使う。
+// **text/html はここに無い** — HTML はテキストとして読めるので判定は通るが、
+// 保存名は txt に倒し text/plain で配るため、mime としては現れない。
+const TEXT_MIME_TO_EXT: Record<string, string> = Object.fromEntries(
+  TEXT_EXTENSIONS.map((ext) => [TEXT_FORMAT_TO_MIME[ext], ext]),
+)
+
+// 保存名は画像・音声・PDF と同じ「UUID + 対応拡張子」だけ。
+const TEXT_NAME_PATTERN = new RegExp(
+  `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(${TEXT_EXTENSION_ALTERNATION})$`,
+)
+
+export function isValidTextName(name: string): boolean {
+  return TEXT_NAME_PATTERN.test(name)
+}
+
+// 元のファイル名から、保存に使う mime / ext を決める。txt/csv/md 以外の
+// 名前なら null (= テキストとして受けない)。
+//
+// **知らない拡張子を txt に倒さないのが肝。** テキストには署名が無く、HTML も
+// SVG も「テキストとしては妥当」なので、中身の判定だけでは何でも通ってしまう。
+// 名前でも名乗らせることで、既存の「拡張子・MIME を偽装したものは弾く」
+// 方針 (x.png と名乗る HTML は 400) をテキスト追加後も保てる。
+//
+// 申告文字列そのものは保存名に使わない。ここで既知の 3 つへ**写す**だけなので、
+// トラバーサルの余地は無い。
+export function textSaveInfo(
+  fileName: string | null | undefined,
+): { mime: string; ext: TextFormat } | null {
+  // ドットのある末尾だけを拡張子とみなす。split('.').pop() だと、
+  // "csv" という名前 (拡張子なし) が拡張子扱いになってしまう
+  const suffix = /\.([a-z0-9]+)$/.exec((fileName ?? '').toLowerCase())?.[1]
+  const ext = TEXT_EXTENSIONS.find((known) => known === suffix)
+  return ext ? { mime: TEXT_FORMAT_TO_MIME[ext], ext } : null
 }
 
 // multipart のヘッダ等のオーバーヘッド分を上限に足す

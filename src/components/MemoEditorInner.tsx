@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recordingAltText } from "@/lib/audio/audioRecorder";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
+import { TEXT_EXTENSION_ALTERNATION } from "@/lib/textFormats";
 import { imageAtCursor, ocrInsertion, ocrPlaceholder } from "@/lib/ocr/ocrQuote";
 import {
   ocrButtonLabel,
@@ -68,7 +69,13 @@ const ACCEPTED_AUDIO_TYPES =
 // 本文にはリンクだけを出す
 const ACCEPTED_PDF_TYPES = "application/pdf,.pdf";
 
-const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${ACCEPTED_PDF_TYPES}`;
+// テキスト系 (docs/12-添付ファイル種類拡張メモ.md)。**拡張子だけを並べる** —
+// サーバが受ける条件が「名前が txt/csv/md であること + 中身がテキストとして
+// 読めること」なので、text/plain で広げると README のような拡張子なしの
+// ファイルを選べてしまい、選んだのに挿入されない形になる
+const ACCEPTED_TEXT_TYPES = ".txt,.csv,.md";
+
+const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${ACCEPTED_PDF_TYPES},${ACCEPTED_TEXT_TYPES}`;
 
 // ペースト/ドロップで拾う画像の判定。MIME が image/* のもの、または
 // 対応拡張子を持つもの (MIME を空で送る HEIC 対策)。実体の検査はサーバが行う
@@ -79,6 +86,12 @@ const AUDIO_EXT_RE = new RegExp(`\\.(?:${AUDIO_EXTENSION_ALTERNATION})$`, "i");
 
 const PDF_EXT_RE = /\.pdf$/i;
 
+// テキストの判定は**拡張子だけ**で行う。音声や PDF と違って MIME で広めに
+// 拾わないのは、サーバが受ける条件がまさに「名前が txt/csv/md であること」
+// だから (uploads.ts textSaveInfo)。ここで広く拾うと、選べたのに 400 で
+// 断られるものが出てしまう
+const TEXT_EXT_RE = new RegExp(`\\.(?:${TEXT_EXTENSION_ALTERNATION})$`, "i");
+
 function isAudioFile(file: File): boolean {
   return file.type.startsWith("audio/") || AUDIO_EXT_RE.test(file.name);
 }
@@ -87,13 +100,44 @@ function isPdfFile(file: File): boolean {
   return file.type === "application/pdf" || PDF_EXT_RE.test(file.name);
 }
 
-// PDF は元のファイル名を画像記法の alt に残す。UUID 名では中身が判らないうえ、
-// 本文に入れておけば PGroonga の全文検索でファイル名から引ける。
-// `]` と改行は画像記法そのものを壊すので落とす (URL 側はサーバ発番の UUID)。
-function pdfAltText(fileName: string): string {
-  const cleaned = fileName.replace(/[[\]\r\n]/g, "").trim();
-  return cleaned.length > 0 ? cleaned : "PDF";
+function isTextFile(file: File): boolean {
+  return TEXT_EXT_RE.test(file.name);
 }
+
+// PDF・テキストは元のファイル名を画像記法の alt に残す。UUID 名では中身が
+// 判らないうえ、本文に入れておけば PGroonga の全文検索でファイル名から引ける。
+// `]` と改行は画像記法そのものを壊すので落とす (URL 側はサーバ発番の UUID)。
+function attachmentAltText(fileName: string, fallback: string): string {
+  const cleaned = fileName.replace(/[[\]\r\n]/g, "").trim();
+  return cleaned.length > 0 ? cleaned : fallback;
+}
+
+type AttachmentKind = "image" | "audio" | "pdf" | "text";
+
+// 保存された添付の種類を**保存後の URL の拡張子**から決める。
+//
+// 元 File の MIME や名前では決めない。何として保存するかを決めるのは中身を見た
+// サーバで、クライアントの申告ではないため (拡張子を偽装したファイルはここで
+// 食い違う)。MarkdownView も同じく URL の拡張子で描き分けるので、
+// **本文に書く記法と表示の振り分けが必ず一致する**
+function attachmentKind(url: string): AttachmentKind {
+  if (AUDIO_EXT_RE.test(url)) {
+    return "audio";
+  }
+  if (PDF_EXT_RE.test(url)) {
+    return "pdf";
+  }
+  if (TEXT_EXT_RE.test(url)) {
+    return "text";
+  }
+  return "image";
+}
+
+// alt が空になったときの表示名 (MarkdownView の既定ラベルと揃える)
+const KIND_FALLBACK: Record<"pdf" | "text", string> = {
+  pdf: "PDF",
+  text: "テキスト",
+};
 
 // アップロード済みの画像を Blob として取り直す。OCR は元 File ではなく
 // これを読む: HEIC など Chrome/Firefox が createImageBitmap で復号できない
@@ -129,14 +173,15 @@ function replaceToken(view: EditorView, token: string, replacement: string): voi
   });
 }
 
-// アップロード対象に拾うファイル (画像・音声・PDF)。
+// アップロード対象に拾うファイル (画像・音声・PDF・テキスト)。
 function pickFiles(list: FileList | undefined | null): File[] {
   return Array.from(list ?? []).filter(
     (f) =>
       f.type.startsWith("image/") ||
       IMAGE_EXT_RE.test(f.name) ||
       isAudioFile(f) ||
-      isPdfFile(f),
+      isPdfFile(f) ||
+      isTextFile(f),
   );
 }
 
@@ -323,6 +368,23 @@ export default function MemoEditorInner({
     }
   };
 
+  // 拾わなかったファイルがあれば知らせる。
+  //
+  // pickFiles は対応外を黙って捨てるので、**何も起きない**状態になる。
+  // 「選んだのに入らない」はエラーですらないぶん原因を探しようがなく、
+  // 対応形式が増えるほど踏みやすい (.json や .log はテキストに見える)
+  const reportIgnored = (list: FileList | null | undefined, picked: File[]) => {
+    const ignored = Array.from(list ?? []).filter((f) => !picked.includes(f));
+    if (ignored.length === 0) {
+      return;
+    }
+    setError(
+      `対応していない形式のため挿入しませんでした: ${ignored
+        .map((f) => f.name)
+        .join("、")}`,
+    );
+  };
+
   const insertFiles = async (
     view: EditorView,
     files: File[],
@@ -343,18 +405,19 @@ export default function MemoEditorInner({
           const url = await uploadImageWithProgress(file, (percent) => {
             setUpload({ current: index + 1, total: files.length, percent });
           });
-          // 音声は ![audio](url)、PDF は ![ファイル名.pdf](url) で挿入し、
-          // MarkdownView が src の拡張子を見て <audio> / リンクに振り分ける。
-          // 画像は従来どおり ![](url)
-          const isAudio = isAudioFile(file);
-          const isPdf = !isAudio && isPdfFile(file);
-          const markup = isAudio
-            ? `![${audioAlt}](${url})`
-            : isPdf
-              ? `![${pdfAltText(file.name)}](${url})`
-              : `![${imageAlt}](${url})`;
+          // 音声は ![audio](url)、PDF・テキストは ![ファイル名.pdf](url) で
+          // 挿入し、MarkdownView が src の拡張子を見て <audio> / ビューアを開く
+          // ボタンに振り分ける。画像は従来どおり ![](url)
+          const kind = attachmentKind(url);
+          const alt =
+            kind === "audio"
+              ? audioAlt
+              : kind === "image"
+                ? imageAlt
+                : attachmentAltText(file.name, KIND_FALLBACK[kind]);
+          const markup = `![${alt}](${url})`;
           replaceToken(view, token, markup);
-          if (isAudio || isPdf || !ocr) {
+          if (kind !== "image" || !ocr) {
             continue; // 画像でないもの・OCR を頼まれていないものは読まない
           }
           // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
@@ -398,15 +461,20 @@ export default function MemoEditorInner({
         paste: (event, view) => {
           const files = pickFiles(event.clipboardData?.files);
           if (files.length === 0) {
+            // ファイルを貼ったのに 1 つも拾えなかったときだけ知らせる
+            // (文字列のペーストはここに来ても files が空なので何も出ない)
+            reportIgnored(event.clipboardData?.files, files);
             return false;
           }
           event.preventDefault();
           void insertFiles(view, files);
+          reportIgnored(event.clipboardData?.files, files);
           return true;
         },
         drop: (event, view) => {
           const files = pickFiles(event.dataTransfer?.files);
           if (files.length === 0) {
+            reportIgnored(event.dataTransfer?.files, files);
             return false;
           }
           event.preventDefault();
@@ -416,6 +484,7 @@ export default function MemoEditorInner({
             view.dispatch({ selection: { anchor: pos } });
           }
           void insertFiles(view, files);
+          reportIgnored(event.dataTransfer?.files, files);
           return true;
         },
       }),
@@ -512,6 +581,7 @@ export default function MemoEditorInner({
     if (view && picked.length > 0) {
       void insertFiles(view, picked);
     }
+    reportIgnored(files, picked);
     // 同じファイルを続けて選べるようリセットする
     if (fileInputRef.current) {
       fileInputRef.current.value = "";

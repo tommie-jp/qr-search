@@ -190,6 +190,31 @@ test("PDF の alt が空でも既定のラベルを出す", () => {
   expect(html).toContain("PDF");
 });
 
+// テキスト系 (docs/12-添付ファイル種類拡張メモ.md)。PDF と同じく
+// ページ内のビューアで開く (画面遷移させない)
+test.each(["txt", "csv", "md"])("%s の画像記法はビューアを開くボタンにする", (ext) => {
+  const html = render(`![資料.${ext}](/api/images/abc.${ext})`);
+  expect(html).toContain('<button type="button"');
+  expect(html).toContain(`資料.${ext}`);
+  expect(html).not.toContain(`href="/api/images/abc.${ext}"`);
+  expect(html).not.toContain("<img");
+  expect(html).not.toContain("<audio");
+});
+
+test("テキストの alt が空でも既定のラベルを出す", () => {
+  const html = render("![](/api/images/abc.txt)");
+  expect(html).toContain('<button type="button"');
+  expect(html).toContain("テキスト");
+});
+
+// webp は md/txt/csv と字面が近いので、巻き込まれていないことを明示する
+// (ZoomableImage 自身が拡大用の button を持つので、判定は <img> の有無で行う)
+test("画像 URL は従来どおり <img> のまま (テキストに巻き込まれない)", () => {
+  const html = render("![](/api/images/a.webp)");
+  expect(html).toContain("<img");
+  expect(html).not.toContain("📝");
+});
+
 test("本文中の #タグ を検索リンクにする", () => {
   const html = render("これは #抵抗 のメモ");
   expect(html).toContain(`href="/?q=${encodeURIComponent("#抵抗")}"`);

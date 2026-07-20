@@ -11,6 +11,7 @@
 // ここは純粋なテキスト整形だけを持つ (DOM も CodeMirror も触らない)。
 
 import { AUDIO_EXTENSION_ALTERNATION } from '../audioFormats'
+import { TEXT_EXTENSION_ALTERNATION } from '../textFormats'
 import { normalizeToJapanese } from './normalizeJapanese'
 
 // 画像記法 `![alt](url)` を捕捉する (memoImages.ts と同じ規則)。
@@ -20,11 +21,11 @@ const IMAGE_SYNTAX = /!\[[^\]]*\]\(([^)\s]+)\)/g
 // そもそもこのアプリが預かっていないので対象外。
 const OWN_IMAGE_PREFIX = '/api/images/'
 
-// 音声・PDF も `![audio](/api/images/x.mp3)` `![仕様書.pdf](…)` という画像記法で
-// 本文に入る (docs/12-添付ファイル種類拡張メモ.md)。OCR の対象は画像だけなので、
-// 画像でない添付の URL は「後から OCR」の候補から外す
+// 音声・PDF・テキストも `![audio](/api/images/x.mp3)` `![仕様書.pdf](…)` という
+// 画像記法で本文に入る (docs/12-添付ファイル種類拡張メモ.md)。OCR の対象は
+// 画像だけなので、画像でない添付の URL は「後から OCR」の候補から外す
 const NON_IMAGE_URL_RE = new RegExp(
-  `\\.(?:${AUDIO_EXTENSION_ALTERNATION}|pdf)$`,
+  `\\.(?:${AUDIO_EXTENSION_ALTERNATION}|${TEXT_EXTENSION_ALTERNATION}|pdf)$`,
   'i',
 )
 

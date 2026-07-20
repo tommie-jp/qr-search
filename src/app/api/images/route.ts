@@ -45,7 +45,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return errorResponse(400, tooLargeMessage())
   }
 
-  const stored = await storeAttachment(new Uint8Array(await file.arrayBuffer()))
+  // ファイル名を渡すのはテキスト (txt/csv/md) の拡張子を決めるためだけ。
+  // 名前そのものは保存名にならない (サーバ発番の UUID + 既知の拡張子)
+  const stored = await storeAttachment(new Uint8Array(await file.arrayBuffer()), {
+    fileName: file.name,
+  })
   if (!stored.ok) {
     return errorResponse(400, stored.reason)
   }
