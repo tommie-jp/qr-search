@@ -30,6 +30,12 @@
 #   DEPLOY_REMOTE      ssh 接続先 (default: vps2)
 #   DEPLOY_REMOTE_DIR  リモートの compose ディレクトリ ($HOME 相対, default: 41-QR-search/qr-search)
 #   DEPLOY_TUNNEL_PORT マイグレーション用トンネルのローカルポート (default: 15432)
+#   DEPLOY_DB_PORT     マイグレーション先の **リモート側** DB ポート (default: 5432)
+#   DEPLOY_APP_PORT    ヘルスチェックで叩くリモート側 app ポート (default: 3000)
+#
+# デモインスタンス (qr-demo) へのデプロイは、別スタックのポートに向けて:
+#   DEPLOY_REMOTE_DIR=qr-demo DEPLOY_DB_PORT=5433 DEPLOY_APP_PORT=3100 ./doDeploy.sh
+# (compose.demo.yaml + デモ .env は配置済みの前提。docs/39-デモ公開計画.md §5)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -53,8 +59,12 @@ BUMP="${BUMP:-patch}"
 REMOTE="${DEPLOY_REMOTE:-vps2}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-41-QR-search/qr-search}"
 TUNNEL_PORT="${DEPLOY_TUNNEL_PORT:-15432}"
+# マイグレーション先のリモート側 DB ポートと、ヘルスチェックの app ポート。
+# 既定 (5432 / 3000) は本番。デモは別スタックの別ポート (5433 / 3100) を渡す。
+# **デモで 3000 のままだと、本番 app を叩いて誤って成功と判定する**ので必須
+REMOTE_DB_PORT="${DEPLOY_DB_PORT:-5432}"
 IMAGE="qr-search-app:latest"
-HEALTH_URL="http://127.0.0.1:3000/"
+HEALTH_URL="http://127.0.0.1:${DEPLOY_APP_PORT:-3000}/"
 HEALTH_RETRIES=30
 
 log() { echo ""; echo "==> $*"; }
@@ -101,7 +111,7 @@ REMOTE_PW="$(ssh "$REMOTE" "grep '^POSTGRES_PASSWORD=' '$REMOTE_DIR/.env' | cut 
 ENCODED_PW="$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$REMOTE_PW")"
 
 ssh -M -S "$SSH_CTRL" -f -N \
-  -L "127.0.0.1:${TUNNEL_PORT}:127.0.0.1:5432" \
+  -L "127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${REMOTE_DB_PORT}" \
   -o ExitOnForwardFailure=yes "$REMOTE"
 DATABASE_URL="postgresql://qr:${ENCODED_PW}@127.0.0.1:${TUNNEL_PORT}/qr" \
   npx prisma migrate deploy

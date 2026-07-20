@@ -1,0 +1,23 @@
+# qr-demo の定期再シード (docs/39-デモ公開計画.md §6)。
+#
+# ユーザ systemd unit として動かす (root 不要。docker は vps2 ユーザが
+# docker グループで叩ける前提)。設置:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/qr-demo-reseed.{service,timer} ~/.config/systemd/user/
+#   loginctl enable-linger "$USER"          # ログアウト後もタイマーを動かす
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now qr-demo-reseed.timer
+#
+# 手動で 1 回試す:  systemctl --user start qr-demo-reseed.service
+# ログを見る:        journalctl --user -u qr-demo-reseed.service
+#
+# %h はユーザのホーム。reseedDemo.sh はデモの compose dir (~/qr-demo/) に
+# 置く前提 (script は自分のある dir を DEMO_DIR の既定にする)。
+[Unit]
+Description=Reseed qr-demo from the template DB (docs/39 §6)
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/qr-demo
+ExecStart=%h/qr-demo/reseedDemo.sh

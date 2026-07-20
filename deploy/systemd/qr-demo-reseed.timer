@@ -1,0 +1,12 @@
+# qr-demo の毎時再シード (docs/39-デモ公開計画.md §6)。
+# 設置と有効化は qr-demo-reseed.service のヘッダを参照。
+[Unit]
+Description=Hourly reseed of qr-demo (docs/39 §6)
+
+[Timer]
+# 毎時 0 分。Persistent=true で、マシンが寝ていて逃した回も起床後に 1 度補う
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,35 @@
+# デモインスタンス (qr-demo.tommie.jp) 専用の override (docs/39-デモ公開計画.md §5)。
+#
+# 本番と同一の compose.yaml に重ねて使う。デモスタックの .env に
+#   COMPOSE_FILE=compose.yaml:compose.demo.yaml
+#   COMPOSE_PROJECT_NAME=qr-demo
+# を置けば、以後は素の `docker compose up -d` でこの override が効き、
+# コンテナ/volume 名も qr-demo 接頭辞に分かれる (-p の打ち忘れ事故が起きない)。
+#
+# デモ .env の要点 (docs/39 §5):
+#   APP_ENV=production                     # ピンクにしない。目印は DEMO バッジ/バナー
+#   DEMO_LOGIN_HINT=ログイン: demo / <パスワード>
+#   QR_BASE_URL=https://qr-demo.tommie.jp  # 忘れるとデモの QR が本番を指す
+#   APP_PORT=3100                          # 本番 (3000) と別ポート
+#   DB_PORT=5433                           # 本番 (5432) と別ポート
+#   WEBAUTHN_RP_ID= / WEBAUTHN_ORIGIN=     # 空 (デモはパスキー登録ごと封鎖済み)
+#   BASIC_AUTH_USER / BASIC_AUTH_HASH_B64  # guest 用 (公開してよい資格情報)
+#   外部 API キー (Yahoo/楽天) は置かない
+#
+# DEMO_MODE は**ここで直書きする** — .env 頼みにしない。docs/38 §2 の通り
+# 旗の欠落は「保護オフ」に倒れるため、デモを名乗るスタックの定義そのものに
+# 焼き込み、設定漏れで無防備な書き込み可サイトになる事故を構造的に防ぐ。
+services:
+  app:
+    environment:
+      # 本番 compose.yaml の `DEMO_MODE: ${DEMO_MODE:-}` を上書きする
+      DEMO_MODE: "1"
+    # 本番 compose.yaml には無い上限。デモは不特定の guest が書く前提なので、
+    # 暴走 (巨大アップロード・TeX レンダリング) をコンテナの資源上限で
+    # 本番から隔離する (別スタックなのでディスクも Postgres も元から別)。
+    mem_limit: 1g
+    cpus: 1.0
+
+  db:
+    mem_limit: 512m
+    cpus: 0.5

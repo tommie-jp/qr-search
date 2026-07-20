@@ -16,14 +16,21 @@
 #
 # 環境変数で上書き可能:
 #   DEPLOY_REMOTE  ssh 接続先 (default: vps2)
-#   DEPLOY_SITE    ヘルスチェック先のホスト名 (default: qr.tommie.jp)
+#   DEPLOY_SITE    反映するサイトのホスト名 (default: qr.tommie.jp)。
+#                  conf のパス (local/remote) とヘルスチェック先を SITE から導く。
+#
+# デモの conf を反映するとき (docs/39-デモ公開計画.md §7):
+#   DEPLOY_SITE=qr-demo.tommie.jp ./doDeployNginx.sh
+# (DNS + 証明書は先に手作業で用意しておくこと。conf のヘッダ参照)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 REMOTE="${DEPLOY_REMOTE:-vps2}"
 SITE="${DEPLOY_SITE:-qr.tommie.jp}"
-LOCAL_CONF="deploy/nginx/qr.tommie.jp.conf"
-REMOTE_CONF="/etc/nginx/sites-available/qr.tommie.jp"
+# conf のパスは SITE から導く。既定 (qr.tommie.jp) は従来と同一。
+# 本番/デモで同じスクリプトを使い回すため、ここをハードコードしない
+LOCAL_CONF="deploy/nginx/${SITE}.conf"
+REMOTE_CONF="/etc/nginx/sites-available/${SITE}"
 # 保護されたパス。認証はもう nginx ではなくアプリが行う (docs/18-ログイン計画.md)
 # ため、未ログインでも 401 ではなく 200 + 案内が返るのが正。
 # 状態コードでは「守れているか」を判定できないので、本文の印で見る
@@ -104,8 +111,8 @@ git diff --quiet HEAD -- "$LOCAL_CONF" \
 echo "OK: 作業ツリーはコミット済み"
 
 log "4/5 転送 + 配置 + 構文検証 (nginx -t)"
-STAGE="/tmp/qr.tommie.jp.conf.$$"
-BACKUP="/tmp/qr.tommie.jp.conf.bak.$$"
+STAGE="/tmp/${SITE}.conf.$$"
+BACKUP="/tmp/${SITE}.conf.bak.$$"
 scp -q "$LOCAL_CONF" "$REMOTE:$STAGE"
 ssh "$REMOTE" "sudo cp '$REMOTE_CONF' '$BACKUP' && sudo install -o root -g root -m 644 '$STAGE' '$REMOTE_CONF' && rm -f '$STAGE'"
 
