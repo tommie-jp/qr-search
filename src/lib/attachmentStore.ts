@@ -12,7 +12,7 @@
 import { saveImage, type SaveImageOptions, savePlainAttachment } from './imageStore'
 import { moveMoovToFront } from './mp4Faststart'
 import { normalizeImage } from './normalizeImage'
-import { normalizeTextBytes } from './normalizeText'
+import { hasUtf16Bom, normalizeTextBytes } from './normalizeText'
 import {
   audioSaveInfo,
   type ImageFormat,
@@ -85,6 +85,18 @@ export async function storeAttachment(
     return storeImage(bytes, imageFormat, options)
   }
 
+  // UTF-16 の BOM を持つテキストは、音声判定より**先に**確定させる。
+  // UTF-16LE の BOM `FF FE` は緩い MP3 判定に音声として横取りされてしまう
+  // (`FF FE` は MPEG1 Layer II の同期語としても妥当)。BOM + テキスト名なら
+  // それはテキストなので、ここで決める。名前がテキストでない UTF-16 BOM
+  // (稀な mp2 等) は null が返り、下の音声判定に委ねられる (normalizeText.ts)
+  if (hasUtf16Bom(bytes)) {
+    const asText = await tryStoreText(bytes, options)
+    if (asText) {
+      return asText
+    }
+  }
+
   const audioFormat = sniffAudioFormat(bytes)
   if (audioFormat) {
     // 音声は変換もサムネも要らない。中身をそのまま保存する。
@@ -103,25 +115,41 @@ export async function storeAttachment(
 
   // テキストは**最後に試す**。署名で決まる形式をすべて外してから見る
   // (先に置くと、たまたまテキストとして読めてしまう署名つきファイルを
-  // 横取りしてしまう)。
-  //
-  // 判定は 2 つとも通ったときだけ:
-  //   1. 名前が txt/csv/md であること (uploads.ts textSaveInfo)
-  //   2. 中身がテキストとして読めること (normalizeText.ts)
-  // 名前だけでは中身がバイナリのものを受けてしまい、中身だけでは HTML や SVG が
-  // 名前を偽ったまま通ってしまう。中身は UTF-8 へ正規化されて返る
-  const textInfo = textSaveInfo(options.fileName)
-  if (textInfo) {
-    const text = normalizeTextBytes(bytes)
-    if (text) {
-      return succeed(
-        await savePlainAttachment(text, textInfo.mime, textInfo.ext),
-        false,
-      )
-    }
+  // 横取りしてしまう)。UTF-16 BOM だけは上で先に拾っている
+  const asText = await tryStoreText(bytes, options)
+  if (asText) {
+    return asText
   }
 
   return { ok: false, reason: UNSUPPORTED_ATTACHMENT_MESSAGE }
+}
+
+// テキストとして保存できるか試す。判定は 2 つとも通ったときだけ:
+//   1. 名前が txt/csv/md であること (uploads.ts textSaveInfo)
+//   2. 中身がテキストとして読めること (normalizeText.ts)
+// 名前だけでは中身がバイナリのものを受けてしまい、中身だけでは HTML や SVG が
+// 名前を偽ったまま通ってしまう。中身は UTF-8 へ正規化されて保存される。
+//
+// 戻り値の 3 通り:
+//   - null      … 名前がテキストでない (= テキストではない。別形式に委ねる)
+//   - ok: false … 名前は合うが中身を読めなかった (これ以上は試さない)
+//   - ok: true  … 保存できた
+async function tryStoreText(
+  bytes: Uint8Array<ArrayBuffer>,
+  options: StoreAttachmentOptions,
+): Promise<AttachmentResult | null> {
+  const textInfo = textSaveInfo(options.fileName)
+  if (!textInfo) {
+    return null
+  }
+  const text = normalizeTextBytes(bytes)
+  if (!text) {
+    return { ok: false, reason: UNSUPPORTED_ATTACHMENT_MESSAGE }
+  }
+  return succeed(
+    await savePlainAttachment(text, textInfo.mime, textInfo.ext),
+    false,
+  )
 }
 
 // 画像の保存 (HEIC/TIFF は WebP へ変換してから)。

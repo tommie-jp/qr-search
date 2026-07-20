@@ -4,6 +4,22 @@ import { normalizeTextBytes } from './normalizeText'
 const utf8 = (text: string) => new TextEncoder().encode(text)
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
+// UTF-16 の生成は手打ちだと桁を取り違えるので、コードポイントから組み立てる。
+// BOM を先頭に付ける (little / big の別で並びを変える)。BMP 内の文字だけ扱う
+function utf16(text: string, endian: 'le' | 'be'): Uint8Array {
+  const units = [0xfeff, ...text].map((c) =>
+    typeof c === 'number' ? c : c.codePointAt(0)!,
+  )
+  const bytes = new Uint8Array(units.length * 2)
+  units.forEach((u, i) => {
+    const hi = (u >> 8) & 0xff
+    const lo = u & 0xff
+    bytes[i * 2] = endian === 'le' ? lo : hi
+    bytes[i * 2 + 1] = endian === 'le' ? hi : lo
+  })
+  return bytes
+}
+
 test('UTF-8 のテキストはそのまま受け付ける', () => {
   const result = normalizeTextBytes(utf8('日本語の memo\nsecond line\n'))
   expect(result).not.toBeNull()
@@ -30,6 +46,27 @@ test('BOM は落としてから保存する', () => {
   const withBom = utf8('﻿id,name\n1,x\n')
   const result = normalizeTextBytes(withBom)
   expect(decode(result!)).toBe('id,name\n1,x\n')
+})
+
+// Excel や一部ツール (iOS 上のアプリ含む) が日本語 CSV を UTF-16 で書き出す
+// ことがある。BOM があれば曖昧さなく判別できるので、UTF-8 へ直して受け付ける
+test('UTF-16LE (BOM 付き) のテキストは UTF-8 に変換して受け付ける', () => {
+  const result = normalizeTextBytes(utf16('id,名前\n', 'le'))
+  expect(result).not.toBeNull()
+  expect(decode(result!)).toBe('id,名前\n')
+})
+
+test('UTF-16BE (BOM 付き) のテキストも受け付ける', () => {
+  const result = normalizeTextBytes(utf16('id,名前\n', 'be'))
+  expect(result).not.toBeNull()
+  expect(decode(result!)).toBe('id,名前\n')
+})
+
+// BOM 無しの UTF-16 は受けない。UTF-16 はほぼ何でもデコードできてしまい、
+// binary をテキストとして取り込みかねないため (BOM が判別の唯一の手掛かり)
+test('BOM 無しの UTF-16 相当は受けない (binary 誤検出を避ける)', () => {
+  // BOM を外した "AB" (UTF-16LE)。00 が混じるので NUL 拒否で落ちる
+  expect(normalizeTextBytes(Uint8Array.from([0x41, 0x00, 0x42, 0x00]))).toBeNull()
 })
 
 // ここがテキスト判定の要。テキストには署名が無いので、

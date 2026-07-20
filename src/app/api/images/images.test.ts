@@ -429,6 +429,25 @@ describe.skipIf(!runDbTests)(
       expect(await getRes.text()).toBe('日本語\n')
     })
 
+    test('UTF-16 (BOM 付き) の CSV も UTF-8 に直して保存する', async () => {
+      // Excel や iOS 上のアプリが出す UTF-16 CSV。BOM + "id,名前\n" を UTF-16LE で
+      const units = [0xfeff, ...'id,名前\n'].map((c) =>
+        typeof c === 'number' ? c : c.codePointAt(0)!,
+      )
+      const le = new Uint8Array(units.length * 2)
+      units.forEach((u, i) => {
+        le[i * 2] = u & 0xff
+        le[i * 2 + 1] = (u >> 8) & 0xff
+      })
+      const name = await upload(new File([le], '部品表.csv', { type: 'text/csv' }))
+
+      const [req, ctx] = getRequest(name)
+      const getRes = await GET(req, ctx)
+      expect(getRes.headers.get('content-type')).toBe('text/csv; charset=utf-8')
+      // 配信は UTF-8。BOM も落ちている
+      expect(await getRes.text()).toBe('id,名前\n')
+    })
+
     test('テキストはサムネも埋め込みも作らない (一覧・画像検索に混ざらない)', async () => {
       const name = await upload(new File(['# 設計メモ\n'], 'design.md'))
       const row = await prisma.image.findUnique({ where: { name } })

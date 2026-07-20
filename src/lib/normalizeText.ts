@@ -20,6 +20,42 @@
 // としても「読めてしまう」ことがあり、先に試したほうが勝ってしまう
 const ENCODINGS = ['utf-8', 'shift_jis'] as const
 
+// BOM から UTF-16 と判別できるときに使う文字コード。
+//
+// **UTF-16 は BOM が付いているときだけ受ける。** BOM 無しの UTF-16 は
+// ほぼどんなバイト列でも「デコードできて」しまい (UTF-16 に不正な並びが
+// ほぼ無いため)、binary をテキストとして取り込みかねない。先頭 2 バイトの
+// BOM (`FF FE` / `FE FF`) があれば UTF-16 だと曖昧さなく決まる
+// (UTF-8 は FF で始まれず、Shift_JIS も FF は不正なので取り違えない)。
+//
+// なぜ要るか: Excel や一部ツール・iOS 上のアプリ (iCloud 同期や Numbers 等で
+// 開き直した CSV) が UTF-16 で書き出すことがある。PC では UTF-8/Shift_JIS
+// だった同じ CSV が、別環境では UTF-16 になっていて弾かれる
+// (docs/12-添付ファイル種類拡張メモ.md)。
+function bomEncoding(bytes: Uint8Array): string | null {
+  if (bytes.byteLength < 2) {
+    return null
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return 'utf-16le'
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return 'utf-16be'
+  }
+  return null
+}
+
+// UTF-16 の BOM を持つか。
+//
+// 呼び出し側 (attachmentStore) が**音声判定より先にテキストを確定させる**ために
+// 見る。UTF-16LE の BOM `FF FE` は、緩い MP3 判定 (先頭 FF + 次バイトの上位
+// 3bit が同期語) に音声として横取りされてしまう — `FF FE` は MPEG1 Layer II の
+// 同期語としても妥当なので、音声判定を弱めては直せない。BOM という強い署名が
+// あるうちにテキストへ寄せるのが安全 (docs/12-添付ファイル種類拡張メモ.md)。
+export function hasUtf16Bom(bytes: Uint8Array): boolean {
+  return bomEncoding(bytes) !== null
+}
+
 // 許すのはタブ (09)・改行 (0A)・復帰 (0D) だけ。他の制御文字が 1 つでも
 // あればテキストとして扱わない (NUL を含むバイナリはここで落ちる)。
 // DEL (7F) と C1 (80-9F) まで見るのは、**デコード後の文字**で判定しているため —
@@ -53,7 +89,13 @@ export function normalizeTextBytes(
     return null
   }
 
-  for (const encoding of ENCODINGS) {
+  // BOM で UTF-16 と判ればそれだけを試す。判別が付いている以上、外れたら
+  // (制御文字が出たら) テキストではないと結論してよく、utf-8/shift_jis へ
+  // 落とす意味はない (FF/FE 始まりはどちらでも読めない)
+  const bom = bomEncoding(bytes)
+  const encodings = bom ? [bom] : ENCODINGS
+
+  for (const encoding of encodings) {
     const text = decodeStrict(bytes, encoding)
     if (text === null) {
       continue
