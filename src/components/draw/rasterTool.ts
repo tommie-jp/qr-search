@@ -44,6 +44,12 @@ function readCanvas(fc: fabric.Canvas): RgbaImage | null {
   if (!element || !context) {
     return null;
   }
+  // **必ず同期で描き直してから読む**。fabric の remove / add が呼ぶのは
+  // requestRenderAll で、実際の描画は rAF まで待たされる。読むだけなら
+  // 待てばよいが、モザイクは「範囲を見せていた黒い仮表示を消した直後」に
+  // 読むため、待たずに読むと**仮表示が焼き込まれたままの画素**を拾い、
+  // 平坦な黒い板が出来上がる (実測: 赤 255 の場所が 153 で読めた)
+  fc.renderAll();
   const { data, width, height } = context.getImageData(
     0,
     0,
