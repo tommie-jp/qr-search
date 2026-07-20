@@ -25,7 +25,7 @@ import {
   undoHistory,
 } from "@/lib/draw/history";
 import type { DrawTool } from "./drawTools";
-import { buildFill } from "./rasterTool";
+import { buildFill, buildMosaic } from "./rasterTool";
 import { attachShapeTool } from "./shapeTool";
 
 export type { DrawTool };
@@ -408,6 +408,20 @@ export function useDrawCanvas({
           if (commit) {
             scheduleSnapshot();
           }
+        },
+        // モザイク: 囲んだ範囲の画素を升目の平均色に均して置き換える
+        // (docs/36 §3)。塗りつぶしと同じラスタ経路
+        onRegion: (region) => {
+          void buildMosaic(fc, region)
+            .then((mosaic) => {
+              if (mosaic && fcRef.current === fc) {
+                fc.add(mosaic);
+                fc.requestRenderAll();
+              }
+            })
+            .catch(() => {
+              setError("モザイクを作れませんでした。");
+            });
         },
       });
 

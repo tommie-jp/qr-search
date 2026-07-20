@@ -14,6 +14,7 @@ const TOOLS: ReadonlyArray<{ id: DrawTool; label: string }> = [
   { id: "arrow", label: "矢印" },
   { id: "rect", label: "四角" },
   { id: "ellipse", label: "丸" },
+  { id: "mosaic", label: "モザイク" },
   { id: "eraser", label: "消しゴム" },
   { id: "select", label: "選択" },
   { id: "text", label: "文字" },

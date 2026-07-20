@@ -11,6 +11,7 @@ import * as fabric from "fabric";
 import {
   arrowGeometry,
   arrowPathData,
+  type DragRect,
   dragDistance,
   type DrawPoint,
   normalizeDragRect,
@@ -27,7 +28,13 @@ export interface ShapeToolDeps {
   // ドラッグ中は履歴を止める。commit が false なら何も置かずに終わった
   beginPreview: () => void;
   endPreview: (commit: boolean) => void;
+  // 範囲だけを決める道具 (モザイク) の確定。図形は置かず、囲んだ矩形を渡す。
+  // 実際に置くものは呼び手が後から作る (画素を読む処理が非同期なため)
+  onRegion: (rect: DragRect) => void;
 }
+
+// 囲んだ範囲を見せるだけの仮の矩形。確定時には捨てるので、見えれば足りる
+const REGION_PREVIEW_FILL = "rgba(0, 0, 0, 0.4)";
 
 // 図形はドラッグで置くので、置いた直後に掴めてしまうと次のドラッグの邪魔に
 // なる。選択は「選択」道具に切り替えたときだけ有効になる (useDrawCanvas)
@@ -58,6 +65,16 @@ function createShape(
   const rect = normalizeDragRect(from, to);
   if (rect.width === 0 && rect.height === 0) {
     return null;
+  }
+  if (tool === "mosaic") {
+    // 隠す範囲を見せるだけの仮表示。確定時に捨てて、画素を加工した
+    // 画像に差し替える
+    return new fabric.Rect({
+      ...SHAPE_DEFAULTS,
+      ...rect,
+      fill: REGION_PREVIEW_FILL,
+      stroke: undefined,
+    });
   }
   if (tool === "rect") {
     return new fabric.Rect({ ...common, ...rect });
@@ -126,15 +143,23 @@ export function attachShapeTool(fc: fabric.Canvas, deps: ShapeToolDeps): () => v
     }
     // 動いていなければタップ。仮の図形は残さない
     const moved = last !== null && dragDistance(start, last) >= deps.getMinDrag();
-    if (!moved) {
+    const region = moved && last ? normalizeDragRect(start, last) : null;
+    const isRegionTool = deps.getTool() === "mosaic";
+    if (!moved || isRegionTool) {
+      // 範囲を決めるだけの道具は、仮表示を必ず捨てる
       clearPreview();
     }
-    const committed = moved && preview !== null;
+    const committed = !isRegionTool && moved && preview !== null;
     start = null;
     last = null;
     preview = null;
     fc.requestRenderAll();
+    // 履歴を戻してから範囲を渡す。加工した画像が後から add されたときに、
+    // その object:added が 1 手として積まれるようにする
     deps.endPreview(committed);
+    if (isRegionTool && region) {
+      deps.onRegion(region);
+    }
   };
 
   fc.on("mouse:down", onDown);
@@ -153,5 +178,7 @@ export function attachShapeTool(fc: fabric.Canvas, deps: ShapeToolDeps): () => v
 type TypedEvent = Parameters<fabric.Canvas["getScenePoint"]>[0];
 
 export function isShapeTool(tool: DrawTool): boolean {
-  return tool === "arrow" || tool === "rect" || tool === "ellipse";
+  return (
+    tool === "arrow" || tool === "rect" || tool === "ellipse" || tool === "mosaic"
+  );
 }
