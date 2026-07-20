@@ -13,3 +13,8 @@ test('page と sort が既定でなければ付ける', () => {
 test('クエリが空でも page/sort は付く', () => {
   expect(buildSearchUrl('', 2, 'updated')).toBe('/?page=2')
 })
+
+// アクセス順 (docs/37-アクセス順計画.md)。既定ではないので URL に載る
+test('アクセス順は sort=accessed として付く', () => {
+  expect(buildSearchUrl('', 1, 'accessed')).toBe('/?sort=accessed')
+})

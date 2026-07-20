@@ -9,6 +9,7 @@ import {
   type ItemPropsRow,
 } from '@/lib/props'
 import { parseSearchExpr, type SearchExpr, type SearchTerm } from '@/lib/search'
+import { orderByClause } from '@/lib/sortOrder'
 import { extractTags } from '@/lib/tags'
 import {
   escapeLike,
@@ -53,6 +54,31 @@ export async function setItemPublic(itemNo: string, isPublic: boolean): Promise<
   return prisma.$executeRaw`
     UPDATE items SET public_at = NULL
     WHERE item_no = ${itemNo} AND public_at IS NOT NULL
+  `
+}
+
+// --- アクセス順 (docs/37-アクセス順計画.md) ---
+
+// 連打・二重発火を吸収する間隔。リロードや React の StrictMode で
+// 同じノートの記録が続けて飛んでくるため
+const ACCESS_THROTTLE = '1 minute'
+
+// ノートを「開いた」ことを記録する。
+//
+// **updated_at は触らない**。見ただけで更新順が動くのは嘘になる
+// (trashItems / setItemPublic と同じ理由)。Prisma の update は @updatedAt を
+// 必ず打ってしまうので生 SQL で書く。
+//
+// WHERE の時刻条件は連打よけ。1 分以内に既に記録済みなら何もしない
+// (更新行数 0 が正常な結果なので、戻り値で成否を判断しないこと)。
+//
+// ゴミ箱の行も記録してよい。ゴミ箱から開いて中身を確かめることはあり、
+// 復元したときに「最近見た」順で見つかるほうが自然。
+export async function recordItemAccess(itemNo: string): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE items SET accessed_at = now()
+    WHERE item_no = ${itemNo}
+      AND accessed_at < now() - ${ACCESS_THROTTLE}::interval
   `
 }
 
@@ -232,13 +258,14 @@ function buildTrashedWhere(query: string): Prisma.Sql {
 }
 
 // ソート句。PGroonga のスコアは小テーブルで seq scan になり効かないため、
-// 関連度順は採用せず現行の更新順/番号順を維持する (docs/04-全文検索計画.md §3-4)。
-// 更新順の item_no はタイブレーク。同時刻の行 (インポート直後など) で並びが
-// 不定になると、ページ送り・前後ナビが読み込みのたびに揺れる (docs/15 §2-2)。
+// 関連度順は採用せず現行の更新順/番号順/アクセス順を維持する
+// (docs/04-全文検索計画.md §3-4、docs/37-アクセス順計画.md)。
+//
+// 句の組み立ては sortOrder.ts の純関数が持つ (DATABASE_URL 無しでテストする
+// ため)。**Prisma.raw に渡してよいのは、あちらが自前の定数しか返さないから** —
+// 引数の文字列が SQL へ混ざる余地はない (sortOrder.ts のコメントと対)。
 function buildOrderBy(sort: Sort): Prisma.Sql {
-  return sort === 'updated'
-    ? Prisma.sql`ORDER BY updated_at DESC, item_no ASC`
-    : Prisma.sql`ORDER BY item_no_num ASC NULLS LAST, item_no ASC`
+  return Prisma.raw(`ORDER BY ${orderByClause(sort)}`)
 }
 
 // q は memo / url の全文検索 (&@)、または itemNo の前方一致。
@@ -281,6 +308,7 @@ export async function searchItems(
            props,
            created_at AS "createdAt",
            updated_at AS "updatedAt",
+           accessed_at AS "accessedAt",
            deleted_at AS "deletedAt",
            public_at  AS "publicAt"
     FROM items

@@ -8,6 +8,7 @@ import {
   emptyTrash,
   getItem,
   purgeItems,
+  recordItemAccess,
   restoreItems,
   setItemPublic,
   trashItems,
@@ -15,7 +16,7 @@ import {
   upsertMemo,
 } from '@/lib/items'
 import { parseBackUrl, parseSelectedItemNos } from '@/lib/itemSelection'
-import { requireUser } from '@/lib/session'
+import { currentUser, requireUser } from '@/lib/session'
 import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
 import { isValidItemNo, MAX_TEXT_LENGTH, parseMode } from '@/lib/validation'
 import {
@@ -220,4 +221,36 @@ export async function bulkTagAction(formData: FormData): Promise<void> {
   }
 
   redirect(back)
+}
+
+// ノートを開いたことを記録する (docs/37-アクセス順計画.md)。
+//
+// **画面の描画時ではなくクライアントのマウント後に呼ぶ** (RecordAccess.tsx)。
+// サーバ側の描画で記録すると、一覧の <Link> を Next.js が先読み (prefetch)
+// しただけで「見た」ことになり、検索結果に並んだ全ノートがアクセス順の
+// 先頭に来てしまう。prefetch はクライアント効果を実行しないので、
+// マウント後に呼べば誤発火しない。
+//
+// Server Action は誰でも叩ける POST の口なので、ここでもログインを確かめる
+// (未ログインの閲覧で並びを書き換えられないように。/item は公開ノートを
+// 未ログインへ見せる口でもある)。
+//
+// 失敗しても投げない。並びが 1 回進まないだけで、ノートの表示を巻き添えに
+// する理由がない。ただし黙らせはせずログには残す。
+export async function recordAccessAction(itemNo: string): Promise<void> {
+  // requireUser() ではなく currentUser() で見るのが要点。**これは利用者が
+  // 頼んだ操作ではなく、画面を開いた副作用**なので、未ログインなら黙って
+  // 何もしないのが正しい。requireUser() は投げるため、公開ノートを未ログインで
+  // 開いた人に不要なエラーを見せることになる (書き込ませない目的は同じく達する)
+  if ((await currentUser()) === null) {
+    return
+  }
+  if (!isValidItemNo(itemNo)) {
+    return
+  }
+  try {
+    await recordItemAccess(itemNo)
+  } catch (error) {
+    console.error(`アクセス日時を記録できませんでした (${itemNo}):`, error)
+  }
 }

@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { restoreItemsAction, updateItemAction } from "@/app/actions";
+import {
+  recordAccessAction,
+  restoreItemsAction,
+  updateItemAction,
+} from "@/app/actions";
 import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MemoEditor } from "@/components/MemoEditor";
 import { PageTransition } from "@/components/PageTransition";
+import { RecordAccess } from "@/components/RecordAccess";
 import { SubmitButton } from "@/components/SubmitButton";
 import { TrashedBanner } from "@/components/TrashedBanner";
 import { UnsavedGuard } from "@/components/UnsavedGuard";
@@ -51,6 +56,10 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
 
   return (
     <PageTransition>
+      {/* 編集画面を開いたのも「触った」に数える (docs/37-アクセス順計画.md)。
+          この画面は proxy.ts が未ログインを止める口なので、公開ノートの
+          読み手が並びを動かす心配はない */}
+      <RecordAccess itemNo={itemNo} action={recordAccessAction} />
       <div className="space-y-4">
         <h1 className="text-xl font-bold">
           edit <span className="font-mono">#{itemNo}</span>

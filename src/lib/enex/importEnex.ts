@@ -315,6 +315,10 @@ async function applyEnexTimestamps(itemNo: string, note: EnexNote): Promise<void
     // どちらも無いノートは取り込んだ時刻のまま (upsert が入れた値) にする
     return
   }
+  // **accessed_at は触らない** (docs/37-アクセス順計画.md §5)。列の既定値
+  // (now()) のまま = 取り込んだ時刻が入る。これで取り込んだノートが
+  // 「アクセス順」の先頭に並び、Evernote 由来の古い日時で埋もれずに済む
+  // (更新順では 2012 年のノートとして沈む) — インポートの目的そのもの
   await prisma.$executeRaw`
     UPDATE items SET created_at = ${created}, updated_at = ${updated}
     WHERE item_no = ${itemNo}

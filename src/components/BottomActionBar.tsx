@@ -112,8 +112,20 @@ export function BottomActionBar({
     image: "compact",
   };
   const nextView = nextViewOf[view];
-  const isItemNoSort = sort === "itemNo";
-  const nextSort: Sort = isItemNoSort ? "updated" : "itemNo";
+  // 並び順は 3 値の循環 (docs/37-アクセス順計画.md)。表示モードと同じ形にし、
+  // ラベルには現在値を出す方針を保つ。順は「更新順 → アクセス順 → 番号順」で、
+  // よく使う 2 つ (更新順・アクセス順) を隣どうしに置く
+  const sortLabel: Record<Sort, string> = {
+    updated: "更新順",
+    accessed: "アクセス順",
+    itemNo: "番号順",
+  };
+  const nextSortOf: Record<Sort, Sort> = {
+    updated: "accessed",
+    accessed: "itemNo",
+    itemNo: "updated",
+  };
+  const nextSort = nextSortOf[sort];
 
   return (
     <>
@@ -172,9 +184,7 @@ export function BottomActionBar({
               スピナーを出す (docs/11-アプリ的UIUX計画.md §1-2) */}
           <PendingLink
             href={buildSearchUrl(query, 1, nextSort)}
-            aria-label={`並び順: ${isItemNoSort ? "番号順" : "更新順"} (押すと${
-              isItemNoSort ? "更新順" : "番号順"
-            }に切替)`}
+            aria-label={`並び順: ${sortLabel[sort]} (押すと${sortLabel[nextSort]}に切替)`}
             // スピナーは絶対配置で流れから抜く。縦積みのスロットで場所を
             // 取らせると、その半分ぶんアイコンとラベルが持ち上がり、この
             // スロットだけ他と高さが揃わない
@@ -184,7 +194,7 @@ export function BottomActionBar({
             <SlotIcon color="text-amber-600">
               <SortIcon />
             </SlotIcon>
-            {isItemNoSort ? "番号順" : "更新順"}
+            {sortLabel[sort]}
           </PendingLink>
 
           {/* 一括タグ付け・ゴミ箱行きのための選択モード。一覧側 (ItemList) と

@@ -4,6 +4,8 @@ import { ItemView } from "@/components/ItemView";
 import { LoginRequiredNotice } from "@/components/LoginRequiredNotice";
 import { PageTransition } from "@/components/PageTransition";
 import { PublicItemView } from "@/components/PublicItemView";
+import { RecordAccess } from "@/components/RecordAccess";
+import { recordAccessAction } from "@/app/actions";
 import { getItem } from "@/lib/items";
 import { isPublicItem } from "@/lib/publicItem";
 import { currentUser } from "@/lib/session";
@@ -64,6 +66,11 @@ export default async function ItemPage({ params, searchParams }: ItemPageProps) 
 
   return (
     <PageTransition>
+      {/* 「最近見た順」のための記録 (docs/37-アクセス順計画.md)。
+          **ログイン中の枝にだけ置く** — 上の未ログイン枝 (公開ノート) に
+          置くと、他人やクローラが開くたびに自分の並びが書き換わる。
+          描画では記録せずマウント後に呼ぶ理由は RecordAccess.tsx に書いた */}
+      <RecordAccess itemNo={itemNo} action={recordAccessAction} />
       <ItemView itemNo={itemNo} item={item} saved={saved} />
     </PageTransition>
   );

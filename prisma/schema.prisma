@@ -24,6 +24,19 @@ model Item {
   props     Json     @default("[]")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  // 最後にこのノートを開いた日時 (docs/37-アクセス順計画.md)。
+  // ログイン中に /item・/edit を開いたときだけ進む。
+  //
+  // **updated_at と分けて持つのが要点**。「見ただけで更新順が動く」のは嘘に
+  // なる (trashItems / setItemPublic が生 SQL で @updatedAt を避けているのと
+  // 同じ考え方)。一方で ENEX から取り込んだノートは作成・更新日時が Evernote
+  // 由来 (2012 年など) なので更新順では埋もれる。この列があると「最近触った
+  // 順」で拾えて、取り込んだ日時も本文の日時も両方を正直に保てる。
+  //
+  // 既存行は移行時に updated_at で埋めた。null 許容にしないのは、並べ替えで
+  // NULLS LAST の考慮が要らないため (初期値があれば最初は更新順と同じに
+  // 見え、使うほどアクセス順に育つ)。
+  accessedAt DateTime @default(now()) @map("accessed_at")
   // ゴミ箱 (二段階削除)。null = 通常、非 null = ゴミ箱行き日時。
   // 検索・タグ集計は null の行だけを見る。永久削除は行の DELETE。
   // ゴミ箱の行も items に残るため、nextItemNo の採番はその番号を

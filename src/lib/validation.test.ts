@@ -101,6 +101,11 @@ describe('parseSort', () => {
     expect(parseSort('itemNo')).toBe('itemNo')
   })
 
+  // 最近見た順 (docs/37-アクセス順計画.md)
+  test('returns "accessed" for "accessed"', () => {
+    expect(parseSort('accessed')).toBe('accessed')
+  })
+
   test('defaults to "updated" for undefined or unknown values', () => {
     expect(parseSort(undefined)).toBe('updated')
     expect(parseSort('other')).toBe('updated')

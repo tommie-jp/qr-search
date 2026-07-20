@@ -61,21 +61,33 @@ test("画像表示の次は小に戻る (循環の最後の辺)", () => {
   expect(html).toContain("表示: 画像 (押すと小に切替)");
 });
 
-test("並び順トグルは現在の順を見せ、リンク先はもう一方になる", () => {
+// 並び順は 更新順 → アクセス順 → 番号順 の 3 値循環
+// (docs/37-アクセス順計画.md)。表示モードと同じ形
+test("更新順の次はアクセス順", () => {
   const html = render("compact", "updated", "npn");
   expect(html).toContain(">更新順<");
   // buildSearchUrl と同じ形。切り替えたら 1 ページ目に戻す
-  expect(html).toContain("sort=itemNo");
+  expect(html).toContain("sort=accessed");
   expect(html).not.toContain("sort=updated");
+  // 行き先も読み上げに乗せる (押す前に循環の次が判る)
+  expect(html).toContain("並び順: 更新順 (押すとアクセス順に切替)");
 });
 
-test("番号順のときは逆向きになる", () => {
+test("アクセス順の次は番号順", () => {
+  const html = render("compact", "accessed");
+  expect(html).toContain(">アクセス順<");
+  expect(html).toContain("sort=itemNo");
+  expect(html).toContain("並び順: アクセス順 (押すと番号順に切替)");
+});
+
+test("番号順の次は既定の更新順に戻る (循環の最後の辺)", () => {
   const html = render("compact", "itemNo");
   expect(html).toContain(">番号順<");
   // 戻り先は既定の更新順。buildSearchUrl は既定値を URL から省くので
   // sort= は付かない (検索語も無いので素の "/")
   expect(html).toContain('href="/"');
   expect(html).not.toContain("sort=itemNo");
+  expect(html).toContain("並び順: 番号順 (押すと更新順に切替)");
 });
 
 test("並び順の切替は検索語を持ち回す", () => {
