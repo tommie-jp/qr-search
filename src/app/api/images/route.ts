@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { storeAttachment } from '@/lib/attachmentStore'
+import { checkDemoUploadQuota } from '@/lib/demoQuota'
 import { checkUploadRequest, maxUploadBytes, tooLargeMessage } from '@/lib/uploads'
 
 function errorResponse(status: number, error: string): NextResponse {
@@ -44,6 +45,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 上限はデモインスタンスでは縮む (docs/38 §5。maxUploadBytes が env で切り替え)
   if (file.size > maxUploadBytes()) {
     return errorResponse(400, tooLargeMessage(maxUploadBytes()))
+  }
+
+  // デモの総量クォータ (docs/39-デモ公開計画.md §2-1)。デモのときだけ、
+  // 保存前に images の総バイト数を見て上限超過なら 507 で断る。DB を引くので
+  // 認証・CSRF・サイズの安い検査をすべて通した後に置く
+  const quota = await checkDemoUploadQuota(file.size)
+  if (quota) {
+    return errorResponse(quota.status, quota.error)
   }
 
   // ファイル名を渡すのはテキスト (txt/csv/md) の拡張子を決めるためだけ。

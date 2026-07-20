@@ -1,19 +1,28 @@
+interface DemoBannerProps {
+  // ログイン案内 (docs/39-デモ公開計画.md §4)。デモスタックの env
+  // DEMO_LOGIN_HINT の値。未設定 (null) なら案内行を出さない。
+  loginHint?: string | null;
+}
+
 // デモインスタンスの常時バナー (docs/38-デモモード計画.md §6)。
 //
 // 目的は 2 つ — 悪用の抑止と、消えるデータであることの明示 (免責)。
 // ピンク ([LOCAL] の印) と混同しないよう amber で塗る。layout が
 // isDemoMode() のときだけ描く (このコンポーネント自身は env を見ない)。
 //
-// ログイン導線は別に出さない。Basic 認証のネイティブダイアログには説明を
-// 出せないため、資格情報の案内が要るならここに足すのが妥当だが、公開する
-// 資格情報が決まってから入れる (いまは注意書きだけ)。
-export function DemoBanner() {
+// ログイン案内は loginHint で受ける (docs/39 §4)。Basic 認証のネイティブ
+// ダイアログには説明を出せないため、押す前に見えるここに資格情報を書く。
+// 値はデモスタックの .env にだけ置き、リポジトリには入れない。
+export function DemoBanner({ loginHint }: DemoBannerProps = {}) {
   return (
     <div className="border-b border-amber-300 bg-amber-100 text-amber-900 print:hidden">
       <div className="mx-auto max-w-2xl px-safe py-2 text-sm landscape-phone:max-w-4xl">
         <span className="font-bold">デモ環境です。</span>{" "}
         保存したデータは定期的にすべて削除されます。個人情報や不適切なファイルは
         アップロードしないでください。
+        {loginHint ? (
+          <span className="mt-1 block font-mono text-amber-800">{loginHint}</span>
+        ) : null}
       </div>
     </div>
   );

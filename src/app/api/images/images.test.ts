@@ -12,6 +12,9 @@ import type { PrismaClient } from '@/generated/prisma/client'
 const mocks = vi.hoisted(() => ({
   sessionToken: null as string | null,
   validToken: 'valid-session-token',
+  // デモの総量クォータ (docs/39 §2-1) のテスト用。SUM(octet_length) の値を
+  // 差し替える。既定 0 なので、デモでない通常のテストは一切影響を受けない
+  totalAttachmentBytes: 0,
 }))
 
 // route を関数として直接呼ぶため、Next.js のリクエストスコープが無く
@@ -41,11 +44,20 @@ vi.mock('@/lib/sessionStore', () => ({
       : null,
 }))
 
+// 総量クォータの合計だけ差し替える (SUM は DB を引くため)。他の関数
+// (saveImage など) は本物のまま — importOriginal で残す。デモの 507 は
+// storeAttachment より手前で返るので、実 DB なしで検証できる
+vi.mock('@/lib/imageStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/imageStore')>()
+  return { ...actual, totalAttachmentBytes: async () => mocks.totalAttachmentBytes }
+})
+
 
 // 既定はログイン済み。拒否系が見たいのは「ログインの先にある検査」なので、
 // ログインで落ちてしまうと何も検査できない
 beforeEach(() => {
   mocks.sessionToken = mocks.validToken
+  mocks.totalAttachmentBytes = 0
 })
 
 afterEach(() => {
@@ -278,6 +290,31 @@ describe('/api/images の拒否系 (実 DB 不要)', () => {
     const [req, ctx] = getRequest('..%2F..%2Fetc%2Fpasswd')
     const res = await GET(req, ctx)
     expect(res.status).toBe(400)
+  })
+
+  // デモの総量クォータ (docs/39-デモ公開計画.md §2-1)。DEMO_MODE のときだけ、
+  // 保存前に合計を見て上限超過なら 507。storeAttachment (DB) より手前で返るので
+  // 実 DB なしで検証できる。デモでないときの素通しは合計を見た後に DB へ進むため、
+  // この describe (実 DB 不要) では確かめられない — 境界は demoLimits.test.ts が持つ
+  describe('デモの総量クォータ', () => {
+    test('総量が上限ちょうどで、さらに 1 枚上げようとすると 507 を返す', async () => {
+      vi.stubEnv('DEMO_MODE', '1')
+      mocks.totalAttachmentBytes = 200 * 1024 * 1024 // 上限ちょうど。残り 0
+      const res = await POST(uploadRequest(pngFile()))
+      expect(res.status).toBe(507)
+    })
+
+    test('デモでなければ総量が大きくても 507 では断らない (401/400 でもない)', async () => {
+      // DEMO_MODE 未設定。クォータの分岐を通らないことだけ確かめたいが、
+      // 素通しは DB へ進むため、ここでは「クォータ由来の 507 にならない」に留める。
+      // 未ログインでないと 401 になるので、ログイン済みのまま送る
+      mocks.totalAttachmentBytes = 999 * 1024 * 1024
+      // 中身が壊れた小さい画像を送り、DB へ届く前 (400) で止める。
+      // クォータが誤って効いていれば 507 になるはずで、それが起きないことを見る
+      const tiny = new File(['not-an-image'], 'x.png', { type: 'image/png' })
+      const res = await POST(uploadRequest(tiny))
+      expect(res.status).toBe(400)
+    })
   })
 
   // ログイン検査 (docs/18-ログイン計画.md)。proxy.ts も未ログインを 401 にするが、

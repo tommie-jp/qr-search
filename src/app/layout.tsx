@@ -237,8 +237,11 @@ export default async function RootLayout({
             )}
           </div>
         </header>
-        {/* デモの常時バナー (docs/38-デモモード計画.md §6)。ヘッダ直後に置く */}
-        {isDemo && <DemoBanner />}
+        {/* デモの常時バナー (docs/38-デモモード計画.md §6)。ヘッダ直後に置く。
+            ログイン案内 (docs/39 §4) は env をここで読んで props で降ろす
+            (site.ts と同じ流儀。process.env は NEXT_PUBLIC_ 以外クライアントへ
+            渡らないため)。未設定 (空文字) なら案内行は出ない */}
+        {isDemo && <DemoBanner loginHint={process.env.DEMO_LOGIN_HINT || null} />}
         {/* 遷移アニメーションは各ページの <PageTransition> が持つ
             (layout の要素は unmount されず enter/exit が起きないため) */}
         {/* max-w-2xl はメモの本文が読める行長に収めるための上限。

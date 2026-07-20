@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { Prisma } from '@/generated/prisma/client'
 import type { Item } from '@/generated/prisma/client'
+import { assertDemoItemQuota } from '@/lib/demoQuota'
 import { firstUnusedNo, MIN_ITEM_NO } from '@/lib/itemNo'
 import { memoSummary } from '@/lib/memoSummary'
 import {
@@ -135,6 +136,9 @@ export async function nextItemNo(): Promise<string> {
 // Ver1 の /item/:itemNo と同じく、未登録なら新規作成する (upsert)。
 // tags / props は memo から抽出した派生キャッシュ (保存のたびに再計算する)。
 export async function upsertMemo(itemNo: string, memo: string): Promise<Item> {
+  // デモのノート数上限 (docs/39-デモ公開計画.md §2-2)。新規作成になるときだけ
+  // 効く (デモでなければ即 return)。既存の更新は数に依らず通す
+  await assertDemoItemQuota(itemNo)
   const derived = derivedFromMemo(memo)
   return prisma.item.upsert({
     where: { itemNo },
@@ -147,6 +151,8 @@ export async function upsertItem(
   itemNo: string,
   data: { memo: string; url: string; mode: Mode },
 ): Promise<Item> {
+  // デモのノート数上限 (docs/39-デモ公開計画.md §2-2)。upsertMemo と同じ門番
+  await assertDemoItemQuota(itemNo)
   const derived = derivedFromMemo(data.memo)
   return prisma.item.upsert({
     where: { itemNo },

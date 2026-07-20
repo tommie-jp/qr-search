@@ -86,3 +86,14 @@ export async function savePlainAttachment(
   await prisma.image.create({ data: { name, mime, data: bytes } })
   return `/api/images/${name}`
 }
+
+// images テーブルの実データ総バイト数 (デモの総量クォータ。docs/39 §2-1)。
+// 全種別 (画像・音声・PDF・テキスト) が同じテーブルの bytea なので 1 本で足りる。
+// Prisma の aggregate は bytea 長を取れないため生 SQL で octet_length を合計する。
+// 空テーブルでも 0 を返す (COALESCE)。SUM は numeric(bigint) で返るので Number に畳む。
+export async function totalAttachmentBytes(): Promise<number> {
+  const rows = await prisma.$queryRaw<{ total: bigint }[]>`
+    SELECT COALESCE(SUM(octet_length(data)), 0)::bigint AS total FROM images
+  `
+  return Number(rows[0]?.total ?? 0)
+}
