@@ -95,8 +95,9 @@ export interface DrawCanvasApi {
 interface UseDrawCanvasParams {
   tool: DrawTool;
   color: string;
-  // 太さ・文字の大きさは**画面で見たときの px** で受ける。ユーザーが選ぶのは
-  // 見た目の太さなので、canvas の論理サイズが大きいほど太く描く必要がある
+  // 太さ・文字の大きさは **100% 表示のときの見た目 px** で受ける。ユーザーが
+  // 選ぶのは見た目の太さなので、canvas の論理サイズが大きいほど太く描く。
+  // 拡大 (zoom) はここに関与しない — 虫めがねであって、道具は変えない
   width: number;
   // 背景に敷く自前画像の URL (`/api/images/...`)。白紙なら null
   backgroundUrl: string | null;
@@ -160,9 +161,15 @@ export function useDrawCanvas({
           MAX_DISPLAY_SCALE,
         )
       : 1;
-  // 拡大中も太さ・文字の大きさは**画面上の見た目を保つ**ため、この倍率で割る。
-  // 論理 px としては細くなるが、「拡大して細部を描き込む」用途では望みの
-  // 挙動そのもの (docs/36 §4-2)
+  // 倍率は 2 系統に分ける (docs/36 §4-2)。
+  //
+  // - fitScale: 100% 表示のときの縮み。**内容の大きさ** (ペン・文字・図形の
+  //   論理サイズ) はこちらで決める — 拡大は虫めがねで、道具の論理サイズは
+  //   倍率に依らず一定。拡大中に置いた文字が 100% に戻すと他より小さい、
+  //   という食い違いを起こさない
+  // - displayScale (= fitScale × zoom): いま画面に映っている縮み。
+  //   **UI (選択ハンドル) と操作の判定** (タップとドラッグの区別) は
+  //   画面上の見た目で決めたいのでこちらで割る
   const displayScale = fitScale * zoom;
   const [isPreparing, setIsPreparing] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,13 +181,15 @@ export function useDrawCanvas({
   const toolRef = useRef(tool);
   const colorRef = useRef(color);
   const widthRef = useRef(width);
+  const fitScaleRef = useRef(fitScale);
   const displayScaleRef = useRef(displayScale);
   useEffect(() => {
     toolRef.current = tool;
     colorRef.current = color;
     widthRef.current = width;
+    fitScaleRef.current = fitScale;
     displayScaleRef.current = displayScale;
-  }, [tool, color, width, displayScale]);
+  }, [tool, color, width, fitScale, displayScale]);
 
   // 消しゴムを手放す。@erase2d の dispose は効果用の裏 canvas を 0×0 にして
   // GC に返すためのもので、呼ばないと捨てたブラシのぶんだけメモリが残る
@@ -200,7 +209,8 @@ export function useDrawCanvas({
       return;
     }
     const width = widthRef.current;
-    const scale = displayScaleRef.current;
+    // 内容の大きさなので fitScale で割る (拡大しても論理サイズは変えない)
+    const scale = fitScaleRef.current;
     if (toolRef.current === "eraser") {
       // 消しゴムに色は無い (下を消すだけ)
       brush.width = toCanvasUnits(Math.max(MIN_ERASER_WIDTH, width * ERASER_SCALE), scale);
@@ -408,9 +418,11 @@ export function useDrawCanvas({
           originY: "top",
           fill: colorRef.current,
           fontFamily: FONT_FAMILY,
+          // 文字も内容なので fitScale 基準。拡大中に置いても、100% に
+          // 戻したとき他の文字と同じ大きさになる
           fontSize: toCanvasUnits(
             Math.max(MIN_FONT_SIZE, widthRef.current * FONT_SCALE),
-            displayScaleRef.current,
+            fitScaleRef.current,
           ),
           erasable: true,
         });
@@ -456,8 +468,8 @@ export function useDrawCanvas({
       detachShapeToolRef.current = attachShapeTool(fc, {
         getTool: () => toolRef.current,
         getColor: () => colorRef.current,
-        getStrokeWidth: () =>
-          toCanvasUnits(widthRef.current, displayScaleRef.current),
+        // 図形の線は内容 → fitScale。タップ判定は指の動き → displayScale
+        getStrokeWidth: () => toCanvasUnits(widthRef.current, fitScaleRef.current),
         getMinDrag: () => toCanvasUnits(MIN_SHAPE_DRAG, displayScaleRef.current),
         beginPreview: () => {
           suppressRef.current = true;
