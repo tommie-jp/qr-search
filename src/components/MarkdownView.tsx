@@ -16,6 +16,7 @@ import { CircuitDiagram } from "./CircuitDiagram";
 import { ZoomableImage } from "./ZoomableImage";
 import { PdfLink } from "./pdf/PdfLink";
 import { BOX_CLASS } from "./ui";
+import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
 import { CIRCUIT_LANG, MERMAID_LANG } from "@/lib/fenceLanguages";
 import type { CircuitMap } from "@/lib/circuitCache";
 import "katex/dist/katex.min.css";
@@ -102,7 +103,10 @@ function preOrDiagram(circuits: CircuitMap) {
 // `![audio](url)` で挿入するので (docs/12-添付ファイル種類拡張メモ.md)、img の
 // src が音声ならここで <audio> に振り分ける。この <audio> は sanitize 後に
 // React が組み立てる要素なので、生 HTML の許可リスト (sanitizeSchema) は要らない。
-const AUDIO_SRC_RE = /\.(?:mp3|m4a|wav)(?:[?#]|$)/i;
+const AUDIO_SRC_RE = new RegExp(
+  `\\.(?:${AUDIO_EXTENSION_ALTERNATION})(?:[?#]|$)`,
+  "i",
+);
 
 // PDF も同じく画像記法 `![ファイル名.pdf](url)` で本文に入る。インライン
 // ビューアは埋め込まず、押したらブラウザ内蔵ビューアが開くリンクにする

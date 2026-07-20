@@ -35,3 +35,17 @@ export function ocrButtonLabel(taskCount: number): string {
   }
   return taskCount > 1 ? `OCR処理中 (${taskCount}件)…` : 'OCR処理中…'
 }
+
+// 録音の経過時間 (m:ss)。時間単位は出さない — 15 分で自動停止するため
+// (audioRecorder.ts の MAX_RECORDING_MS)
+export function formatElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+// 録音ボタン。録音中は経過時間を出す (押せば止まると判るよう「停止」を先に置く)
+export function recordButtonLabel(isRecording: boolean, elapsedMs: number): string {
+  return isRecording ? `停止 ${formatElapsed(elapsedMs)}` : '録音'
+}

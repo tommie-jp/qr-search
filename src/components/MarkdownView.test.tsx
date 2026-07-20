@@ -151,9 +151,18 @@ test("音声 URL の画像記法は <audio> プレイヤーにする", () => {
   expect(html).not.toContain("autoplay");
 });
 
-test.each(["mp3", "m4a", "wav"])("%s も <audio> にする", (ext) => {
+test.each(["mp3", "m4a", "wav", "webm"])("%s も <audio> にする", (ext) => {
   const html = render(`![audio](/api/images/x.${ext})`);
   expect(html).toContain("<audio");
+});
+
+// 録音は alt に日時を残す (MemoEditorInner の recordingAltText)。
+// alt が "audio" でなくても振り分けは src の拡張子で決まる
+test("録音の画像記法 (alt が録音日時) も <audio> にする", () => {
+  const html = render("![録音 2026-07-20 14:03:09](/api/images/abc.webm)");
+  expect(html).toContain("<audio");
+  expect(html).toContain('src="/api/images/abc.webm"');
+  expect(html).not.toContain("<img");
 });
 
 test("画像 URL は従来どおり <img> のまま (音声に巻き込まれない)", () => {

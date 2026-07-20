@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { ocrButtonLabel, uploadButtonLabel } from './progressLabels'
+import {
+  formatElapsed,
+  ocrButtonLabel,
+  recordButtonLabel,
+  uploadButtonLabel,
+} from './progressLabels'
 
 describe('uploadButtonLabel', () => {
   test('shows the idle label when no upload is running', () => {
@@ -40,5 +45,31 @@ describe('ocrButtonLabel', () => {
 
   test('shows the task count when tasks run concurrently', () => {
     expect(ocrButtonLabel(2)).toBe('OCR処理中 (2件)…')
+  })
+})
+
+describe('formatElapsed', () => {
+  test('shows m:ss with a zero-padded seconds field', () => {
+    expect(formatElapsed(0)).toBe('0:00')
+    expect(formatElapsed(9_000)).toBe('0:09')
+    expect(formatElapsed(65_000)).toBe('1:05')
+  })
+
+  test('keeps counting in minutes past an hour (no hour field)', () => {
+    expect(formatElapsed(3_600_000)).toBe('60:00')
+  })
+
+  test('never shows a negative time (clock skew)', () => {
+    expect(formatElapsed(-1_000)).toBe('0:00')
+  })
+})
+
+describe('recordButtonLabel', () => {
+  test('shows the idle label when not recording', () => {
+    expect(recordButtonLabel(false, 0)).toBe('録音')
+  })
+
+  test('shows how to stop and how long it has run', () => {
+    expect(recordButtonLabel(true, 12_000)).toBe('停止 0:12')
   })
 })

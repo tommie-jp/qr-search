@@ -55,7 +55,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 形式はクライアント申告の MIME ではなく中身の先頭バイトで決める。
   // MIME を空で送る端末 (iOS の HEIC など) でも拾え、詐称にも強い。
-  // まず画像として判定し、外れたら音声 (mp3/m4a/wav)、PDF の順に試す。
+  // まず画像として判定し、外れたら音声 (mp3/m4a/wav/webm)、PDF の順に試す。
   const imageFormat = sniffImageFormat(bytes)
   if (imageFormat) {
     return saveImageUpload(bytes, imageFormat)
@@ -77,7 +77,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   return errorResponse(
     400,
-    '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav, PDF: pdf)',
+    '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, PDF: pdf)',
   )
 }
 

@@ -3,12 +3,15 @@
 import { redo, redoDepth, undo, undoDepth } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, type ViewUpdate } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { recordingAltText } from "@/lib/audio/audioRecorder";
+import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
 import { imageAtCursor, ocrInsertion, ocrPlaceholder } from "@/lib/ocr/ocrQuote";
 import {
   ocrButtonLabel,
+  recordButtonLabel,
   uploadButtonLabel,
   type UploadProgress,
 } from "@/lib/progressLabels";
@@ -27,6 +30,7 @@ import {
   BUSY_SPINNER_CLASS,
   SECONDARY_BUTTON_CLASS,
 } from "./ui";
+import { useAudioRecording } from "./useAudioRecording";
 
 export interface MemoEditorInnerProps {
   value: string;
@@ -45,11 +49,12 @@ const MAX_TEXT_LENGTH = 10000;
 const ACCEPTED_IMAGE_TYPES =
   "image/png,image/jpeg,image/gif,image/webp,image/avif,image/heic,image/heif,image/tiff,.png,.jpg,.jpeg,.gif,.webp,.avif,.heic,.heif,.tif,.tiff";
 
-// 音声 (docs/12-添付ファイル種類拡張メモ.md)。mp3/m4a/wav を受け付ける。
-// audio/x-m4a は一部ブラウザが m4a に付ける別名。最終判定はサーバの
-// sniffAudioFormat が中身を見て行う
+// 音声 (docs/12-添付ファイル種類拡張メモ.md)。mp3/m4a/wav/webm を受け付ける。
+// audio/x-m4a は一部ブラウザが m4a に付ける別名。webm はブラウザ内録音の
+// 出力形式で、ファイル選択からも受ける。最終判定はサーバの
+// sniffAudioFormat が中身を見て行う (音声トラックだけの webm しか通らない)
 const ACCEPTED_AUDIO_TYPES =
-  "audio/mpeg,audio/mp4,audio/wav,audio/x-m4a,.mp3,.m4a,.wav";
+  "audio/mpeg,audio/mp4,audio/wav,audio/x-m4a,audio/webm,.mp3,.m4a,.wav,.webm";
 
 // PDF (docs/12-添付ファイル種類拡張メモ.md)。表示はブラウザ内蔵ビューアに任せ、
 // 本文にはリンクだけを出す
@@ -62,7 +67,7 @@ const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${A
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|tiff?)$/i;
 
 // 音声の判定。MIME が audio/* のもの、または対応拡張子を持つもの。
-const AUDIO_EXT_RE = /\.(?:mp3|m4a|wav)$/i;
+const AUDIO_EXT_RE = new RegExp(`\\.(?:${AUDIO_EXTENSION_ALTERNATION})$`, "i");
 
 const PDF_EXT_RE = /\.pdf$/i;
 
@@ -127,6 +132,30 @@ function pickFiles(list: FileList | undefined | null): File[] {
   );
 }
 
+// 処理中にフォーム送信を止めたときに出す理由。**録音を先に見る** —
+// アップロードや OCR は画面に進捗が出ているが、録音は押しっぱなしのまま
+// 更新しようとすることがあり、そのまま通すと録音ごと失うため
+function busyReason(isRecording: boolean, uploading: boolean): string {
+  if (isRecording) {
+    return "録音中です。停止してから更新して下さい。";
+  }
+  if (uploading) {
+    return "画像のアップロード中です。完了してから更新して下さい。";
+  }
+  return "OCR 処理中です。完了してから更新して下さい。";
+}
+
+// CodeMirror に渡す設定はレンダリングごとに作り直さない。
+// @uiw/react-codemirror は basicSetup / onUpdate の**参照**が変わるたびに
+// StateEffect.reconfigure で拡張一式を組み直すため、毎回新しいオブジェクトを
+// 渡すと打鍵のたびに全部が再構成される。録音中は 1 秒ごとに再レンダリングが
+// 走るので、そのままだと再構成もその回数だけ起きる
+const BASIC_SETUP = {
+  lineNumbers: false,
+  foldGutter: false,
+  highlightActiveLine: false,
+} as const;
+
 // プレースホルダの一意性のための連番 (インスタンス間で共有してよい)
 let uploadSeq = 0;
 let ocrSeq = 0;
@@ -185,9 +214,23 @@ export default function MemoEditorInner({
     };
   }, []);
 
-  // アップロード / OCR 完了前に送信すると、画像リンクや OCR 結果が memo に
-  // 入らないため、処理中だけフォーム送信をブロックして知らせる
-  const busy = uploading || ocrCount > 0;
+  // 編集画面からのその場録音 (docs/12「ノート内録音の実装計画」)。
+  // 録音できたものは、ファイル選択と同じ挿入経路 (insertFiles) に流す。
+  // alt には録音日時を残す (PDF のファイル名と同じ狙いで、全文検索から引ける)
+  const recording = useAudioRecording({
+    onFinish: async (result) => {
+      const view = editorRef.current?.view;
+      if (!view) {
+        return;
+      }
+      await insertFiles(view, [result.file], recordingAltText(result.recordedAt));
+    },
+    onError: setError,
+  });
+
+  // アップロード / OCR / 録音の完了前に送信すると、画像リンクや OCR 結果、
+  // 録音そのものが memo に入らないため、処理中だけフォーム送信をブロックして知らせる
+  const busy = uploading || ocrCount > 0 || recording.isRecording;
   useEffect(() => {
     if (!busy) {
       return;
@@ -198,15 +241,11 @@ export default function MemoEditorInner({
     }
     const blockSubmit = (event: SubmitEvent) => {
       event.preventDefault();
-      setError(
-        uploading
-          ? "画像のアップロード中です。完了してから更新して下さい。"
-          : "OCR 処理中です。完了してから更新して下さい。",
-      );
+      setError(busyReason(recording.isRecording, uploading));
     };
     form.addEventListener("submit", blockSubmit);
     return () => form.removeEventListener("submit", blockSubmit);
-  }, [busy, uploading]);
+  }, [busy, uploading, recording.isRecording]);
 
   // 画像 1 枚を OCR し、指定位置へ引用ブロックを差し込む。挿入時 OCR と
   // 「後から OCR」ボタンの両方がこの 1 本を使う (docs/24-画像OCR計画.md §4)。
@@ -257,7 +296,13 @@ export default function MemoEditorInner({
     }
   };
 
-  const insertFiles = async (view: EditorView, files: File[]) => {
+  // audioAlt: 音声の画像記法に入れる alt。録音は日時を残したいので上書きする
+  // (ファイル選択・ペースト由来の音声は既定の "audio" のまま)
+  const insertFiles = async (
+    view: EditorView,
+    files: File[],
+    audioAlt = "audio",
+  ) => {
     setError(null);
     try {
       for (const [index, file] of files.entries()) {
@@ -278,7 +323,7 @@ export default function MemoEditorInner({
           const isAudio = isAudioFile(file);
           const isPdf = !isAudio && isPdfFile(file);
           const markup = isAudio
-            ? `![audio](${url})`
+            ? `![${audioAlt}](${url})`
             : isPdf
               ? `![${pdfAltText(file.name)}](${url})`
               : `![](${url})`;
@@ -390,6 +435,23 @@ export default function MemoEditorInner({
     }
   };
 
+  // 履歴の深さが変わったときだけボタンの活殺を更新する。
+  // onUpdate はカーソル移動でも呼ばれるので、同じ値なら前の state を
+  // 返して再レンダリングを止める。
+  // **参照を固定する** — CodeMirror はこの関数の参照が変わると拡張一式を
+  // 組み直す (BASIC_SETUP のコメント参照)
+  const handleUpdate = useCallback((update: ViewUpdate) => {
+    const next = {
+      canUndo: undoDepth(update.state) > 0,
+      canRedo: redoDepth(update.state) > 0,
+    };
+    setHistory((prev) =>
+      prev.canUndo === next.canUndo && prev.canRedo === next.canRedo
+        ? prev
+        : next,
+    );
+  }, []);
+
   const handleFilePick = (files: FileList | null) => {
     const view = editorRef.current?.view;
     const picked = pickFiles(files);
@@ -413,25 +475,8 @@ export default function MemoEditorInner({
           autoFocus={autoFocus}
           minHeight={minHeight}
           placeholder="メモを入力して下さい。"
-          basicSetup={{
-            lineNumbers: false,
-            foldGutter: false,
-            highlightActiveLine: false,
-          }}
-          // 履歴の深さが変わったときだけボタンの活殺を更新する。
-          // onUpdate はカーソル移動でも呼ばれるので、同じ値なら前の state を
-          // 返して再レンダリングを止める
-          onUpdate={(update) => {
-            const next = {
-              canUndo: undoDepth(update.state) > 0,
-              canRedo: redoDepth(update.state) > 0,
-            };
-            setHistory((prev) =>
-              prev.canUndo === next.canUndo && prev.canRedo === next.canRedo
-                ? prev
-                : next,
-            );
-          }}
+          basicSetup={BASIC_SETUP}
+          onUpdate={handleUpdate}
         />
       </div>
       <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -461,6 +506,22 @@ export default function MemoEditorInner({
         </button>
         <button
           type="button"
+          onClick={recording.toggle}
+          // 録音中だけは busy でも押せる。止められないと録音が終わらない
+          disabled={busy && !recording.isRecording}
+          aria-pressed={recording.isRecording}
+          className={SECONDARY_BUTTON_CLASS}
+        >
+          {recording.isRecording && (
+            <span
+              aria-hidden
+              className="size-2.5 animate-pulse rounded-full bg-red-600"
+            />
+          )}
+          {recordButtonLabel(recording.isRecording, recording.elapsedMs)}
+        </button>
+        <button
+          type="button"
           onClick={() => void runOcrAtCursor()}
           disabled={busy}
           className={SECONDARY_BUTTON_CLASS}
@@ -485,6 +546,13 @@ export default function MemoEditorInner({
       {error && (
         <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </p>
+      )}
+      {/* 自動停止の知らせ。押していないのに止まった理由が判らないと、
+          録音が切れた原因を探せない */}
+      {recording.note && (
+        <p aria-live="polite" className={BUSY_NOTICE_CLASS}>
+          {recording.note}
         </p>
       )}
       {ocrNote && (

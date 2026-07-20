@@ -1,3 +1,8 @@
+import {
+  type AudioFormat,
+  AUDIO_EXTENSION_ALTERNATION,
+} from './audioFormats'
+
 // 保存できる画像形式 (final mime) → 拡張子。
 // これは「そのまま DB に保存できる = ブラウザが表示できる」形式の表。
 // HEIC/HEIF・TIFF は保存時に WebP へ変換するのでここには無い
@@ -51,6 +56,10 @@ const HEAD_SIGNATURES: Array<[ImageFormat, number[]]> = [
 function startsWith(bytes: Uint8Array, expected: number[]): boolean {
   return expected.every((byte, i) => bytes[i] === byte)
 }
+
+// 署名やボックス型の照合はバイトのまま行う。比較のたびに文字列へ起こさないため、
+// 決め打ちの ASCII は最初に一度だけバイト列にしておく
+const encodeAscii = (text: string) => new TextEncoder().encode(text)
 
 // WebP は RIFF コンテナ: "RIFF" (0) + "WEBP" (8)
 function isWebp(bytes: Uint8Array): boolean {
@@ -136,25 +145,34 @@ export function sniffImageFormat(bytes: Uint8Array): ImageFormat | null {
 // そのまま配信する。images テーブルを流用するのは、pg_dump 一発でメモと一緒に
 // バックアップできる利点 (imageStore.ts) を音声にも効かせるため。
 
-export type AudioFormat = 'mp3' | 'm4a' | 'wav'
+// webm はブラウザ内録音の受け皿 (docs/12「ノート内録音の実装計画」)。
+// Chrome / Android の MediaRecorder は webm/opus しか出せないため、
+// 録音をノートへ挿入するにはこの形式を受ける必要がある。
+// 形式の一覧そのものは audioFormats.ts が持つ (表示・OCR 除外と共有するため)
+export type { AudioFormat }
 
 // 保存できる音声形式 (final mime) → 拡張子。画像の MIME_TO_EXT と同じ役割で、
 // 配信時に「DB の mime を信じてよいか」の判定にも使う (未知 mime を配らない)。
+// **video/webm は載せない** — 受け付けるのは音声トラックだけの webm なので、
+// 動画として配信する mime は持たない。
 const AUDIO_MIME_TO_EXT: Record<string, string> = {
   'audio/mpeg': 'mp3',
   'audio/mp4': 'm4a',
   'audio/wav': 'wav',
+  'audio/webm': 'webm',
 }
 
 const AUDIO_FORMAT_TO_MIME: Record<AudioFormat, string> = {
   mp3: 'audio/mpeg',
   m4a: 'audio/mp4',
   wav: 'audio/wav',
+  webm: 'audio/webm',
 }
 
 // 保存名は画像と同じ「UUID + 対応拡張子」だけ。拡張子は形式名がそのまま入る。
-const AUDIO_NAME_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(mp3|m4a|wav)$/
+const AUDIO_NAME_PATTERN = new RegExp(
+  `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(${AUDIO_EXTENSION_ALTERNATION})$`,
+)
 
 // sniff で決めた形式を、保存に使う mime / ext へ写す (mp3/m4a/wav は形式名=拡張子)。
 export function audioSaveInfo(format: AudioFormat): { mime: string; ext: string } {
@@ -203,12 +221,178 @@ function isMp3(bytes: Uint8Array): boolean {
 // 動画混入を防ぐことを優先する (docs/12)。
 const M4A_BRANDS = new Set(['M4A ', 'M4B '])
 
+// ISO-BMFF のトップレベルから指定のボックスを探して中身を返す (無ければ null)。
+// ボックスは [長さ(4)][型(4)][中身] の並び。長さ 1 は 64bit 拡張長 (型の直後に
+// 8 バイト)、長さ 0 は「ファイル末尾まで」を意味する。
+// 壊れた長さで無限ループしないよう、進めない長さを見たら諦める (throw しない)。
+function findTopLevelBox(bytes: Uint8Array, type: string): Uint8Array | null {
+  if (bytes.byteLength < 8) {
+    return null
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  // 型はバイトのまま比べる。1 ボックスごとに文字列へ起こすと、細かいボックスを
+  // 大量に並べた入力で確保だけが積み上がる
+  const wanted = encodeAscii(type)
+  let at = 0
+  while (at + 8 <= bytes.byteLength) {
+    const declared = view.getUint32(at)
+    let size = declared
+    let headerSize = 8
+    if (declared === 1) {
+      if (at + 16 > bytes.byteLength) {
+        return null
+      }
+      size = Number(view.getBigUint64(at + 8))
+      headerSize = 16
+    } else if (declared === 0) {
+      size = bytes.byteLength - at
+    }
+    if (matchesAt(bytes, at + 4, wanted, bytes.byteLength)) {
+      return bytes.subarray(at + headerSize, Math.min(at + size, bytes.byteLength))
+    }
+    if (size < headerSize) {
+      return null // 進めない長さ = 壊れている。ここで諦める
+    }
+    at += size
+  }
+  return null
+}
+
+// hdlr ボックスの並び [長さ(4)]["hdlr"(4)][version+flags(4)][pre_defined(4)]
+// [handler(4)] から handler だけを集める。moov の中は入れ子 (trak > mdia > hdlr)
+// なので、構造を全部たどらず "hdlr" の出現位置から直接読む。
+const HDLR_TYPE = encodeAscii('hdlr')
+const HDLR_HANDLER_OFFSET = 12 // "hdlr" の先頭から handler までの距離
+
+function handlerTypesIn(moov: Uint8Array): string[] {
+  const decoder = new TextDecoder('latin1')
+  const handlers: string[] = []
+  const limit = moov.byteLength
+  for (let at = 0; at + HDLR_HANDLER_OFFSET + 4 <= limit; at++) {
+    if (matchesAt(moov, at, HDLR_TYPE, limit)) {
+      const from = at + HDLR_HANDLER_OFFSET
+      handlers.push(decoder.decode(moov.subarray(from, from + 4)))
+    }
+  }
+  return handlers
+}
+
+// moov のトラック構成が「音声のみ」か。ブランド名の列挙 (M4A_BRANDS) は
+// 「どのブランドが来るか」の当てずっぽうになりがちで、Safari の MediaRecorder が
+// 出す mp4 (iso5 系) はそこを通らない。トラックの種別で判定すればブランドに
+// 依らず正しく、しかも映像トラックを持つ mp4 を確実に弾ける (docs/12)。
+function hasAudioOnlyTracks(bytes: Uint8Array): boolean {
+  const moov = findTopLevelBox(bytes, 'moov')
+  if (!moov) {
+    return false
+  }
+  const handlers = handlerTypesIn(moov)
+  return handlers.includes('soun') && !handlers.includes('vide')
+}
+
 function sniffIsoBmffAudio(bytes: Uint8Array): AudioFormat | null {
   const brands = readIsoBmffBrands(bytes)
   if (!brands) {
     return null
   }
-  return brands.some((b) => M4A_BRANDS.has(b)) ? 'm4a' : null
+  // ブランドが音声を名乗る (iPhone ボイスメモ) か、moov のトラックが音声だけ
+  // (Safari の録音) なら音声として受ける
+  if (brands.some((b) => M4A_BRANDS.has(b))) {
+    return 'm4a'
+  }
+  return hasAudioOnlyTracks(bytes) ? 'm4a' : null
+}
+
+// --- webm (ブラウザ内録音, docs/12) ---
+//
+// webm/matroska は EBML マジックで判るが、**画像や PDF と違い音声と動画で
+// 同じコンテナを使う**ため、マジックだけでは動画を弾けない。「動画を音声として
+// 受けない」既存方針を保つため、Tracks 要素に現れる CodecID 文字列を見て
+// 「音声があり映像が無い」ものだけを受ける。
+const EBML_MAGIC = [0x1a, 0x45, 0xdf, 0xa3]
+
+// 音声 CodecID を探す範囲。MediaRecorder の出力は Tracks をヘッダ側に置くので
+// 数 KB あれば足りる (実測: Chrome は offset 220、Firefox は 202)。
+// ここより後ろにしか音声 CodecID が無いものは安全側に倒して拒否する。
+const WEBM_AUDIO_SCAN_BYTES = 64 * 1024
+
+const WEBM_AUDIO_CODEC_IDS = ['A_OPUS', 'A_VORBIS'].map(encodeAscii)
+
+// 映像 CodecID。1 つでもあれば動画とみなして拒否する。
+const WEBM_VIDEO_CODEC_IDS = [
+  'V_VP8',
+  'V_VP9',
+  'V_AV1',
+  'V_MPEG',
+  'V_THEORA',
+  'V_MS/',
+].map(encodeAscii)
+
+// マーカーの 1 バイト目を引くための表 (256 要素)。走査ループで
+// 「ここから照合する価値があるか」を配列 1 回の添字引きで判定するために使う。
+function leadByteTable(markers: readonly Uint8Array[]): Uint8Array {
+  const table = new Uint8Array(256)
+  for (const marker of markers) {
+    table[marker[0]] = 1
+  }
+  return table
+}
+
+const WEBM_AUDIO_LEADS = leadByteTable(WEBM_AUDIO_CODEC_IDS)
+const WEBM_VIDEO_LEADS = leadByteTable(WEBM_VIDEO_CODEC_IDS)
+
+function matchesAt(bytes: Uint8Array, at: number, marker: Uint8Array, limit: number): boolean {
+  if (at + marker.byteLength > limit) {
+    return false
+  }
+  for (let i = 0; i < marker.byteLength; i++) {
+    if (bytes[at + i] !== marker[i]) {
+      return false
+    }
+  }
+  return true
+}
+
+// ASCII マーカーのいずれかが bytes[0, end) にあるか。
+// **文字列へ起こさない** — 10MB を latin1 文字列にすると倍のメモリを食うため、
+// バイトのまま見る。1 バイト目で絞ってから照合するので 10MB でも実用的に速い。
+function containsMarker(
+  bytes: Uint8Array,
+  markers: readonly Uint8Array[],
+  leads: Uint8Array,
+  end: number,
+): boolean {
+  const limit = Math.min(end, bytes.byteLength)
+  for (let at = 0; at < limit; at++) {
+    if (leads[bytes[at]] === 0) {
+      continue
+    }
+    for (const marker of markers) {
+      if (matchesAt(bytes, at, marker, limit)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function isWebmAudio(bytes: Uint8Array): boolean {
+  if (!startsWith(bytes, EBML_MAGIC)) {
+    return false
+  }
+  // 映像 CodecID は**ファイル全体**から探す。先頭だけ見ていると、EBML の
+  // Void 要素で窓を埋めて映像トラックを走査範囲の外へ押し出せてしまう
+  // (security-reviewer が PoC で実証済み: A_OPUS → 70KB の詰め物 → V_VP9)。
+  // 音声側と違い、こちらは「見落とすと通してしまう」向きなので範囲を切らない。
+  if (containsMarker(bytes, WEBM_VIDEO_CODEC_IDS, WEBM_VIDEO_LEADS, bytes.byteLength)) {
+    return false
+  }
+  return containsMarker(
+    bytes,
+    WEBM_AUDIO_CODEC_IDS,
+    WEBM_AUDIO_LEADS,
+    WEBM_AUDIO_SCAN_BYTES,
+  )
 }
 
 // 先頭バイトから音声形式を判定する。判定できなければ null (=非対応)。
@@ -219,6 +403,9 @@ export function sniffAudioFormat(bytes: Uint8Array): AudioFormat | null {
   }
   if (isWav(bytes)) {
     return 'wav'
+  }
+  if (isWebmAudio(bytes)) {
+    return 'webm'
   }
   return sniffIsoBmffAudio(bytes)
 }
