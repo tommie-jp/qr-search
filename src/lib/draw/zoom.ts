@@ -42,7 +42,10 @@ export interface ZoomPanInput {
 }
 
 export function clampZoom(zoom: number): number {
-  if (!Number.isFinite(zoom)) {
+  // NaN だけを既定へ逃がす。Infinity は Math.min / Math.max が自然に
+  // 上限・下限へ丸めるので、まとめて isFinite で弾いてはいけない —
+  // 「clampZoom(Infinity) = 上限」を期待する呼び手が 1 を受け取ってしまう
+  if (Number.isNaN(zoom)) {
     return 1
   }
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))

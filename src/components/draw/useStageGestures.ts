@@ -15,6 +15,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   clampPan,
   clampZoom,
+  MAX_ZOOM,
+  MIN_ZOOM,
   type PanOffset,
   panForZoom,
   pinchCenter,
@@ -212,8 +214,10 @@ export function useStageGestures({
     pan,
     zoomBy,
     resetZoom,
-    canZoomIn: zoom < clampZoom(Number.POSITIVE_INFINITY),
-    canZoomOut: zoom > clampZoom(Number.NEGATIVE_INFINITY),
+    // clampZoom(Infinity) の形は使わない。かつて isFinite ガードが Infinity を
+    // 既定 (1) へ落とし、「＋」が常に無効になっていた
+    canZoomIn: zoom < MAX_ZOOM,
+    canZoomOut: zoom > MIN_ZOOM,
     zoomStep: ZOOM_STEP,
   };
 }

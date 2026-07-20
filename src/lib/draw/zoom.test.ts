@@ -29,6 +29,14 @@ describe('clampZoom', () => {
     // Arrange & Act & Assert — 0 除算で NaN が来ても画面を壊さない
     expect(clampZoom(Number.NaN)).toBe(1)
   })
+
+  test('clamps infinities to the range instead of resetting to 1', () => {
+    // Arrange & Act & Assert — Infinity を「既定へ逃がす」と、上限・下限の
+    // つもりで渡した呼び手が 1 を受け取り、+ ボタンが常に無効になる
+    // (実際に起きた不具合)
+    expect(clampZoom(Number.POSITIVE_INFINITY)).toBe(MAX_ZOOM)
+    expect(clampZoom(Number.NEGATIVE_INFINITY)).toBe(MIN_ZOOM)
+  })
 })
 
 describe('pinchSpan', () => {
