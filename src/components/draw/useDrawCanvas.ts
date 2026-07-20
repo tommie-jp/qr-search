@@ -65,6 +65,15 @@ const FONT_FAMILY = "system-ui, sans-serif";
 // 図形をドラッグで置くときの、タップと区別する最小の移動量 (画面で見た px)
 const MIN_SHAPE_DRAG = 4;
 
+// 選択枠の見た目 (画面で見た px)。fabric の既定は淡い青 (rgb(178,204,255))・
+// 枠 1px・角は塗りなしで、白い紙の上ではほぼ見えない。さらに選択枠は
+// canvas の論理 px で描かれて CSS で縮むので、太さ・角の大きさは
+// toCanvasUnits で表示倍率ぶん膨らませてから渡す
+const SELECTION_COLOR = "#2563eb"; // アプリの主色 (blue-600) に揃える
+const SELECTION_BORDER_PX = 2;
+const SELECTION_CORNER_PX = 12;
+const SELECTION_TOUCH_CORNER_PX = 28;
+
 // 返り値に ref を混ぜない。ref を持つオブジェクトはレンダー中に読めない
 // ものとして扱われるため (react-hooks/refs)、canvas と枠の ref は引数で受ける
 export interface DrawCanvasApi {
@@ -206,6 +215,40 @@ export function useDrawCanvas({
     brush.color = colorRef.current;
   }, []);
 
+  // 選択枠を「白い紙の上でも見える」見た目にする。色は固定だが、太さと角の
+  // 大きさは表示倍率で変わるので、倍率が動くたびに当て直す。
+  // 複数選択 (ActiveSelection) は fabric が内部で作るオブジェクトなので、
+  // selection:created でも同じものを当てる (呼び手は applySelectionStyle 経由)
+  const styleForSelection = useCallback((object: fabric.FabricObject) => {
+    const scale = displayScaleRef.current;
+    object.set({
+      borderColor: SELECTION_COLOR,
+      cornerColor: "#ffffff",
+      cornerStrokeColor: SELECTION_COLOR,
+      transparentCorners: false,
+      borderScaleFactor: toCanvasUnits(SELECTION_BORDER_PX, scale),
+      cornerSize: toCanvasUnits(SELECTION_CORNER_PX, scale),
+      touchCornerSize: toCanvasUnits(SELECTION_TOUCH_CORNER_PX, scale),
+    });
+  }, []);
+
+  const applySelectionStyle = useCallback(() => {
+    const fc = fcRef.current;
+    if (!fc) {
+      return;
+    }
+    fc.forEachObject(styleForSelection);
+    const active = fc.getActiveObject();
+    if (active) {
+      styleForSelection(active);
+    }
+    // 複数選択のドラッグ枠 (ラバーバンド) も同じ縮みを受けるので合わせて太らせる
+    fc.selectionColor = "rgba(37, 99, 235, 0.1)";
+    fc.selectionBorderColor = SELECTION_COLOR;
+    fc.selectionLineWidth = toCanvasUnits(1.5, displayScaleRef.current);
+    fc.requestRenderAll();
+  }, [styleForSelection]);
+
   const syncHistoryState = useCallback((history: DrawHistory) => {
     historyRef.current = history;
     setHistoryState({ canUndo: historyCanUndo(history), canRedo: historyCanRedo(history) });
@@ -250,6 +293,7 @@ export function useDrawCanvas({
         object.selectable = selectable;
         object.evented = selectable;
       });
+      applySelectionStyle();
       fc.requestRenderAll();
       setIsEmpty(fc.getObjects().length === 0);
     } catch {
@@ -257,7 +301,7 @@ export function useDrawCanvas({
     } finally {
       suppressRef.current = false;
     }
-  }, []);
+  }, [applySelectionStyle]);
 
   // --- 初期化 (背景の有無ごとに 1 度) -------------------------------------
   useEffect(() => {
@@ -478,7 +522,9 @@ export function useDrawCanvas({
       object.selectable = tool === "select";
       object.evented = tool === "select";
     });
-    if (tool !== "select") {
+    if (tool === "select") {
+      applySelectionStyle();
+    } else {
       fc.discardActiveObject();
     }
 
@@ -503,12 +549,14 @@ export function useDrawCanvas({
     fc.requestRenderAll();
 
     return releaseEraser;
-  }, [tool, isPreparing, scheduleSnapshot, applyBrushStyle, releaseEraser]);
+  }, [tool, isPreparing, scheduleSnapshot, applyBrushStyle, applySelectionStyle, releaseEraser]);
 
   // --- 色・太さ・表示倍率の反映 --------------------------------------------
   useEffect(() => {
     applyBrushStyle();
-  }, [color, width, displayScale, applyBrushStyle]);
+    // 拡大しながら選択しても、枠の太さが画面上で一定になるように当て直す
+    applySelectionStyle();
+  }, [color, width, displayScale, applyBrushStyle, applySelectionStyle]);
 
   const undo = useCallback(() => {
     const next = undoHistory(historyRef.current);
