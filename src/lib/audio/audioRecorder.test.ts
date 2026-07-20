@@ -25,18 +25,44 @@ describe('pickMimeType', () => {
     expect(pickMimeType()).toBeUndefined()
   })
 
-  test('webm/opus を最優先に選ぶ (Chrome・Android)', () => {
-    globalThis.MediaRecorder = {
-      isTypeSupported: (type: string) => type === 'audio/webm;codecs=opus',
-    } as unknown as typeof MediaRecorder
+  // 実ブラウザの対応状況を写したモック。Playwright で実測した値
+  // (audioRecorder.ts の MIME_CANDIDATES のコメントの表)
+  const supportLike = (browser: 'safari' | 'chrome' | 'firefox') => (type: string) => {
+    if (type.startsWith('audio/webm')) {
+      return true // 3 つとも webm 録音に対応する
+    }
+    if (type === 'audio/mp4;codecs=mp4a.40.2') {
+      return browser === 'safari' // AAC を明示した形は Safari だけ
+    }
+    return browser !== 'firefox' // 素の audio/mp4 は Chrome も対応と答える
+  }
+
+  const useMediaRecorder = (isTypeSupported: (type: string) => boolean) => {
+    globalThis.MediaRecorder = { isTypeSupported } as unknown as typeof MediaRecorder
+  }
+
+  // ここが今回の肝。Safari も webm を録れるようになったが、その再生が
+  // 不安定なので mp4/AAC へ寄せる
+  test('Safari は webm も録れるが mp4/AAC を選ぶ', () => {
+    useMediaRecorder(supportLike('safari'))
+    expect(pickMimeType()).toBe('audio/mp4;codecs=mp4a.40.2')
+  })
+
+  // 素の audio/mp4 は Chrome も対応と答えるため、順番を間違えると
+  // Chrome まで mp4 になる。webm のままであることを固定する
+  test('Chrome は webm/opus のまま (mp4 に流れない)', () => {
+    useMediaRecorder(supportLike('chrome'))
     expect(pickMimeType()).toBe('audio/webm;codecs=opus')
   })
 
-  test('webm を出せない環境は mp4/AAC に落ちる (iOS・macOS Safari)', () => {
-    globalThis.MediaRecorder = {
-      isTypeSupported: (type: string) => type.startsWith('audio/mp4'),
-    } as unknown as typeof MediaRecorder
-    expect(pickMimeType()).toBe('audio/mp4;codecs=mp4a.40.2')
+  test('Firefox は webm/opus のまま', () => {
+    useMediaRecorder(supportLike('firefox'))
+    expect(pickMimeType()).toBe('audio/webm;codecs=opus')
+  })
+
+  test('webm しか出せない環境でも選べる', () => {
+    useMediaRecorder((type) => type === 'audio/webm')
+    expect(pickMimeType()).toBe('audio/webm')
   })
 })
 

@@ -6,14 +6,30 @@
 
 import fixWebmDuration from 'fix-webm-duration'
 
-// 試す順に並べる。webm/opus (Chrome・Android) が第一候補で、
-// 出せない環境 (iOS / macOS Safari) が mp4/AAC に落ちる。
+// 試す順に並べる。**Safari だけを mp4/AAC に寄せ、他は webm/opus のまま**に
+// したい (docs/12「iPhone で 1 回目が無音になる件」)。
+//
+// もともと webm を先頭に置いていたが、Safari が webm 録音に対応した結果
+// iPhone でも webm が選ばれるようになり、その再生が不安定だった。WebKit に
+// とって本流なのは mp4/AAC (ボイスメモと同じ経路) なので、そちらへ寄せる。
+//
+// 振り分けは UA 判定ではなく**対応状況の実測**で行う。`codecs=mp4a.40.2` まで
+// 書いた文字列は Safari だけが対応と答え、Chrome は非対応と答えるため、
+// これを先頭に置くだけで狙った分岐になる (Playwright で実測):
+//
+//   | 文字列                       | Safari | Chrome | Firefox |
+//   | audio/mp4;codecs=mp4a.40.2  | 対応   | 非対応 | 非対応  |
+//   | audio/webm;codecs=opus      | 対応   | 対応   | 対応    |
+//
+// 素の `audio/mp4` は Chrome も対応と答えるので、**必ず webm より後ろに置く**
+// (前に出すと Chrome まで mp4 になり、検証済みの webm 経路を手放すことになる)。
+//
 // **サーバが受けられる形式だけを並べる** — ここに増やすなら uploads.ts の
 // sniffAudioFormat も一緒に広げること。
 const MIME_CANDIDATES = [
+  'audio/mp4;codecs=mp4a.40.2',
   'audio/webm;codecs=opus',
   'audio/webm',
-  'audio/mp4;codecs=mp4a.40.2',
   'audio/mp4',
 ]
 
