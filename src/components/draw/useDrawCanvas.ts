@@ -92,8 +92,8 @@ interface UseDrawCanvasParams {
   containerRef: React.RefObject<HTMLElement | null>;
 }
 
-// 画面で見た px を canvas の論理 px に直す。2400px の写真を幅 400px で表示して
-// いるなら 6px の線は 36 論理 px —— これをしないと、大きな画像に描いた線が
+// 画面で見た px を canvas の論理 px に直す。1600px の写真を幅 400px で表示して
+// いるなら 6px の線は 24 論理 px —— これをしないと、大きな画像に描いた線が
 // 髪の毛のように細くなる。0 除算と、測る前の 0 を避けて下限を敷く
 function toCanvasUnits(screenPixels: number, displayScale: number): number {
   return screenPixels / Math.max(displayScale, MIN_DISPLAY_SCALE);
@@ -122,6 +122,7 @@ export function useDrawCanvas({
   const suppressRef = useRef(false);
   const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const eraserDisposerRef = useRef<(() => void) | null>(null);
+  const eraserRef = useRef<EraserBrush | null>(null);
   const historyRef = useRef<DrawHistory>(createHistory(""));
 
   const [size, setSize] = useState<CanvasSize | null>(null);
@@ -153,6 +154,35 @@ export function useDrawCanvas({
     widthRef.current = width;
     displayScaleRef.current = displayScale;
   }, [tool, color, width, displayScale]);
+
+  // 消しゴムを手放す。@erase2d の dispose は効果用の裏 canvas を 0×0 にして
+  // GC に返すためのもので、呼ばないと捨てたブラシのぶんだけメモリが残る
+  const releaseEraser = useCallback(() => {
+    eraserDisposerRef.current?.();
+    eraserDisposerRef.current = null;
+    eraserRef.current?.dispose();
+    eraserRef.current = null;
+  }, []);
+
+  // いまのブラシに色と太さを当てる。**ブラシは作り直さない** ——
+  // EraserBrush は生成時に canvas 1 枚ぶんのメモリを確保するので、
+  // 太さを変えるたびに作り直すと確保と破棄を繰り返すことになる
+  const applyBrushStyle = useCallback(() => {
+    const brush = fcRef.current?.freeDrawingBrush;
+    if (!brush) {
+      return;
+    }
+    const isEraser = brush instanceof EraserBrush;
+    brush.width = toCanvasUnits(
+      isEraser
+        ? Math.max(MIN_ERASER_WIDTH, widthRef.current * ERASER_SCALE)
+        : widthRef.current,
+      displayScaleRef.current,
+    );
+    if (!isEraser) {
+      brush.color = colorRef.current;
+    }
+  }, []);
 
   const syncHistoryState = useCallback((history: DrawHistory) => {
     historyRef.current = history;
@@ -248,6 +278,14 @@ export function useDrawCanvas({
         selection: false,
         preserveObjectStacking: true,
         backgroundColor: CANVAS_BACKGROUND,
+        // **消しゴムの速さはこれで決まる** (docs/34-お絵かき計画.md §3-2)。
+        // 既定の true は実バッファを論理サイズ × devicePixelRatio にする。
+        // ここでは論理サイズを解像度として大きく取り、表示は CSS で縮めている
+        // ので、その上に DPR を掛けても画面には 1px も現れない —— 3 倍の端末
+        // なら 9 倍の画素を捨てるために描いていることになる。
+        // 消しゴムは 1 フレームに canvas 全体を 3 回描くため、この無駄が
+        // そのまま体感の重さになる
+        enableRetinaScaling: false,
       });
       fcRef.current = fc;
       fc.setDimensions(canvasSize);
@@ -331,23 +369,28 @@ export function useDrawCanvas({
     return () => {
       disposed = true;
       clearTimeout(snapshotTimerRef.current);
-      eraserDisposerRef.current?.();
-      eraserDisposerRef.current = null;
+      releaseEraser();
       const fc = fcRef.current;
       fcRef.current = null;
       void fc?.dispose();
     };
-  }, [backgroundUrl, canvasElRef, containerRef, scheduleSnapshot, syncHistoryState]);
+  }, [
+    backgroundUrl,
+    canvasElRef,
+    containerRef,
+    releaseEraser,
+    scheduleSnapshot,
+    syncHistoryState,
+  ]);
 
-  // --- 道具・色・太さの反映 ------------------------------------------------
+  // --- 道具の切り替え -----------------------------------------------------
+  // ブラシを作り直すのは**道具が変わったときだけ**。色・太さの変更で作り直すと
+  // 消しゴムのメモリ確保を繰り返すことになる (applyBrushStyle 参照)
   useEffect(() => {
     const fc = fcRef.current;
     if (!fc || isPreparing) {
       return;
     }
-    eraserDisposerRef.current?.();
-    eraserDisposerRef.current = null;
-
     fc.isDrawingMode = tool === "pen" || tool === "eraser";
     fc.selection = tool === "select";
     fc.forEachObject((object) => {
@@ -359,23 +402,29 @@ export function useDrawCanvas({
     }
 
     if (tool === "pen") {
-      const brush = new fabric.PencilBrush(fc);
-      brush.color = color;
-      brush.width = toCanvasUnits(width, displayScale);
-      fc.freeDrawingBrush = brush;
+      fc.freeDrawingBrush = new fabric.PencilBrush(fc);
     } else if (tool === "eraser") {
       const brush = new EraserBrush(fc);
-      brush.width = toCanvasUnits(
-        Math.max(MIN_ERASER_WIDTH, width * ERASER_SCALE),
-        displayScale,
-      );
+      eraserRef.current = brush;
       fc.freeDrawingBrush = brush;
       // 消しゴムは object:* イベントを出さない (既存オブジェクトの clipPath を
       // 足すだけ) ので、専用の終了イベントから履歴を積む
       eraserDisposerRef.current = brush.on("end", () => scheduleSnapshot());
+    } else {
+      // 描かない道具のときはブラシを持たない (消しゴムの裏 canvas を抱えたままに
+      // しない)
+      fc.freeDrawingBrush = undefined;
     }
+    applyBrushStyle();
     fc.requestRenderAll();
-  }, [tool, color, width, displayScale, isPreparing, scheduleSnapshot]);
+
+    return releaseEraser;
+  }, [tool, isPreparing, scheduleSnapshot, applyBrushStyle, releaseEraser]);
+
+  // --- 色・太さ・表示倍率の反映 --------------------------------------------
+  useEffect(() => {
+    applyBrushStyle();
+  }, [color, width, displayScale, applyBrushStyle]);
 
   const undo = useCallback(() => {
     const next = undoHistory(historyRef.current);
