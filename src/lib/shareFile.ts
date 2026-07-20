@@ -27,6 +27,31 @@ export function canShareFiles(nav: Navigator = navigator): boolean {
   }
 }
 
+// 共有シートに出すファイル名を作る。
+//
+// 保存名 (URL 末尾) は `<UUID>.<ext>` で、UUID のままでは共有先で何のファイルか
+// 判らない。表示名 (録音の日時など) があればそれを使い、拡張子だけ保存名から
+// 借りる。表示名が無い・既定ラベル ("audio" など) のときは種別名を宛てる。
+export function attachmentShareName(
+  url: string,
+  label: string,
+  defaultBase: string,
+): string {
+  // 末尾の拡張子だけを保存名から取る (クエリ・ハッシュは落とす)
+  const storedName = url.split(/[?#]/)[0].split('/').pop() ?? ''
+  const ext = storedName.includes('.') ? storedName.split('.').pop()! : ''
+
+  // ラベルから記法を壊す文字・パス区切りを除く。空や既定ラベルは種別名にする
+  const cleaned = label.replace(/[/\\\r\n]/g, '').trim()
+  const base = cleaned.length > 0 ? cleaned : defaultBase
+
+  // ラベルが既に拡張子つきなら二重に付けない
+  if (ext && base.toLowerCase().endsWith(`.${ext}`)) {
+    return base
+  }
+  return ext ? `${base}.${ext}` : base
+}
+
 // 共有シートを閉じた・キャンセルしたときの合図。**失敗ではない**ので、
 // 呼び出し側はこれをエラー表示しない
 export function isShareAborted(error: unknown): boolean {
@@ -37,20 +62,33 @@ export function isShareAborted(error: unknown): boolean {
   )
 }
 
-// PDF のバイト列を共有シートへ渡す。
+// ファイルのバイト列を共有シートへ渡す。
 //
 // **ユーザー操作の直後に呼ぶこと**。iOS は transient activation が切れると
-// NotAllowedError で弾くため、呼ぶ前に通信を挟まない
-// (バイト列は表示のために読み込み済みのものを使う。pdfService.getData)。
-export async function sharePdf(
+// NotAllowedError で弾くため、呼ぶ前に通信を挟まない (バイト列を手元に持って
+// から呼ぶ。PDF は pdfService.getData、音声は fetch 済みの blob)。
+export async function shareFile(
   bytes: Uint8Array,
   fileName: string,
+  mime: string,
   nav: Navigator = navigator,
 ): Promise<void> {
   // Uint8Array をそのまま渡さず、実体の ArrayBuffer を切り出して File にする
   // (Prisma と同じで、共有プールを指す view を渡さない)
   const file = new File([bytes.slice().buffer as ArrayBuffer], fileName, {
-    type: 'application/pdf',
+    type: mime,
   })
   await nav.share({ files: [file], title: fileName })
+}
+
+// 共有が「一時的な許可切れ」で弾かれたか (AbortError = ユーザーが閉じた、とは別)。
+// iOS は share の直前に通信を挟むと transient activation が切れ、
+// NotAllowedError を投げる。このときはバイト列を手元に残して「もう一度押す」で
+// 救えるので、呼び出し側がこの合図で 2 段構えに切り替える (docs/12)。
+export function isShareActivationLost(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: string }).name === 'NotAllowedError'
+  )
 }

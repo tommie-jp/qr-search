@@ -14,7 +14,7 @@ import {
   type PdfDocumentHandle,
 } from "./pdfService";
 import { isStandaloneDisplay, subscribeDisplayMode } from "@/lib/displayMode";
-import { canShareFiles, isShareAborted, sharePdf } from "@/lib/shareFile";
+import { canShareFiles, isShareAborted, shareFile } from "@/lib/shareFile";
 import { BUSY_SPINNER_CLASS, SECONDARY_BUTTON_CLASS } from "../ui";
 
 // ページを先読みする距離。スクロールで現れる直前に描き始めることで、
@@ -230,7 +230,7 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
       return;
     }
     try {
-      await sharePdf(await doc.getData(), label);
+      await shareFile(await doc.getData(), label, "application/pdf");
     } catch (e) {
       // 共有シートを閉じただけならエラーではない
       if (isShareAborted(e)) {

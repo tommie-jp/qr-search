@@ -15,6 +15,7 @@ import { MermaidDiagram } from "./MermaidDiagram";
 import { CircuitDiagram } from "./CircuitDiagram";
 import { ZoomableImage } from "./ZoomableImage";
 import { PdfLink } from "./pdf/PdfLink";
+import { AudioPlayer } from "./audio/AudioPlayer";
 import { TextLink } from "./text/TextLink";
 import { BOX_CLASS } from "./ui";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
@@ -131,16 +132,9 @@ function imgWithWidth({
   ...props
 }: MarkdownComponentProps<"img">) {
   if (typeof props.src === "string" && AUDIO_SRC_RE.test(props.src)) {
-    // 音声プレイヤー。autoplay は付けない (勝手に鳴らさない)。preload は
-    // metadata にして、開いただけで全データを取りに行かないようにする
-    return (
-      <audio
-        controls
-        preload="metadata"
-        src={props.src}
-        className="w-full max-w-md"
-      />
-    );
+    // 音声プレイヤー + 共有ボタン。<audio> は iOS の長押し共有が効かないので、
+    // 自前で共有の口を持つ (AudioPlayer.tsx の冒頭に経緯)
+    return <AudioPlayer src={props.src} label={alt || "audio"} />;
   }
   if (typeof props.src === "string" && PDF_SRC_RE.test(props.src)) {
     // alt には挿入時のファイル名が入る (MemoEditorInner の pdfAltText)。

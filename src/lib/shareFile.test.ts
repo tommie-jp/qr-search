@@ -1,5 +1,11 @@
 import { expect, test, vi } from 'vitest'
-import { canShareFiles, isShareAborted, sharePdf } from './shareFile'
+import {
+  attachmentShareName,
+  canShareFiles,
+  isShareAborted,
+  isShareActivationLost,
+  shareFile,
+} from './shareFile'
 
 function fakeNavigator(options: {
   share?: unknown
@@ -42,12 +48,12 @@ test('canShare が投げても false を返す (throw しない)', () => {
   expect(canShareFiles(nav)).toBe(false)
 })
 
-test('ファイル名と PDF の MIME を付けて共有する', async () => {
+test('ファイル名と渡した MIME を付けて共有する', async () => {
   const share = vi.fn().mockResolvedValue(undefined)
   const nav = fakeNavigator({ share, canShare: () => true })
   const bytes = new TextEncoder().encode('%PDF-1.7\n')
 
-  await sharePdf(bytes, '仕様書.pdf', nav)
+  await shareFile(bytes, '仕様書.pdf', 'application/pdf', nav)
 
   expect(share).toHaveBeenCalledTimes(1)
   const arg = share.mock.calls[0][0] as { files: File[]; title: string }
@@ -58,16 +64,70 @@ test('ファイル名と PDF の MIME を付けて共有する', async () => {
   expect(arg.files[0].size).toBe(bytes.byteLength)
 })
 
+test('mime は渡した値を使う (音声など PDF 以外も共有できる)', async () => {
+  const share = vi.fn().mockResolvedValue(undefined)
+  const nav = fakeNavigator({ share, canShare: () => true })
+
+  await shareFile(new Uint8Array([1, 2, 3]), '録音.webm', 'audio/webm', nav)
+
+  const arg = share.mock.calls[0][0] as { files: File[] }
+  expect(arg.files[0].type).toBe('audio/webm')
+  expect(arg.files[0].name).toBe('録音.webm')
+})
+
 test('共有した中身が元のバイト列と一致する', async () => {
   const share = vi.fn().mockResolvedValue(undefined)
   const nav = fakeNavigator({ share, canShare: () => true })
   const bytes = new TextEncoder().encode('%PDF-1.7\nhello')
 
-  await sharePdf(bytes, 'x.pdf', nav)
+  await shareFile(bytes, 'x.pdf', 'application/pdf', nav)
 
   const arg = share.mock.calls[0][0] as { files: File[] }
   const got = new Uint8Array(await arg.files[0].arrayBuffer())
   expect([...got]).toEqual([...bytes])
+})
+
+// 保存名 (URL 末尾) は UUID なので、表示名 + 保存名の拡張子で共有名を作る
+test('attachmentShareName: 表示名に保存名の拡張子を付ける', () => {
+  expect(
+    attachmentShareName(
+      '/api/images/0f1e2d3c-4b5a-4678-9abc-def012345678.webm',
+      '録音 2026-07-20 18:49',
+      '録音',
+    ),
+  ).toBe('録音 2026-07-20 18:49.webm')
+})
+
+test('attachmentShareName: 表示名が空・既定なら種別名を宛てる', () => {
+  expect(
+    attachmentShareName('/api/images/uuid.mp3', 'audio', '録音'),
+  ).toBe('audio.mp3') // 既定ラベルでもそのまま名前にする (呼び出し側が渡すもの)
+  expect(attachmentShareName('/api/images/uuid.mp3', '   ', '録音')).toBe(
+    '録音.mp3',
+  )
+})
+
+test('attachmentShareName: クエリ・パス区切りを落とす', () => {
+  expect(
+    attachmentShareName('/api/images/uuid.wav?x=1#y', 'メモ/一覧', '録音'),
+  ).toBe('メモ一覧.wav')
+})
+
+test('attachmentShareName: 表示名が既に拡張子つきなら二重に付けない', () => {
+  expect(
+    attachmentShareName('/api/images/uuid.mp3', 'song.mp3', '録音'),
+  ).toBe('song.mp3')
+})
+
+// fetch で操作直後の許可が切れた場合。バイト列を残して再送するための合図
+test('NotAllowedError は activation 切れと判定する (AbortError とは別)', () => {
+  const lost = Object.assign(new Error('x'), { name: 'NotAllowedError' })
+  expect(isShareActivationLost(lost)).toBe(true)
+  expect(isShareActivationLost(Object.assign(new Error('x'), { name: 'AbortError' }))).toBe(
+    false,
+  )
+  expect(isShareActivationLost(new Error('boom'))).toBe(false)
+  expect(isShareActivationLost(null)).toBe(false)
 })
 
 // 共有シートを閉じただけ = 正常系。エラー表示に出さない
