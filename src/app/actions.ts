@@ -16,9 +16,16 @@ import {
   upsertMemo,
 } from '@/lib/items'
 import { parseBackUrl, parseSelectedItemNos } from '@/lib/itemSelection'
+import { buildSearchUrl } from '@/lib/searchUrl'
+import { SORT_COOKIE, SORT_COOKIE_MAX_AGE } from '@/lib/sortMode'
 import { currentUser, requireUser } from '@/lib/session'
 import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
-import { isValidItemNo, MAX_TEXT_LENGTH, parseMode } from '@/lib/validation'
+import {
+  isValidItemNo,
+  MAX_TEXT_LENGTH,
+  parseMode,
+  parseSort,
+} from '@/lib/validation'
 import {
   parseViewMode,
   VIEW_MODE_COOKIE,
@@ -253,4 +260,38 @@ export async function recordAccessAction(itemNo: string): Promise<void> {
   } catch (error) {
     console.error(`アクセス日時を記録できませんでした (${itemNo}):`, error)
   }
+}
+
+// 一覧の並び順を切り替える (docs/11-アプリ的UIUX計画.md §3、src/lib/sortMode.ts)。
+//
+// **cookie に覚えつつ、URL も更新する**のがこのアクションの役目。
+// 表示モード (setViewModeAction) と違って遷移まで行うのは、並び順が
+// ページ送りと戻り先にも効く「いま何を見ているか」でもあるため。
+//
+// cookie だけにすると共有リンクで並びを指定できず、URL だけにすると
+// `?sort=` を持たない入口 (ヘッダーのホーム・検索フォーム・スキャン・
+// タグリンク) から入るたびに既定へ戻る。両方を書くのが答え。
+//
+// requireUser() は呼ばない。書き換わるのは呼び手自身のブラウザに載る
+// 「見た目の好み」と行き先の URL だけで、DB にも他人にも触れない
+// (setViewModeAction と同じ判断)。
+export async function setSortAction(formData: FormData): Promise<void> {
+  const sort = parseSort(formData.get(SORT_COOKIE))
+  // 検索語は持ち回す。並び替えただけで検索語が消えては困る
+  const query = String(formData.get('q') ?? '')
+
+  const store = await cookies()
+  store.set(SORT_COOKIE, sort, {
+    // サーバしか読まない (描画前に読めることがこの方式の要)
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    // 他サイトからの遷移で好みが飛ばない程度に緩く
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SORT_COOKIE_MAX_AGE,
+  })
+
+  // 並びを変えたら 1 ページ目から見せる (buildSearchUrl と同じ約束)。
+  // redirect で URL にも載せるので、ページ送り・戻り先がその並びを引き継ぐ
+  redirect(buildSearchUrl(query, 1, sort))
 }

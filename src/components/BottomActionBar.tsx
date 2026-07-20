@@ -11,7 +11,6 @@ import {
   SelectIcon,
   SortIcon,
 } from "@/components/MenuIcons";
-import { PendingLink } from "@/components/PendingLink";
 import { useSelectMode } from "@/components/SelectModeProvider";
 import {
   BOTTOM_BAR_CLASS,
@@ -19,7 +18,7 @@ import {
   BOTTOM_BAR_SLOT_CLASS,
   BOTTOM_BAR_SPACER_CLASS,
 } from "@/components/ui";
-import { buildSearchUrl } from "@/lib/searchUrl";
+import { SORT_COOKIE } from "@/lib/sortMode";
 import type { Sort } from "@/lib/validation";
 import { VIEW_MODE_COOKIE, type ViewMode } from "@/lib/viewMode";
 
@@ -32,6 +31,8 @@ interface BottomActionBarProps {
   sort: Sort;
   view: ViewMode;
   viewAction: ViewModeAction;
+  // 並び順を cookie に覚えて遷移するサーバーアクション (viewAction と同じ理由で prop)
+  sortAction: ViewModeAction;
   // QR シールに焼かれているホスト。ScannerModal へ渡す
   stickerHost: string;
   // 非本番はヘッダーと同じくピンクに塗る。process.env はクライアントに
@@ -84,6 +85,7 @@ export function BottomActionBar({
   sort,
   view,
   viewAction,
+  sortAction,
   stickerHost,
   isProd,
 }: BottomActionBarProps) {
@@ -179,23 +181,28 @@ export function BottomActionBar({
             </button>
           </form>
 
-          {/* 並び順。searchParams を変えるだけのリンクなので JS 無効でも動く。
-              同じルート内の遷移では loading.tsx が出ないため PendingLink で
-              スピナーを出す (docs/11-アプリ的UIUX計画.md §1-2) */}
-          <PendingLink
-            href={buildSearchUrl(query, 1, nextSort)}
-            aria-label={`並び順: ${sortLabel[sort]} (押すと${sortLabel[nextSort]}に切替)`}
-            // スピナーは絶対配置で流れから抜く。縦積みのスロットで場所を
-            // 取らせると、その半分ぶんアイコンとラベルが持ち上がり、この
-            // スロットだけ他と高さが揃わない
-            spinnerClassName="absolute top-1 right-1"
-            className={`${BOTTOM_BAR_SLOT_CLASS} relative text-gray-700`}
-          >
-            <SlotIcon color="text-amber-600">
-              <SortIcon />
-            </SlotIcon>
-            {sortLabel[sort]}
-          </PendingLink>
+          {/* 並び順。表示モードと同じくフォーム送信にする (JS 無効でも動く)。
+              **リンクではなくフォームなのは cookie に覚えるため** — リンクだと
+              URL しか変わらず、?sort= を持たない入口 (ヘッダーのホーム・検索
+              フォーム・スキャン・タグリンク) から入るたびに既定へ戻っていた
+              (src/lib/sortMode.ts)。アクション側が cookie を書いてから
+              ?sort= 付きの URL へ redirect するので、URL が正なのは変わらない。
+              検索語は hidden で持ち回す (並び替えで検索語が消えては困る) */}
+          <form action={sortAction} className="flex flex-1">
+            <input type="hidden" name="q" value={query} />
+            <button
+              type="submit"
+              name={SORT_COOKIE}
+              value={nextSort}
+              aria-label={`並び順: ${sortLabel[sort]} (押すと${sortLabel[nextSort]}に切替)`}
+              className={`${BOTTOM_BAR_SLOT_CLASS} text-gray-700`}
+            >
+              <SlotIcon color="text-amber-600">
+                <SortIcon />
+              </SlotIcon>
+              {sortLabel[sort]}
+            </button>
+          </form>
 
           {/* 一括タグ付け・ゴミ箱行きのための選択モード。一覧側 (ItemList) と
               状態を共有するので context 経由で切り替える */}

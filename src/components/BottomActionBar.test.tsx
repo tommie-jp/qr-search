@@ -20,6 +20,7 @@ const render = (
         sort={sort}
         view={view}
         viewAction={noop}
+        sortAction={noop}
         stickerHost="qr.example.jp"
         isProd={isProd}
       />
@@ -62,13 +63,13 @@ test("画像表示の次は小に戻る (循環の最後の辺)", () => {
 });
 
 // 並び順は 更新順 → アクセス順 → 番号順 の 3 値循環
-// (docs/37-アクセス順計画.md)。表示モードと同じ形
+// (docs/37-アクセス順計画.md)。表示モードと同じ形。
+// **リンクではなくフォーム送信**にしてあるのは cookie に覚えるため
+// (src/lib/sortMode.ts)。value は循環の次の並び
 test("更新順の次はアクセス順", () => {
   const html = render("compact", "updated", "npn");
   expect(html).toContain(">更新順<");
-  // buildSearchUrl と同じ形。切り替えたら 1 ページ目に戻す
-  expect(html).toContain("sort=accessed");
-  expect(html).not.toContain("sort=updated");
+  expect(html).toContain('value="accessed"');
   // 行き先も読み上げに乗せる (押す前に循環の次が判る)
   expect(html).toContain("並び順: 更新順 (押すとアクセス順に切替)");
 });
@@ -76,24 +77,29 @@ test("更新順の次はアクセス順", () => {
 test("アクセス順の次は番号順", () => {
   const html = render("compact", "accessed");
   expect(html).toContain(">アクセス順<");
-  expect(html).toContain("sort=itemNo");
+  expect(html).toContain('value="itemNo"');
   expect(html).toContain("並び順: アクセス順 (押すと番号順に切替)");
 });
 
 test("番号順の次は既定の更新順に戻る (循環の最後の辺)", () => {
   const html = render("compact", "itemNo");
   expect(html).toContain(">番号順<");
-  // 戻り先は既定の更新順。buildSearchUrl は既定値を URL から省くので
-  // sort= は付かない (検索語も無いので素の "/")
-  expect(html).toContain('href="/"');
-  expect(html).not.toContain("sort=itemNo");
+  expect(html).toContain('value="updated"');
   expect(html).toContain("並び順: 番号順 (押すと更新順に切替)");
 });
 
+// リンクのままだと URL しか変わらず、?sort= を持たない入口から入るたびに
+// 既定へ戻っていた。cookie を書けるのはフォーム送信だけ
+test("並び順は cookie 名で送るフォームになっている", () => {
+  const html = render();
+  expect(html).toContain('name="sort"');
+  expect(html).toContain('type="submit"');
+});
+
 test("並び順の切替は検索語を持ち回す", () => {
-  // 並び替えただけで検索語が消えては困る
+  // 並び替えただけで検索語が消えては困る。フォームなので hidden で運ぶ
   const html = render("compact", "updated", "npn");
-  expect(html).toContain("q=npn");
+  expect(html).toContain('name="q" value="npn"');
 });
 
 test("表示の切替は cookie を書くフォーム送信で、JS 無効でも動く", () => {

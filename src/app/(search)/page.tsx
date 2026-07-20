@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import {
   bulkTagAction,
+  setSortAction,
   setViewModeAction,
   trashItemsAction,
 } from "@/app/actions";
@@ -32,7 +33,8 @@ import { isTaggableCode, scanRegisterHref } from "@/lib/scanRegister";
 import { queryHasTagTerm } from "@/lib/search";
 import { buildSearchUrl } from "@/lib/searchUrl";
 import { qrStickerHost } from "@/lib/site";
-import { parseSort } from "@/lib/validation";
+import { SORT_COOKIE, resolveSort } from "@/lib/sortMode";
+import type { Sort } from "@/lib/validation";
 import { parseViewMode, VIEW_MODE_COOKIE } from "@/lib/viewMode";
 
 export const dynamic = "force-dynamic";
@@ -44,11 +46,15 @@ interface HomeProps {
 export default async function Home({ searchParams }: HomeProps) {
   const { q = "", page = "1", sort: sortParam } = await searchParams;
   const query = q.trim();
-  const sort = parseSort(sortParam);
+  const cookieStore = await cookies();
+  // 並び順は URL → cookie → 既定 の順に決める (src/lib/sortMode.ts)。
+  // URL だけを見ていた頃は、?sort= を持たない入口 (ヘッダーのホーム・
+  // 検索フォーム・スキャン・タグリンク) から入るたびに既定へ戻っていた
+  const sort = resolveSort(sortParam, cookieStore.get(SORT_COOKIE)?.value);
   // 表示モードは検索状態ではなく端末ごとの好みなので URL ではなく cookie。
   // ここ (サーバ) で読めるから初回描画から正しい見た目で出る
   // (docs/23-検索結果表示モード計画.md §5)
-  const view = parseViewMode((await cookies()).get(VIEW_MODE_COOKIE)?.value);
+  const view = parseViewMode(cookieStore.get(VIEW_MODE_COOKIE)?.value);
   // 検索窓のタグ補完だけは固定部と一緒に引く (小さな表 1 つで速い)。
   // 重い検索本体は HomeResults に隔離して Suspense で後から流す —
   // ログイン直後や直リンクの初回表示で、固定部 (検索窓) を先に出すため
@@ -100,6 +106,7 @@ export default async function Home({ searchParams }: HomeProps) {
             sort={sort}
             view={view}
             viewAction={setViewModeAction}
+            sortAction={setSortAction}
             stickerHost={qrStickerHost()}
             isProd={isProductionEnv()}
           />
@@ -119,7 +126,7 @@ async function HomeResults({
 }: {
   query: string;
   page: string;
-  sort: ReturnType<typeof parseSort>;
+  sort: Sort;
   view: ReturnType<typeof parseViewMode>;
 }) {
   // 特性表はタグ検索のときだけ出す。表は「同族の部品を並べて比べる」ビューで、
