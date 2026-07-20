@@ -26,6 +26,14 @@ import {
 // +/- ボタン 1 回ぶんの倍率
 const ZOOM_STEP = 1.5;
 
+// ホイール 1 目盛り (deltaY ≒ 100) で約 1.22 倍。exp を使うのは、上下に
+// 同じだけ回したときに正確に元の倍率へ戻るようにするため
+const WHEEL_SENSITIVITY = 0.002;
+
+// Firefox はホイールを「行数」(deltaMode = 1) で寄越すことがある。
+// px 換算のおおよその係数
+const LINE_HEIGHT_PX = 33;
+
 const NO_PAN: PanOffset = { left: 0, top: 0 };
 
 interface UseStageGesturesParams {
@@ -106,6 +114,33 @@ export function useStageGestures({
     setZoom(1);
     setPan(NO_PAN);
   }, []);
+
+  // --- ホイールで拡大 (PC) ------------------------------------------------
+  // ピンチと違い、ホイールは 1 本指の描画と取り合いにならないので
+  // 「移動」道具に限定しない。どの道具のままでもポインタ位置を軸に拡大できる
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      return;
+    }
+    const onWheel = (event: WheelEvent) => {
+      // ブラウザ自体の拡大 (Ctrl+ホイール) や後ろのページのスクロールに流さない
+      event.preventDefault();
+      const box = stage.getBoundingClientRect();
+      const delta =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY * LINE_HEIGHT_PX
+          : event.deltaY;
+      applyZoom(
+        zoom * Math.exp(-delta * WHEEL_SENSITIVITY),
+        { x: event.clientX - box.left, y: event.clientY - box.top },
+        zoom,
+        pan,
+      );
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, [applyZoom, pan, stageRef, zoom]);
 
   // --- 「移動」道具のジェスチャ -------------------------------------------
   useEffect(() => {
