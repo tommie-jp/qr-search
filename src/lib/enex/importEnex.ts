@@ -42,6 +42,19 @@ export interface SkippedEntry {
   reason: string
 }
 
+export interface ImportOptions {
+  // 画像検索の埋め込みをその場で作るか (既定: 作らない)。
+  //
+  // 既定を「作らない」にしてあるのは、Web の取り込み口 (/api/import) が
+  // 本番 VPS (RAM 2GB) で動くため。埋め込みはモデルの読み込みだけで RSS が
+  // 475MB 増える (imageStore.ts の SaveImageOptions 参照)。
+  //
+  // ローカルから流す一括取り込み (scripts/importEnex.ts) は手元のメモリで
+  // 走るので、ここを true にして**その場で索引まで作ってしまう**のがよい。
+  // 後で backfill を回す手間が消える。
+  embedImages?: boolean
+}
+
 export interface ImportReport {
   imported: ImportedNote[]
   // ノート・添付・タグをまとめて 1 本にする。利用者が知りたいのは
@@ -57,7 +70,10 @@ export interface ImportReport {
 //
 // XML として読めない・ENEX でないファイルは**例外**を投げる (ファイル 1 枚
 // まるごとが対象外)。個々のノート・添付の失敗は例外にせずレポートへ載せる。
-export async function importEnex(xml: string): Promise<ImportReport> {
+export async function importEnex(
+  xml: string,
+  options: ImportOptions = {},
+): Promise<ImportReport> {
   const notes = parseEnex(xml)
   const report: ImportReport = {
     imported: [],
@@ -77,7 +93,7 @@ export async function importEnex(xml: string): Promise<ImportReport> {
   // 並列にすると同じ番号を 2 件が掴んで後勝ちで消える
   for (const note of targets) {
     try {
-      await importNote(note, report)
+      await importNote(note, report, options)
     } catch (error) {
       // 1 件の失敗でファイル全体を落とさない。原因はサーバログに残す
       console.error(`ENEX ノートの取り込みに失敗しました (${noteLabel(note)}):`, error)
@@ -91,7 +107,11 @@ export async function importEnex(xml: string): Promise<ImportReport> {
   return report
 }
 
-async function importNote(note: EnexNote, report: ImportReport): Promise<void> {
+async function importNote(
+  note: EnexNote,
+  report: ImportReport,
+  options: ImportOptions,
+): Promise<void> {
   // XML の時点で読めなかった添付 (base64 でない・中身が空) も、
   // 保存に失敗したものと同じ列に並べる。利用者にとっては同じ「入らなかった添付」
   for (const rejected of note.rejectedResources) {
@@ -101,7 +121,7 @@ async function importNote(note: EnexNote, report: ImportReport): Promise<void> {
     })
   }
 
-  const { media, savedNames } = await storeResources(note, report)
+  const { media, savedNames } = await storeResources(note, report, options)
 
   // ノートが入らなかったときは、保存済みの添付も必ず消す。本文が入らない以上
   // どこからも参照されず、残しても DB を太らせるだけ
@@ -183,6 +203,7 @@ interface StoredResources {
 async function storeResources(
   note: EnexNote,
   report: ImportReport,
+  options: ImportOptions,
 ): Promise<StoredResources> {
   const media = new Map<string, EnexMedia>()
   const savedNames: string[] = []
@@ -197,12 +218,14 @@ async function storeResources(
     // 復号はここで 1 件ずつ。保存が終われば次の周回で捨てられる
     // (全件を復号して抱えると 40MB の ENEX でメモリが跳ねる)。
     //
-    // 画像検索の埋め込みは**作らない** (deferEmbedding)。モデルの読み込みだけで
-    // RSS が 475MB 増える一方、取り込みは画像の数だけそれを撃つ。本番 VPS は
-    // RAM 2GB なので取り込み中に落ちる。embedding は派生キャッシュなので、
-    // 後から scripts/backfillEmbeddings.ts で埋められる (imageStore.ts 参照)
+    // 画像検索の埋め込みは既定では**作らない**。モデルの読み込みだけで RSS が
+    // 475MB 増える一方、取り込みは画像の数だけそれを撃つので、本番 VPS
+    // (RAM 2GB) で動く Web の口では落ちる。embedding は派生キャッシュなので、
+    // 後から scripts/backfillEmbeddings.ts で埋められる (imageStore.ts 参照)。
+    // メモリに余裕のあるローカルからの一括取り込みだけ embedImages を立てる
+    const deferEmbedding = !options.embedImages
     const stored = await storeAttachment(decodeResourceData(resource), {
-      deferEmbedding: true,
+      deferEmbedding,
     })
     if (!stored.ok) {
       report.skipped.push({
@@ -213,7 +236,7 @@ async function storeResources(
     }
 
     savedNames.push(stored.name)
-    if (stored.isImage) {
+    if (stored.isImage && deferEmbedding) {
       report.deferredImageIndex += 1
     }
     media.set(resource.md5, {

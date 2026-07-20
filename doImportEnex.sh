@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Evernote の .enex を取り込む。変換はローカル (WSL) で行う。
+#
+# なぜローカルなのか: 変換は入力に比例してメモリを食う。実データ (40.2MB) を
+# Web の口 (/api/import) へ投げると本番 VPS (RAM 2GB / swap 常用。docs/09) には
+# 重い。イメージをローカルでビルドして送る doDeploy.sh と同じで、
+# 「重い処理は手元、成果物だけ本番へ」に揃える。
+#
+# 既定は vps2 の DB へ SSH トンネル越しに書き込む。トンネルの張り方は
+# doDeploy.sh の「6/8 マイグレーション」と同じ (vps2 の Postgres は
+# 127.0.0.1 にしか公開されておらず、それを変える必要はない)。
+#
+# **書き込む前に本番 DB のバックアップを必ず取る**。数百行を本番へ書く操作で、
+# 取り消す手段はこのダンプしかない。--skip-backup で省けるが、省くなら
+# 直前に自分で取っていること。
+#
+# 使い方:
+#   ./doImportEnex.sh <file.enex>                 # vps2 へ (バックアップ込み)
+#   ./doImportEnex.sh <file.enex> --local         # ローカルの db へ (下見用)
+#   ./doImportEnex.sh <file.enex> --check         # ファイルを読むだけ (DB に触らない)
+#   ./doImportEnex.sh <file.enex> --no-embed      # 画像検索の索引を作らない
+#   ./doImportEnex.sh <file.enex> --yes           # 確認プロンプトを省く
+#   ./doImportEnex.sh <file.enex> --skip-backup   # バックアップを省く (非推奨)
+#
+# 手順の推奨:
+#   1. ./doCopyDBfromVPS2.sh          本番のコピーをローカルに作る (採番も本番と同じ)
+#   2. ./doImportEnex.sh f.enex --local   下見。レポートと画面を確認する
+#   3. ./doImportEnex.sh f.enex           本番へ (実行中はアプリを触らないこと)
+#
+# 取り込み中にアプリでノートを新規作成しないこと。nextItemNo() は
+# 「空き番号の最小値」を返すだけで番号を予約しない (src/lib/items.ts)。
+#
+# 環境変数で上書き可能:
+#   IMPORT_REMOTE      ssh 接続先 (default: vps2)
+#   IMPORT_REMOTE_DIR  リモートの compose ディレクトリ ($HOME 相対)
+#   IMPORT_TUNNEL_PORT トンネルのローカルポート (default: 15433)
+set -euo pipefail
+cd "$(dirname "$0")"
+
+REMOTE="${IMPORT_REMOTE:-vps2}"
+REMOTE_DIR="${IMPORT_REMOTE_DIR:-41-QR-search/qr-search}"
+# doDeploy.sh の 15432 とずらす。デプロイ中に取り込みを走らせても
+# 「ポートが埋まっている」で止まらないようにするため
+TUNNEL_PORT="${IMPORT_TUNNEL_PORT:-15433}"
+readonly BACKUP_DIR="backup"
+
+log() { echo ""; echo "==> $*"; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+usage() {
+  echo "usage: $0 <file.enex> [--local] [--check] [--no-embed] [--yes] [--skip-backup]" >&2
+  exit 1
+}
+
+FILE=""
+LOCAL=0
+SKIP_BACKUP=0
+PASS_THROUGH=()
+for arg in "$@"; do
+  case "$arg" in
+    --local) LOCAL=1 ;;
+    --skip-backup) SKIP_BACKUP=1 ;;
+    --check | --no-embed | --yes) PASS_THROUGH+=("$arg") ;;
+    -*) usage ;;
+    *)
+      [ -z "$FILE" ] || usage
+      FILE="$arg"
+      ;;
+  esac
+done
+[ -n "$FILE" ] || usage
+[ -f "$FILE" ] || die "ファイルが無い: $FILE"
+
+# --check は DB に触らないので、トンネルもバックアップも要らない
+IS_CHECK=0
+for arg in ${PASS_THROUGH+"${PASS_THROUGH[@]}"}; do
+  [ "$arg" = "--check" ] && IS_CHECK=1
+done
+
+run_import() {
+  npx tsx scripts/importEnex.ts "$FILE" ${PASS_THROUGH+"${PASS_THROUGH[@]}"}
+}
+
+if [ "$IS_CHECK" = "1" ]; then
+  log "下見 (DB には触らない)"
+  run_import
+  exit 0
+fi
+
+if [ "$LOCAL" = "1" ]; then
+  log "ローカルの db へ取り込む"
+  [ -f .env ] || die ".env がない。cp .env.example .env して値を設定すること"
+  docker compose exec -T db pg_isready -U qr -d qr >/dev/null 2>&1 ||
+    die "ローカルの db が起動していない。docker compose up -d db を先に実行すること"
+  # .env の DATABASE_URL をそのまま使う (dotenv/config が読む)
+  run_import
+  exit 0
+fi
+
+# --- ここから本番 (vps2) ---
+
+log "0/3 事前チェック ($REMOTE)"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE" true 2>/dev/null ||
+  die "$REMOTE に ssh 接続できない"
+ssh "$REMOTE" "cd '$REMOTE_DIR' && docker compose exec -T db pg_isready -U qr -d qr" >/dev/null 2>&1 ||
+  die "$REMOTE の db が起動していない"
+echo "OK"
+
+if [ "$SKIP_BACKUP" = "1" ]; then
+  echo "警告: バックアップを省いた。取り消す手段が無い状態で本番へ書き込む"
+else
+  log "1/3 本番 DB のバックアップ"
+  mkdir -p "$BACKUP_DIR"
+  BACKUP="${BACKUP_DIR}/vps2-before-import_$(date +%Y%m%d_%H%M%S).dump"
+  # ssh の失敗でも空ファイルが残り「バックアップがある」ように見えてしまうので、
+  # 中身があることまで確かめる。ここが唯一の巻き戻し手段
+  ssh "$REMOTE" "cd '$REMOTE_DIR' && docker compose exec -T db pg_dump -U qr -d qr -Fc" > "$BACKUP"
+  [ -s "$BACKUP" ] || die "バックアップが空。中止する (巻き戻せない状態では進めない)"
+  du -h "$BACKUP"
+  echo "戻すには: docker/psql で pg_restore --clean --if-exists (doCopyDBfromVPS2.sh 冒頭に手順)"
+fi
+
+log "2/3 SSH トンネル (localhost:$TUNNEL_PORT → $REMOTE の 127.0.0.1:5432)"
+# ControlMaster で管理し、終了時に必ず閉じる (doDeploy.sh と同じ)
+SSH_CTRL="$(mktemp -u "${TMPDIR:-/tmp}/qr-import-ssh.XXXXXX")"
+cleanup() { ssh -S "$SSH_CTRL" -O exit "$REMOTE" 2>/dev/null || true; }
+trap cleanup EXIT
+
+REMOTE_PW="$(ssh "$REMOTE" "grep '^POSTGRES_PASSWORD=' '$REMOTE_DIR/.env' | cut -d= -f2-")"
+[ -n "$REMOTE_PW" ] || die "$REMOTE の $REMOTE_DIR/.env から POSTGRES_PASSWORD を取得できない"
+ENCODED_PW="$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$REMOTE_PW")"
+
+ssh -M -S "$SSH_CTRL" -f -N \
+  -L "127.0.0.1:${TUNNEL_PORT}:127.0.0.1:5432" \
+  -o ExitOnForwardFailure=yes "$REMOTE"
+echo "OK"
+
+log "3/3 取り込み"
+DATABASE_URL="postgresql://qr:${ENCODED_PW}@127.0.0.1:${TUNNEL_PORT}/qr" run_import

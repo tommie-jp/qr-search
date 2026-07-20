@@ -12,16 +12,6 @@
 # 昔の挙動に戻る。公開してよいパスの一覧も src/lib/publicPaths.ts が正本
 # (かつてここにあった @pwa_public の移設先)。
 {$SITE_ADDRESS:localhost} {
-	# ENEX インポート (docs/28-エクスポート計画.md §4) だけ枠を広げる。
-	# ENEX は 1 ファイルに全ノートと添付を抱えるので、写真が数枚入った
-	# ノートが並ぶだけで 12MB を超える (実データの書き出しが 40.2MB だった)。
-	# **この口だけ**にするのが要点で、全体を広げると画像アップロードの
-	# 防波堤まで下がる。アプリ側の上限 (api/import/route.ts) と対で直すこと
-	@import path /api/import
-	request_body @import {
-		max_size 66MB
-	}
-
 	# 画像アップロード (10MB) + multipart オーバーヘッドを許容しつつ、
 	# 巨大ボディによるメモリ枯渇をエッジで遮断する
 	request_body {

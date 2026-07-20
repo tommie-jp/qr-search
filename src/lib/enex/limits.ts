@@ -9,22 +9,24 @@
 // 見え、fetch が "Load failed" で失敗する。サーバの JSON エラーは届かないので、
 // **送る前に**サイズを見て理由を言葉で出すしかない。
 //
-// 画像 1 枚の上限 (10MB) より桁を上げる。ENEX は 1 ファイルに本文と添付を
-// まとめて抱えるので、写真が数枚入ったノートが並ぶだけで数十 MB になる
-// (実データの書き出しが 40.2MB だった)。
+// 画像アップロードと同じ枠にする。**エッジ (Caddyfile / deploy/nginx) の
+// ボディ上限 12MB がこれと multipart の余白を賄っている**ので、この値を上げる
+// ときはあちらも一緒に上げること。片方だけ上げると、アプリに届く前に 413 で
+// 切られてブラウザには "Load failed" としか出ない (サーバの JSON エラーは届かない)。
 //
-// 一方で青天井にはしない — formData() は本文を丸ごとメモリに載せる。
-// 本番 VPS は RAM 2GB で swap を常用しているため (docs/09-vps振り分け移行手順.md)、
-// ここを上げるときは実データの大きさを確かめてからにすること。
-// **エッジ (Caddyfile / deploy/nginx) の上限も一緒に上げる** — あちらが
-// 低いままだと、アプリに届く前に 413 で切られる。
-export const MAX_ENEX_BYTES = 64 * 1024 * 1024
+// **大きい ENEX は Web からは入れない**。変換は入力に比例してメモリを食い、
+// 本番 VPS は RAM 2GB で swap を常用している (docs/09-vps振り分け移行手順.md)。
+// 実データの書き出しは 40.2MB あり、これはローカル (WSL) から
+// ./doImportEnex.sh で取り込む。Web の口は「スマホから小さいものを入れる」用途に
+// 絞り、エッジの防波堤を下げない (docs/28-エクスポート計画.md §4)。
+export const MAX_ENEX_BYTES = 10 * 1024 * 1024
 
 export function enexTooLargeMessage(actualBytes: number): string {
   const actual = (actualBytes / 1024 / 1024).toFixed(1)
   const limit = MAX_ENEX_BYTES / 1024 / 1024
   return (
     `ファイルが大きすぎます (${actual}MB / 上限 ${limit}MB)。` +
-    'Evernote 側でノートブックを分けて書き出すか、大きな添付を減らして下さい'
+    '大きいファイルは PC 上で ./doImportEnex.sh から取り込むか、' +
+    'Evernote 側でノートブックを分けて書き出して下さい'
   )
 }
