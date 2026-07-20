@@ -68,3 +68,6 @@ next-env.d.ts
 
 # OCR の認識モデル (scripts/fetchPaddleOcrModels.mjs がネットから落とす)
 /public/paddle-ocr
+
+# PDF ビューア (scripts/copyPdfjsAssets.mjs が node_modules から複製する)
+/public/pdfjs

@@ -162,13 +162,14 @@ test("画像 URL は従来どおり <img> のまま (音声に巻き込まれな
   expect(html).not.toContain("<audio");
 });
 
-// PDF (docs/12-添付ファイル種類拡張メモ.md)。インラインビューアは埋め込まず、
-// 押したらブラウザ内蔵ビューアが開く別タブリンクにする
-test("PDF URL の画像記法は別タブリンクにする", () => {
+// PDF (docs/12-添付ファイル種類拡張メモ.md)。押すとページ内のビューアで開く
+// (画面遷移させない。standalone PWA で戻れなくなるため。PdfLink.tsx 参照)
+test("PDF URL の画像記法はビューアを開くボタンにする", () => {
   const html = render("![仕様書.pdf](/api/images/abc.pdf)");
-  expect(html).toContain('href="/api/images/abc.pdf"');
-  expect(html).toContain('target="_blank"');
+  expect(html).toContain('<button type="button"');
   expect(html).toContain("仕様書.pdf");
+  // PDF へ直接遷移する導線は本文に置かない
+  expect(html).not.toContain('href="/api/images/abc.pdf"');
   // 画像でも音声でもない
   expect(html).not.toContain("<img");
   expect(html).not.toContain("<audio");
@@ -176,7 +177,7 @@ test("PDF URL の画像記法は別タブリンクにする", () => {
 
 test("PDF の alt が空でも既定のラベルを出す", () => {
   const html = render("![](/api/images/abc.pdf)");
-  expect(html).toContain('href="/api/images/abc.pdf"');
+  expect(html).toContain('<button type="button"');
   expect(html).toContain("PDF");
 });
 

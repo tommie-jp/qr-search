@@ -14,6 +14,7 @@ import { remarkTagLinks } from "./remarkTagLinks";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { CircuitDiagram } from "./CircuitDiagram";
 import { ZoomableImage } from "./ZoomableImage";
+import { PdfLink } from "./pdf/PdfLink";
 import { BOX_CLASS } from "./ui";
 import { CIRCUIT_LANG, MERMAID_LANG } from "@/lib/fenceLanguages";
 import type { CircuitMap } from "@/lib/circuitCache";
@@ -130,12 +131,9 @@ function imgWithWidth({
   }
   if (typeof props.src === "string" && PDF_SRC_RE.test(props.src)) {
     // alt には挿入時のファイル名が入る (MemoEditorInner の pdfAltText)。
-    // 別タブで開く — 同じタブだとノートから離れてしまう
-    return (
-      <a href={props.src} rel="noreferrer" target="_blank" className="break-all">
-        📄 {alt || "PDF"}
-      </a>
-    );
+    // 押すとページ内のモーダルで開く (画面遷移しないので standalone PWA でも
+    // 確実にノートへ戻れる。PdfLink.tsx の冒頭に経緯)
+    return <PdfLink href={props.src} label={alt || "PDF"} />;
   }
   const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
   if (match) {

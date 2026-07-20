@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "npm run copy:assets && next dev",
     "build": "npm run copy:assets && prisma generate && next build",
-    "copy:assets": "node scripts/copyTikzFonts.mjs && node scripts/copyZxingWasm.mjs && node scripts/copyOnnxWasm.mjs && node scripts/copyEmbeddingWasm.mjs && node scripts/fetchPaddleOcrModels.mjs",
+    "copy:assets": "node scripts/copyTikzFonts.mjs && node scripts/copyZxingWasm.mjs && node scripts/copyOnnxWasm.mjs && node scripts/copyEmbeddingWasm.mjs && node scripts/copyPdfjsAssets.mjs && node scripts/fetchPaddleOcrModels.mjs",
     "backfill:embeddings": "tsx scripts/backfillEmbeddings.ts",
     "start": "next start",
     "lint": "eslint",
@@ -43,6 +43,7 @@
     "next": "16.2.10",
     "node-tikzjax": "^1.0.5",
     "onnxruntime-web": "^1.27.0",
+    "pdfjs-dist": "^6.1.200",
     "prisma": "^7.8.0",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
