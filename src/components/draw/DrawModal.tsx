@@ -17,8 +17,9 @@ import {
 } from "@/lib/draw/drawPrefs";
 import { drawingAltText, drawingFileName } from "@/lib/draw/drawingFile";
 import { BUSY_NOTICE_CLASS, BUSY_SPINNER_CLASS } from "@/components/ui";
+import type { DrawTool } from "./drawTools";
 import { DrawToolbar } from "./DrawToolbar";
-import { type DrawTool, useDrawCanvas } from "./useDrawCanvas";
+import { useDrawCanvas } from "./useDrawCanvas";
 
 const BAR_BUTTON_CLASS =
   "inline-flex min-h-11 shrink-0 items-center justify-center rounded px-3 font-medium text-white transition active:scale-95 disabled:opacity-40 disabled:active:scale-100";

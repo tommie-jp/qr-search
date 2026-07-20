@@ -5,10 +5,13 @@
 // この画面だけの配色を持つ。狭い端末でも畳まず、はみ出した分は横に流す。
 
 import { DRAW_WIDTH_OPTIONS } from "@/lib/draw/drawPrefs";
-import type { DrawTool } from "./useDrawCanvas";
+import type { DrawTool } from "./drawTools";
 
 const TOOLS: ReadonlyArray<{ id: DrawTool; label: string }> = [
   { id: "pen", label: "ペン" },
+  { id: "arrow", label: "矢印" },
+  { id: "rect", label: "四角" },
+  { id: "ellipse", label: "丸" },
   { id: "eraser", label: "消しゴム" },
   { id: "select", label: "選択" },
   { id: "text", label: "文字" },

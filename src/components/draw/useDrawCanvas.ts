@@ -23,8 +23,10 @@ import {
   redoHistory,
   undoHistory,
 } from "@/lib/draw/history";
+import type { DrawTool } from "./drawTools";
+import { attachShapeTool } from "./shapeTool";
 
-export type DrawTool = "pen" | "eraser" | "select" | "text";
+export type { DrawTool };
 
 // 消しゴムはペンと同じ太さだと細すぎて狙って消せない
 const ERASER_SCALE = 3;
@@ -54,6 +56,9 @@ const MIN_FONT_SIZE = 18;
 
 // 日本語を出すので、既定の Times New Roman には任せない
 const FONT_FAMILY = "system-ui, sans-serif";
+
+// 図形をドラッグで置くときの、タップと区別する最小の移動量 (画面で見た px)
+const MIN_SHAPE_DRAG = 4;
 
 // 返り値に ref を混ぜない。ref を持つオブジェクトはレンダー中に読めない
 // ものとして扱われるため (react-hooks/refs)、canvas と枠の ref は引数で受ける
@@ -123,6 +128,7 @@ export function useDrawCanvas({
   const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const eraserDisposerRef = useRef<(() => void) | null>(null);
   const eraserRef = useRef<EraserBrush | null>(null);
+  const detachShapeToolRef = useRef<(() => void) | null>(null);
   const historyRef = useRef<DrawHistory>(createHistory(""));
 
   const [size, setSize] = useState<CanvasSize | null>(null);
@@ -357,6 +363,25 @@ export function useDrawCanvas({
         }
       });
 
+      // 矢印・矩形・楕円のドラッグ描画 (docs/36 §1)。
+      // ドラッグ中は仮の図形を出し入れするので履歴を止め、離したときに 1 手積む
+      detachShapeToolRef.current = attachShapeTool(fc, {
+        getTool: () => toolRef.current,
+        getColor: () => colorRef.current,
+        getStrokeWidth: () =>
+          toCanvasUnits(widthRef.current, displayScaleRef.current),
+        getMinDrag: () => toCanvasUnits(MIN_SHAPE_DRAG, displayScaleRef.current),
+        beginPreview: () => {
+          suppressRef.current = true;
+        },
+        endPreview: (commit) => {
+          suppressRef.current = false;
+          if (commit) {
+            scheduleSnapshot();
+          }
+        },
+      });
+
       fc.requestRenderAll();
       setSize(canvasSize);
       syncHistoryState(createHistory(JSON.stringify(fc.toObject(["erasable"]))));
@@ -370,6 +395,8 @@ export function useDrawCanvas({
       disposed = true;
       clearTimeout(snapshotTimerRef.current);
       releaseEraser();
+      detachShapeToolRef.current?.();
+      detachShapeToolRef.current = null;
       const fc = fcRef.current;
       fcRef.current = null;
       void fc?.dispose();
