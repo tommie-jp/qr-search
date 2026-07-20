@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { expect, test } from 'vitest'
-import { parseEnex } from './parseEnex'
+import { decodeResourceData, parseEnex } from './parseEnex'
 
 // 1x1 の透明 PNG。実物の ENEX と同じく base64 で埋める
 const PNG_BASE64 =
@@ -55,7 +55,19 @@ test('題名・本文・タグ・日時・添付を取り出す', () => {
   const resource = note.resources[0]
   expect(resource.mime).toBe('image/png')
   expect(resource.fileName).toBe('dot.png')
-  expect(Buffer.from(resource.data)).toEqual(PNG_BYTES)
+  expect(Buffer.from(decodeResourceData(resource))).toEqual(PNG_BYTES)
+})
+
+// 復号したバイト列を全件ぶん抱えるとメモリが跳ねるので、base64 のまま持ち、
+// 保存する直前に 1 件ずつ復号する
+test('添付は base64 のまま持ち、復号は要求されたときだけ行う', () => {
+  const [note] = parseEnex(enex(fullNote))
+  expect(note.resources[0].base64).toBe(PNG_BASE64)
+  // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける。
+  // Buffer の共有プールを持ち出すと隣の添付まで書き込まれうる
+  const data = decodeResourceData(note.resources[0])
+  expect(data.byteLength).toBe(PNG_BYTES.byteLength)
+  expect(data.buffer.byteLength).toBe(PNG_BYTES.byteLength)
 })
 
 // 本文からの参照 (<en-media hash>) と突き合わせるための鍵。

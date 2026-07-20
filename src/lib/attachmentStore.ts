@@ -9,7 +9,7 @@
 // 形式はクライアント / ENEX の申告 MIME ではなく**中身の先頭バイト**で決める。
 // ENEX の <resource><mime> は書き出し元の申告でしかなく、信用する理由がない。
 
-import { saveImage, savePlainAttachment } from './imageStore'
+import { saveImage, type SaveImageOptions, savePlainAttachment } from './imageStore'
 import { moveMoovToFront } from './mp4Faststart'
 import { normalizeImage } from './normalizeImage'
 import {
@@ -46,6 +46,8 @@ export type AttachmentResult =
 export async function storeAttachment(
   // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける
   bytes: Uint8Array<ArrayBuffer>,
+  // 画像のときだけ効く (音声・PDF は元々埋め込みを作らない)
+  options: SaveImageOptions = {},
 ): Promise<AttachmentResult> {
   if (bytes.byteLength > MAX_IMAGE_BYTES) {
     return { ok: false, reason: tooLargeMessage() }
@@ -54,7 +56,7 @@ export async function storeAttachment(
   // まず画像として判定し、外れたら音声 (mp3/m4a/wav/webm)、PDF の順に試す
   const imageFormat = sniffImageFormat(bytes)
   if (imageFormat) {
-    return storeImage(bytes, imageFormat)
+    return storeImage(bytes, imageFormat, options)
   }
 
   const audioFormat = sniffAudioFormat(bytes)
@@ -80,6 +82,7 @@ export async function storeAttachment(
 async function storeImage(
   bytes: Uint8Array<ArrayBuffer>,
   format: ImageFormat,
+  options: SaveImageOptions,
 ): Promise<AttachmentResult> {
   // ブラウザが表示できない形式 (HEIC/TIFF) は保存前に WebP へ変換する。
   // 復号に失敗する = 壊れた画像なので断る (500 にはしない)
@@ -100,7 +103,12 @@ async function storeImage(
     }
   }
 
-  const url = await saveImage(normalized.bytes, normalized.mime, normalized.ext)
+  const url = await saveImage(
+    normalized.bytes,
+    normalized.mime,
+    normalized.ext,
+    options,
+  )
   return succeed(url, true)
 }
 

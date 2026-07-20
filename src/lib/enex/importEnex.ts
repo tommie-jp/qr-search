@@ -19,7 +19,12 @@ import {
   enmlRejectReason,
   enmlToMarkdown,
 } from './enmlToMarkdown'
-import { type EnexNote, type EnexResource, parseEnex } from './parseEnex'
+import {
+  decodeResourceData,
+  type EnexNote,
+  type EnexResource,
+  parseEnex,
+} from './parseEnex'
 
 // 1 回の取り込みで作るノートの上限。個人利用の実感からは十分に大きく、
 // 細工したファイルで採番 (nextItemNo) を延々と回されないための安全弁でもある
@@ -42,6 +47,10 @@ export interface ImportReport {
   // ノート・添付・タグをまとめて 1 本にする。利用者が知りたいのは
   // 「入らなかったものと、その理由」であって、内部の分類ではない
   skipped: SkippedEntry[]
+  // 画像検索の索引を作らずに保存した画像の数 (storeResources の deferEmbedding)。
+  // 黙って作らないと「取り込んだのに画像検索に出てこない」だけが見えて、
+  // 不具合と区別が付かない。数を返して画面で知らせる
+  deferredImageIndex: number
 }
 
 // ENEX 1 ファイルを取り込む。
@@ -50,7 +59,11 @@ export interface ImportReport {
 // まるごとが対象外)。個々のノート・添付の失敗は例外にせずレポートへ載せる。
 export async function importEnex(xml: string): Promise<ImportReport> {
   const notes = parseEnex(xml)
-  const report: ImportReport = { imported: [], skipped: [] }
+  const report: ImportReport = {
+    imported: [],
+    skipped: [],
+    deferredImageIndex: 0,
+  }
 
   const targets = notes.slice(0, MAX_NOTES_PER_IMPORT)
   for (const over of notes.slice(MAX_NOTES_PER_IMPORT)) {
@@ -181,7 +194,16 @@ async function storeResources(
       continue
     }
 
-    const stored = await storeAttachment(resource.data)
+    // 復号はここで 1 件ずつ。保存が終われば次の周回で捨てられる
+    // (全件を復号して抱えると 40MB の ENEX でメモリが跳ねる)。
+    //
+    // 画像検索の埋め込みは**作らない** (deferEmbedding)。モデルの読み込みだけで
+    // RSS が 475MB 増える一方、取り込みは画像の数だけそれを撃つ。本番 VPS は
+    // RAM 2GB なので取り込み中に落ちる。embedding は派生キャッシュなので、
+    // 後から scripts/backfillEmbeddings.ts で埋められる (imageStore.ts 参照)
+    const stored = await storeAttachment(decodeResourceData(resource), {
+      deferEmbedding: true,
+    })
     if (!stored.ok) {
       report.skipped.push({
         label: resourceLabel(note, resource),
@@ -191,6 +213,9 @@ async function storeResources(
     }
 
     savedNames.push(stored.name)
+    if (stored.isImage) {
+      report.deferredImageIndex += 1
+    }
     media.set(resource.md5, {
       url: stored.url,
       isImage: stored.isImage,

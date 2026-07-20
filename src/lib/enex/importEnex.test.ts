@@ -14,7 +14,8 @@ vi.mock('@/lib/items', () => ({
 }))
 
 vi.mock('@/lib/attachmentStore', () => ({
-  storeAttachment: (bytes: Uint8Array) => storeAttachment(bytes),
+  storeAttachment: (bytes: Uint8Array, options?: unknown) =>
+    storeAttachment(bytes, options),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -267,6 +268,39 @@ test('日時が無いノートでは更新しない (取り込んだ時刻のま
 })
 
 // --- 同じ添付の重複 ---
+
+// 一括取り込みで埋め込みを作ると、モデル読み込みだけで RSS が 475MB 増える
+// (本番 VPS は RAM 2GB)。後回しにしたことは画面で知らせる
+test('画像の埋め込みは作らず、その枚数を返す', async () => {
+  const report = await importEnex(
+    enex(
+      note(`<title>題名</title><content>${enml('<div>本文</div>')}</content>
+        <resource><data encoding="base64">${PNG_BASE64}</data><mime>image/png</mime></resource>`),
+    ),
+  )
+
+  expect(storeAttachment).toHaveBeenCalledWith(expect.anything(), {
+    deferEmbedding: true,
+  })
+  expect(report.deferredImageIndex).toBe(1)
+})
+
+test('画像でない添付は枚数に数えない', async () => {
+  storeAttachment.mockResolvedValue({
+    ok: true,
+    url: '/api/images/22222222-2222-2222-2222-222222222222.pdf',
+    name: '22222222-2222-2222-2222-222222222222.pdf',
+    isImage: false,
+  })
+
+  const report = await importEnex(
+    enex(
+      note(`<title>題名</title><content>${enml('<div>本文</div>')}</content>
+        <resource><data encoding="base64">${PNG_BASE64}</data><mime>application/pdf</mime></resource>`),
+    ),
+  )
+  expect(report.deferredImageIndex).toBe(0)
+})
 
 test('同じ添付を 2 回参照していても保存は 1 回', async () => {
   await importEnex(

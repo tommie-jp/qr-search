@@ -1,18 +1,11 @@
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { type ImportReport, importEnex } from '@/lib/enex/importEnex'
+import { enexTooLargeMessage, MAX_ENEX_BYTES } from '@/lib/enex/limits'
 import {
   checkUploadRequest,
   MULTIPART_OVERHEAD_BYTES,
-  tooLargeMessage,
 } from '@/lib/uploads'
-
-// ENEX 1 ファイルの上限 (docs/28-エクスポート計画.md §4)。
-//
-// 画像 1 枚の上限 (10MB) より桁を上げる。ENEX は 1 ファイルに本文と添付を
-// まとめて抱えるので、写真が数枚入ったノートが並ぶだけで数十 MB になる。
-// 一方で青天井にはしない — formData() は本文を丸ごとメモリに載せるため
-const MAX_ENEX_BYTES = 30 * 1024 * 1024
 
 function errorResponse(status: number, error: string): NextResponse {
   return NextResponse.json({ success: false, data: null, error }, { status })
@@ -54,9 +47,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return errorResponse(400, 'file フィールドがありません')
   }
 
-  // Content-Length を偽った要求に備え、読み込んだ実体でも確かめる
+  // Content-Length を偽った要求に備え、読み込んだ実体でも確かめる。
+  // 正規のブラウザはクライアント側の事前検査 (EnexImporter) で先に止まるので、
+  // ここに来るのは事前検査を通らない相手だけ
   if (file.size > MAX_ENEX_BYTES) {
-    return errorResponse(413, tooLargeMessage(MAX_ENEX_BYTES))
+    return errorResponse(413, enexTooLargeMessage(file.size))
   }
 
   let report: ImportReport

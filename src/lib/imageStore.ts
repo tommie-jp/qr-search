@@ -22,12 +22,27 @@ import { makeThumbnail } from './thumbnail'
 // 作れなかった場合は thumb が null のまま保存する — 画像そのものは正しく
 // 保存されており、一覧が原寸へフォールバックして遅くなるだけなので、
 // アップロードを失敗させる理由にはならない (thumbnail.ts のコメント参照)。
+export interface SaveImageOptions {
+  // 埋め込みの生成を後回しにする (行は embedding=null で作る)。
+  //
+  // 一括取り込み (ENEX インポート) 用。埋め込みの生成はモデルの読み込みだけで
+  // **RSS が 475MB 増える** (実測)。1 枚ずつのアップロードなら 1 回で済むが、
+  // 取り込みは画像の数だけ「待たない」生成を撃つので、本番 VPS (RAM 2GB /
+  // swap 常用。docs/09-vps振り分け移行手順.md) では取り込み中に落ちる。
+  //
+  // 後回しにしても失うものは無い。embedding は data から作れる派生キャッシュで、
+  // null の行は scripts/backfillEmbeddings.ts が後から埋める設計になっている
+  // (この関数がもともと生成失敗を握り潰しているのと同じ理由)。
+  deferEmbedding?: boolean
+}
+
 export async function saveImage(
   // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける
   // (SharedArrayBuffer 由来のものは渡せない)
   bytes: Uint8Array<ArrayBuffer>,
   mime: string,
   ext: string,
+  options: SaveImageOptions = {},
 ): Promise<string> {
   const name = `${randomUUID()}.${ext}`
   const thumb = await makeThumbnail(bytes, name)
@@ -35,7 +50,9 @@ export async function saveImage(
   // 画像検索用の埋め込みを「待たずに」作る (docs/25-画像検索計画.md §4)。
   // 初回はモデル読み込みで数秒かかるため応答を待たせない。生成できなければ
   // embedding は null のままで、scripts/backfillEmbeddings.ts が後から埋める。
-  generateEmbeddingInBackground(name, bytes, mime)
+  if (!options.deferEmbedding) {
+    generateEmbeddingInBackground(name, bytes, mime)
+  }
   return `/api/images/${name}`
 }
 

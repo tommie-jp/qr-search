@@ -12,14 +12,38 @@ import { createHash } from 'node:crypto'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 
 export interface EnexResource {
-  // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける
-  data: Uint8Array<ArrayBuffer>
+  // **base64 のまま持つ**。復号したバイト列を全件ぶん抱えないための形
+  // (decodeResourceData のコメント参照)
+  base64: string
   // ENEX の申告。**信用しない** — 保存側は先頭バイトで判定し直す (uploads.ts)
   mime: string
   fileName: string | null
   // 本文の <en-media hash="..."> と突き合わせる鍵。ENEX には入っていないので
   // 復号したバイト列から計算する
   md5: string
+}
+
+// 添付 1 件を復号する。**保存する直前に呼ぶこと**。
+//
+// 復号したバイト列を EnexResource に持たせて全件を抱えると、40MB の ENEX で
+// 復号済み 30MB 前後が丸ごと生き続ける。本番 VPS は RAM 2GB で既に swap を
+// 常用しており (docs/09-vps振り分け移行手順.md)、そこに元の文字列と構文木まで
+// 重なると余裕がない。1 件ずつ復号して保存し、そのつど捨てる形にする。
+//
+// md5 の計算で 1 度、ここで 1 度と 2 回復号することになるが、復号は 30MB でも
+// 100ms 程度で済む。**CPU を少し払ってメモリのピークを下げる**取引。
+export function decodeResourceData(
+  resource: EnexResource,
+): Uint8Array<ArrayBuffer> {
+  return toOwnedBytes(Buffer.from(resource.base64, 'base64'))
+}
+
+// Buffer は共有 ArrayBuffer のプール上に載るため、そのまま Prisma へ渡すと
+// 隣の添付まで書き込まれうる。自前の ArrayBuffer へ写して切り離す
+function toOwnedBytes(buffer: Buffer): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(buffer.byteLength)
+  bytes.set(buffer)
+  return bytes
 }
 
 // 読めなかった添付。**捨てるだけにしない** — 取り込み後のレポートに
@@ -61,6 +85,48 @@ const ENEX_DATE = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/
 // ファイルはこの限りではない
 const XML_ENCODING = /<\?xml[^>]*\bencoding\s*=\s*["']([^"']+)["']/i
 
+// --- 添付本体を構文解析から外に出す ---
+//
+// ENEX の大きさはほぼ `<data>` の base64 が占める。これをそのまま
+// fast-xml-parser に渡すと **入力の 25 倍**のメモリを使う
+// (実測: 48MB の ENEX で構文解析だけ +1.2GB / 2.2 秒)。本番 VPS は RAM 2GB
+// なので、40MB の書き出しを渡した時点で落ちる。
+//
+// そこで解析の前に base64 を抜き出して短い目印に差し替え、パーサには
+// 構造だけを見せる。抜き出した中身は配列に持つが、これは V8 の部分文字列
+// (元の文字列を指すだけ) なので**複製は起きない**。
+// 復号は今までどおり保存の直前に 1 件ずつ行う (decodeResourceData)。
+const DATA_PAYLOAD =
+  /(<data\b[^>]*\bencoding\s*=\s*["']base64["'][^>]*>)([\s\S]*?)(<\/data\s*>)/gi
+
+// base64 の文字集合に `-` は無いので、本物の中身とぶつからない
+const PAYLOAD_PLACEHOLDER = /^enex-data-(\d+)$/
+
+interface LiftedXml {
+  xml: string
+  payloads: string[]
+}
+
+function liftDataPayloads(xml: string): LiftedXml {
+  const payloads: string[] = []
+  const lifted = xml.replace(
+    DATA_PAYLOAD,
+    (_match, open: string, body: string, close: string) =>
+      `${open}enex-data-${payloads.push(body) - 1}${close}`,
+  )
+  return { xml: lifted, payloads }
+}
+
+// 目印なら退避しておいた中身へ差し戻す。目印でなければそのまま
+// (encoding 属性を書かない ENEX は差し替えの対象外なので、素の中身が来る)
+function resolvePayload(text: string, payloads: string[]): string {
+  const match = PAYLOAD_PLACEHOLDER.exec(text)
+  if (!match) {
+    return text
+  }
+  return payloads[Number(match[1])] ?? ''
+}
+
 export function parseEnexDate(value: string): Date | null {
   const match = ENEX_DATE.exec(value.trim())
   if (!match) {
@@ -98,7 +164,7 @@ type ResourceParse =
   | { ok: true; resource: EnexResource }
   | { ok: false; rejected: EnexRejectedResource }
 
-function parseResource(raw: unknown): ResourceParse {
+function parseResource(raw: unknown, payloads: string[]): ResourceParse {
   const node = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
 
   const attributes = node['resource-attributes']
@@ -119,33 +185,33 @@ function parseResource(raw: unknown): ResourceParse {
     return reject(`base64 以外の形式で埋め込まれています (${encoding})`)
   }
 
-  const base64 = textOf(node.data)
+  const base64 = resolvePayload(textOf(node.data), payloads)
   if (base64 === '') {
     return reject('中身が空です')
   }
   // Buffer は base64 の文字集合に無い文字 (改行など) を読み飛ばす。
-  // 実物の ENEX は 1 行 76 文字で折り返してあるので、これに頼る
+  // 実物の ENEX は 1 行 76 文字で折り返してあるので、これに頼る。
+  //
+  // ここで復号するのは「読めるか」の確認と md5 の計算のためだけで、
+  // **バイト列は持ち帰らない** (捨てて GC に任せる)。保存時にもう一度
+  // 復号する — decodeResourceData に理由を書いた
   const buffer = Buffer.from(base64, 'base64')
   if (buffer.byteLength === 0) {
     return reject('base64 として読めません')
   }
-  // Buffer は ArrayBuffer のプール上に載るため、そのまま Prisma へ渡すと
-  // 隣の添付まで書き込まれうる。自前の ArrayBuffer へ写して切り離す
-  const data = new Uint8Array(buffer.byteLength)
-  data.set(buffer)
 
   return {
     ok: true,
     resource: {
-      data,
+      base64,
       mime,
       fileName,
-      md5: createHash('md5').update(data).digest('hex'),
+      md5: createHash('md5').update(buffer).digest('hex'),
     },
   }
 }
 
-function parseNote(raw: unknown): EnexNote {
+function parseNote(raw: unknown, payloads: string[]): EnexNote {
   const node = (raw ?? {}) as Record<string, unknown>
   const tags = Array.isArray(node.tag) ? node.tag : []
   const rawResources = Array.isArray(node.resource) ? node.resource : []
@@ -153,7 +219,7 @@ function parseNote(raw: unknown): EnexNote {
   const resources: EnexResource[] = []
   const rejectedResources: EnexRejectedResource[] = []
   for (const rawResource of rawResources) {
-    const parsed = parseResource(rawResource)
+    const parsed = parseResource(rawResource, payloads)
     if (parsed.ok) {
       resources.push(parsed.resource)
     } else {
@@ -194,7 +260,10 @@ export function parseEnex(xml: string): EnexNote[] {
     throw new Error(`UTF-8 で書かれた ENEX にのみ対応しています (${declared})`)
   }
 
-  const doc = parser.parse(xml) as Record<string, unknown>
+  // 添付本体を外に出してから解析する (liftDataPayloads のコメント参照)。
+  // 検証は元の文字列に対して済ませてあるので、差し替えの影響を受けない
+  const lifted = liftDataPayloads(xml)
+  const doc = parser.parse(lifted.xml) as Record<string, unknown>
 
   if (!('en-export' in doc)) {
     throw new Error('ENEX ファイルではありません (en-export 要素がありません)')
@@ -206,5 +275,7 @@ export function parseEnex(xml: string): EnexNote[] {
     return []
   }
   const notes = (root as Record<string, unknown>).note
-  return Array.isArray(notes) ? notes.map(parseNote) : []
+  return Array.isArray(notes)
+    ? notes.map((note) => parseNote(note, lifted.payloads))
+    : []
 }

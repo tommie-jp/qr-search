@@ -7,6 +7,7 @@ import {
   PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS,
 } from "@/components/ui";
+import { enexTooLargeMessage, MAX_ENEX_BYTES } from "@/lib/enex/limits";
 
 // /api/import が返すレポート (lib/enex/importEnex.ts と対)
 interface ImportedNote {
@@ -22,6 +23,7 @@ interface SkippedEntry {
 interface ImportReport {
   imported: ImportedNote[];
   skipped: SkippedEntry[];
+  deferredImageIndex: number;
 }
 
 interface ImportResponse {
@@ -41,6 +43,13 @@ export function EnexImporter() {
 
   async function handleImport() {
     if (file === null) {
+      return;
+    }
+    // **送る前に**大きさを見る。上限超過はエッジ (nginx / Caddy) が 413 で
+    // ボディを読み捨てるため、送ってしまうと "Load failed" としか判らない
+    // (サーバの JSON エラーは届かない)。理由を言葉で出せるのはここだけ
+    if (file.size > MAX_ENEX_BYTES) {
+      setError(enexTooLargeMessage(file.size));
       return;
     }
     setError(null);
@@ -66,7 +75,16 @@ export function EnexImporter() {
       }
     } catch (cause) {
       console.error("ENEX の取り込みに失敗しました", cause);
-      setError(cause instanceof Error ? cause.message : "取り込めませんでした");
+      // fetch 自体の失敗 (TypeError: "Load failed" / "Failed to fetch") は
+      // 応答が届く前に接続が切れたということ。素の文言を出しても意味が
+      // 取れないので、考えられる原因を言葉にする
+      if (cause instanceof TypeError) {
+        setError(
+          "送信が途中で切れました。ファイルが大きすぎるか、通信が不安定な可能性があります",
+        );
+      } else {
+        setError(cause instanceof Error ? cause.message : "取り込めませんでした");
+      }
     } finally {
       setBusy(false);
     }
@@ -81,8 +99,14 @@ export function EnexImporter() {
           type="file"
           accept=".enex,application/xml,text/xml"
           onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
-            setError(null);
+            const selected = event.target.files?.[0] ?? null;
+            setFile(selected);
+            // 選んだ瞬間に大きさを知らせる。押してから断られるより早い
+            setError(
+              selected !== null && selected.size > MAX_ENEX_BYTES
+                ? enexTooLargeMessage(selected.size)
+                : null,
+            );
           }}
           className="block w-full text-sm file:mr-3 file:min-h-11 file:rounded file:border file:border-gray-300 file:bg-white file:px-3 file:font-medium"
         />
@@ -137,6 +161,18 @@ function ImportResult({ report }: { report: ImportReport }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* 画像検索の索引は作っていない。黙っていると「取り込んだのに画像検索で
+          出てこない」だけが見えて、不具合と区別が付かない */}
+      {report.deferredImageIndex > 0 && (
+        <p className={`${BOX_CLASS} py-3 text-sm text-gray-700`}>
+          画像 {report.deferredImageIndex} 枚は、画像検索の索引をまだ作っていません
+          (一括取り込みでは重いため後回しにしています)。ノートの表示・全文検索は
+          今のまま使えます。索引を作るには
+          <code className="mx-1">npm run backfill:embeddings</code>
+          を実行して下さい。
+        </p>
       )}
 
       {/* 見送ったものは必ず出す。黙って落とすと「全部入った」と読めてしまう */}
