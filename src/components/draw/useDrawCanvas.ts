@@ -25,6 +25,7 @@ import {
   undoHistory,
 } from "@/lib/draw/history";
 import type { DrawTool } from "./drawTools";
+import { buildFill } from "./rasterTool";
 import { attachShapeTool } from "./shapeTool";
 
 export type { DrawTool };
@@ -369,6 +370,26 @@ export function useDrawCanvas({
         if (text && !String(text.text ?? "").trim()) {
           fc.remove(text);
         }
+      });
+
+      // 塗りつぶし: クリックした点と繋がった範囲を塗る (docs/35)。
+      // 結果は 1 枚のオブジェクトとして足すので、履歴も消しゴムも
+      // object:added の既存経路に乗る
+      fc.on("mouse:down", (options) => {
+        if (toolRef.current !== "fill") {
+          return;
+        }
+        const point = fc.getScenePoint(options.e);
+        void buildFill(fc, point, colorRef.current)
+          .then((filled) => {
+            if (filled && fcRef.current === fc) {
+              fc.add(filled);
+              fc.requestRenderAll();
+            }
+          })
+          .catch(() => {
+            setError("塗りつぶせませんでした。");
+          });
       });
 
       // 矢印・矩形・楕円のドラッグ描画 (docs/36 §1)。

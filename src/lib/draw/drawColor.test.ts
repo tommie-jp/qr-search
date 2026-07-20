@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'vitest'
-import { MARKER_ALPHA, markerColor, withAlpha } from './drawColor'
+import { hexToRgb, MARKER_ALPHA, markerColor, withAlpha } from './drawColor'
+
+describe('hexToRgb', () => {
+  test('splits a hex triplet into channels', () => {
+    // Arrange & Act & Assert
+    expect(hexToRgb('#ff3b30')).toEqual([255, 59, 48])
+  })
+
+  test('falls back to black when the colour is not a hex triplet', () => {
+    // Arrange & Act & Assert
+    expect(hexToRgb('rgb(1,2,3)')).toEqual([0, 0, 0])
+  })
+})
 
 describe('withAlpha', () => {
   test('turns a hex triplet into rgba', () => {

@@ -10,6 +10,7 @@ import type { DrawTool } from "./drawTools";
 const TOOLS: ReadonlyArray<{ id: DrawTool; label: string }> = [
   { id: "pen", label: "ペン" },
   { id: "marker", label: "マーカー" },
+  { id: "fill", label: "塗る" },
   { id: "arrow", label: "矢印" },
   { id: "rect", label: "四角" },
   { id: "ellipse", label: "丸" },
