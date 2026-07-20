@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { saveImage, savePlainAttachment } from '@/lib/imageStore'
+import { moveMoovToFront } from '@/lib/mp4Faststart'
 import { normalizeImage } from '@/lib/normalizeImage'
 import {
   audioSaveInfo,
@@ -63,9 +64,13 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const audioFormat = sniffAudioFormat(bytes)
   if (audioFormat) {
-    // 音声は変換もサムネも要らない。中身をそのまま保存する
+    // 音声は変換もサムネも要らない。中身をそのまま保存する。
+    // 唯一の例外が m4a の moov 並べ替えで、これは変換ではなく**箱の詰め替え**
+    // (音声データは 1 バイトも変わらない)。iOS Safari の録音とボイスメモは
+    // moov が末尾に付き、そのままだと <audio> が再生を始められない
     const { mime, ext } = audioSaveInfo(audioFormat)
-    const url = await savePlainAttachment(bytes, mime, ext)
+    const stored = audioFormat === 'm4a' ? (moveMoovToFront(bytes) ?? bytes) : bytes
+    const url = await savePlainAttachment(stored, mime, ext)
     return NextResponse.json({ success: true, data: { url }, error: null })
   }
 

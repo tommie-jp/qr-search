@@ -142,6 +142,30 @@ describe('AudioRecorder', () => {
     expect(recorder.isRecording).toBe(false)
   })
 
+  // Safari の録音は audio/mp4。moov の並べ替えはサーバ側でやるので、
+  // ここでは中身に触らず .m4a として渡すことだけを確かめる
+  test('Safari の録音は中身をそのまま .m4a として渡す', async () => {
+    const original = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])
+    instance.mimeType = 'audio/mp4'
+    instance.stop = vi.fn(() => {
+      instance.state = 'inactive'
+      instance.ondataavailable?.({
+        data: new Blob([original], { type: 'audio/mp4' }),
+      })
+      instance.onstop?.()
+    })
+
+    const recorder = new AudioRecorder()
+    await recorder.start()
+    const result = await recorder.stop()
+
+    expect(result.file.name).toMatch(/\.m4a$/)
+    expect(result.file.type).toBe('audio/mp4')
+    expect(Array.from(new Uint8Array(await result.file.arrayBuffer()))).toEqual(
+      Array.from(original),
+    )
+  })
+
   test('ビットレートを明示して録音する (ブラウザ任せにしない)', async () => {
     const recorder = new AudioRecorder()
     await recorder.start()

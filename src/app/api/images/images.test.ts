@@ -119,6 +119,33 @@ function wavFile(): File {
   return new File([WAV_BYTES], 'memo.wav', { type: 'audio/wav' })
 }
 
+// iOS Safari の録音・iPhone のボイスメモと同じ並び (ftyp → mdat → moov)。
+// moov が末尾にあると <audio preload="metadata"> が再生を始められないため、
+// 保存時に先頭へ移す (docs/12「iPhone で録音が再生できなかった件」)
+function m4aBox(type: string, payload: Buffer): Buffer {
+  const header = Buffer.alloc(8)
+  header.writeUInt32BE(8 + payload.length, 0)
+  header.write(type, 4, 'latin1')
+  return Buffer.concat([header, payload])
+}
+
+const MOOV_LAST_M4A = (() => {
+  const ftyp = m4aBox('ftyp', Buffer.from('M4A isommp42', 'latin1'))
+  const mdat = m4aBox('mdat', Buffer.alloc(48, 0x41))
+  const stcoPayload = Buffer.alloc(12)
+  stcoPayload.writeUInt32BE(1, 4) // エントリ数
+  stcoPayload.writeUInt32BE(ftyp.length + 8, 8) // mdat の中身の先頭を指す
+  const moov = m4aBox(
+    'moov',
+    m4aBox('trak', m4aBox('mdia', m4aBox('minf', m4aBox('stbl', m4aBox('stco', stcoPayload))))),
+  )
+  return { bytes: Buffer.concat([ftyp, mdat, moov]), ftypLength: ftyp.length }
+})()
+
+function boxTypeAt(bytes: Buffer, at: number): string {
+  return bytes.subarray(at + 4, at + 8).toString('latin1')
+}
+
 // 最小の PDF (先頭の "%PDF-" だけを見るので、開ける必要はない)
 const PDF_BYTES = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n')
 
@@ -354,6 +381,38 @@ describe.skipIf(!runDbTests)(
       expect(row?.thumb).toBeNull()
       expect(row?.embedding).toBeNull()
       expect(Buffer.from(row?.data as Uint8Array).equals(WAV_BYTES)).toBe(true)
+    })
+
+    test('末尾に moov のある m4a は保存時に moov を先頭へ移す', async () => {
+      const { bytes, ftypLength } = MOOV_LAST_M4A
+      // 保存前は ftyp → mdat → moov
+      expect(boxTypeAt(bytes, 0)).toBe('ftyp')
+      expect(boxTypeAt(bytes, ftypLength)).toBe('mdat')
+
+      const name = await upload(new File([bytes], 'rec.m4a', { type: 'audio/mp4' }))
+      const row = await prisma.image.findUnique({ where: { name } })
+      const stored = Buffer.from(row?.data as Uint8Array)
+
+      expect(row?.mime).toBe('audio/mp4')
+      // 保存後は ftyp → moov → mdat (先頭を読むだけで再生を始められる)
+      expect(boxTypeAt(stored, 0)).toBe('ftyp')
+      expect(boxTypeAt(stored, ftypLength)).toBe('moov')
+      // 詰め替えただけなので長さは変わらない
+      expect(stored.length).toBe(bytes.length)
+    })
+
+    test('既に moov が先頭にある m4a はそのまま保存する', async () => {
+      const { bytes } = MOOV_LAST_M4A
+      // 一度保存したものを取り出して、もう一度上げても中身が変わらないこと
+      const first = await upload(new File([bytes], 'rec.m4a', { type: 'audio/mp4' }))
+      const stored = Buffer.from(
+        (await prisma.image.findUnique({ where: { name: first } }))?.data as Uint8Array,
+      )
+      const second = await upload(new File([stored], 'rec.m4a', { type: 'audio/mp4' }))
+      const again = Buffer.from(
+        (await prisma.image.findUnique({ where: { name: second } }))?.data as Uint8Array,
+      )
+      expect(again.equals(stored)).toBe(true)
     })
 
     test('Range 要求には 206 で部分を返す (音声のシーク)', async () => {

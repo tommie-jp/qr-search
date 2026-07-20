@@ -135,14 +135,18 @@ export function mapCaptureError(e: unknown): AudioCaptureError {
   return new AudioCaptureError(msg || '録音を開始できませんでした。', e)
 }
 
-// Chrome の MediaRecorder が出す webm は Segment Info に Duration を書かない。
-// そのままだと <audio> で長さが Infinity になりシークできないので、実測の
-// 長さを書き込む。
+// 録音直後の手当て。Firefox は webm の Segment Info の Duration を 0 で書くため、
+// <audio> の長さが Infinity になりシークできない。実測の長さを書き込む
+// (Chrome は既に正しく書いており、ライブラリ側が素通しにする)。
 //
 // fixWebmDuration は失敗しても throw せず**元の blob をそのまま返す**。
 // 長さ不明でも再生自体はできるため、録音を失うより望ましい degradation として
 // 受け入れる (握り潰しではなく、そういう契約のライブラリ)。
-async function withFixedDuration(
+//
+// **mp4 (Safari) の moov 並べ替えはここでやらない** — サーバの保存経路
+// (api/images/route.ts) に置いてある。録音だけでなく、iPhone のボイスメモを
+// 添付した場合も同じ問題を踏むため (mp4Faststart.ts に経緯)。
+async function prepareForUpload(
   blob: Blob,
   mimeType: string,
   durationMs: number,
@@ -150,7 +154,7 @@ async function withFixedDuration(
   if (!mimeType.startsWith('audio/webm')) {
     return blob
   }
-  // logger 既定は console へ書く。アプリ側にコンソールパネルがあり紛れるので黙らせる
+  // logger 既定は console へ書く。アプリにコンソールパネルがあり紛れるので黙らせる
   return fixWebmDuration(blob, durationMs, { logger: false })
 }
 
@@ -246,7 +250,7 @@ export class AudioRecorder {
       this.chunks = []
     }
 
-    const blob = await withFixedDuration(rawBlob, mimeType, durationMs)
+    const blob = await prepareForUpload(rawBlob, mimeType, durationMs)
     const name = recordingFileName(recordedAt, extensionFor(mimeType))
     return {
       file: new File([blob], name, { type: mimeType }),
