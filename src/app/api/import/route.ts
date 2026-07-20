@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyIfDemoMode, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { type ImportReport, importEnex } from '@/lib/enex/importEnex'
 import { enexTooLargeMessage, MAX_ENEX_BYTES } from '@/lib/enex/limits'
 import {
@@ -17,8 +17,9 @@ function errorResponse(status: number, error: string): NextResponse {
 // ENML → Markdown も添付の保存もここから先で行う。画像アップロード
 // (/api/images) と同じ構図なので、認証・CSRF・大きさの作法もそちらに揃える。
 export async function POST(request: Request): Promise<NextResponse> {
-  // ログインしていない相手のために 30MB を読む理由はない (/api/images と同じ順)
-  const denied = await denyUnlessLoggedIn()
+  // デモでは取り込みを閉じる (docs/38 §4)。ログインの有無より前に断つ。
+  // ログインしていない相手のために 30MB を読む理由もない (/api/images と同じ順)
+  const denied = denyIfDemoMode() ?? (await denyUnlessLoggedIn())
   if (denied) {
     return denied
   }

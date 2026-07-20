@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { storeAttachment } from '@/lib/attachmentStore'
-import { checkUploadRequest, MAX_IMAGE_BYTES, tooLargeMessage } from '@/lib/uploads'
+import { checkUploadRequest, maxUploadBytes, tooLargeMessage } from '@/lib/uploads'
 
 function errorResponse(status: number, error: string): NextResponse {
   return NextResponse.json({ success: false, data: null, error }, { status })
@@ -40,9 +40,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     return errorResponse(400, 'file フィールドがありません')
   }
 
-  // 原寸を Uint8Array に読む前に、申告サイズで弾けるものは弾く
-  if (file.size > MAX_IMAGE_BYTES) {
-    return errorResponse(400, tooLargeMessage())
+  // 原寸を Uint8Array に読む前に、申告サイズで弾けるものは弾く。
+  // 上限はデモインスタンスでは縮む (docs/38 §5。maxUploadBytes が env で切り替え)
+  if (file.size > maxUploadBytes()) {
+    return errorResponse(400, tooLargeMessage(maxUploadBytes()))
   }
 
   // ファイル名を渡すのはテキスト (txt/csv/md) の拡張子を決めるためだけ。

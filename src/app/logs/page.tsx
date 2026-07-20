@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { PageTransition } from "@/components/PageTransition";
 import { ACTION_LINK_CLASS } from "@/components/ui";
+import { isDemoMode } from "@/lib/appEnv";
 import { recentLogs } from "@/lib/logBuffer";
 import { ClearLogsButton } from "./ClearLogsButton";
 
@@ -44,6 +46,13 @@ const SOURCE_BADGE: Record<string, string> = {
 };
 
 export default function LogsPage() {
+  // デモでは /logs を閉じる (docs/38-デモモード計画.md §4)。共有アカウントでは
+  // 他の訪問者の操作痕 (URL・失敗) が見えてしまうため。導線も隠すが、
+  // URL 直打ちに備えてページも 404 に倒す
+  if (isDemoMode()) {
+    notFound();
+  }
+
   const logs = recentLogs();
 
   return (

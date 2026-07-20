@@ -17,6 +17,21 @@ export function isProductionEnv(): boolean {
   return process.env.APP_ENV === "production";
 }
 
+// 隔離デモインスタンス (別スタック + 定期再シード。docs/38-デモモード計画.md) の
+// ときだけ true。guest に書き込みを許す代わりに、公開機能・設定系・大きい
+// アップロードを閉じ、デモである旨を画面に出す。判定はここが唯一の出どころ。
+//
+// isProductionEnv() とは倒れる向きが逆であることに注意する。あちらは「設定漏れは
+// ピンク (実害なし) へ倒す」が、こちらは**旗の欠落が「デモ保護オフ」へ倒れる**。
+// デモスタックを立てるときに DEMO_MODE を渡し忘れると、無防備な書き込み可サイトに
+// なってしまう。対策として compose の override に直書きする (docs/38 §7)。
+//
+// "1" の完全一致だけを有効とする。"true"/"yes" などの解釈揺れを作らない
+// (isProductionEnv が "production" 完全一致なのと同じ流儀)。
+export function isDemoMode(): boolean {
+  return process.env.DEMO_MODE === "1";
+}
+
 // 非本番の目印に使う色。ヘッダは Tailwind のクラスで塗る一方、
 // meta[theme-color] と PWA manifest は hex の直値しか受け取らないため、
 // 対応する hex をここに控えて両者がずれないようにする。

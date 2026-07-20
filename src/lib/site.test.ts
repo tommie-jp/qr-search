@@ -3,6 +3,7 @@ import { qrBaseUrl, qrStickerHost, siteTitle } from './site'
 
 const original = process.env.QR_BASE_URL
 const originalAppEnv = process.env.APP_ENV
+const originalDemo = process.env.DEMO_MODE
 
 afterEach(() => {
   process.env.QR_BASE_URL = original
@@ -10,6 +11,11 @@ afterEach(() => {
     delete process.env.APP_ENV
   } else {
     process.env.APP_ENV = originalAppEnv
+  }
+  if (originalDemo === undefined) {
+    delete process.env.DEMO_MODE
+  } else {
+    process.env.DEMO_MODE = originalDemo
   }
   vi.restoreAllMocks()
 })
@@ -40,7 +46,22 @@ test('本番のタイトルは素のサイト名', () => {
 
 test('非本番のタイトルは [LOCAL] を冠する', () => {
   delete process.env.APP_ENV
+  delete process.env.DEMO_MODE
   expect(siteTitle()).toBe('[LOCAL] QR search')
+})
+
+// docs/38-デモモード計画.md §6。デモは本番相当で立てるので通常は [DEMO] だけ
+test('デモの本番タイトルは [DEMO] を冠する', () => {
+  process.env.APP_ENV = 'production'
+  process.env.DEMO_MODE = '1'
+  expect(siteTitle()).toBe('[DEMO] QR search')
+})
+
+// [LOCAL] と [DEMO] は独立軸。ローカルでデモを検証するときは両方付く
+test('ローカルでのデモは [LOCAL] [DEMO] を両方冠する', () => {
+  delete process.env.APP_ENV
+  process.env.DEMO_MODE = '1'
+  expect(siteTitle()).toBe('[LOCAL] [DEMO] QR search')
 })
 
 test('URL として壊れていても投げず、既定へ倒して警告する', () => {

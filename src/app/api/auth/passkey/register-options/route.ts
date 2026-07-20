@@ -1,7 +1,7 @@
 import { generateRegistrationOptions } from '@simplewebauthn/server'
 import type { NextResponse } from 'next/server'
 import { apiFail, apiOk, apiPasskeyDisabled } from '@/lib/authApi'
-import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyIfDemoMode, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { listCredentialDescriptors } from '@/lib/passkeys'
 import { currentUser } from '@/lib/session'
 import { rememberChallenge } from '@/lib/webauthnChallenge'
@@ -14,7 +14,10 @@ import { stableUserHandle, webauthnConfig } from '@/lib/webauthnConfig'
 // 半分でもある (docs/29 §2)。初回はパスワードで入って登録し、2 台目からは
 // パスキーで入ったまま同じ口で追加登録できる。
 export async function POST(request: Request): Promise<NextResponse> {
-  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
+  // デモでは登録を閉じる (docs/38 §4)。共有アカウントに他人がパスキーを
+  // 足せてしまうため。ログインの有無より前に断つ
+  const denied =
+    denyIfDemoMode() ?? (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }

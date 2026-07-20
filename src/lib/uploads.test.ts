@@ -1,7 +1,8 @@
-import { expect, test } from 'vitest'
+import { afterEach, expect, test } from 'vitest'
 import {
   audioSaveInfo,
   checkUploadRequest,
+  DEMO_MAX_IMAGE_BYTES,
   extForMime,
   isAllowedContentMime,
   isValidAttachmentName,
@@ -9,6 +10,7 @@ import {
   isValidImageName,
   isValidPdfName,
   MAX_IMAGE_BYTES,
+  maxUploadBytes,
   PDF_MIME,
   sniffAudioFormat,
   isValidTextName,
@@ -16,6 +18,16 @@ import {
   sniffPdf,
   textSaveInfo,
 } from './uploads'
+
+const originalDemo = process.env.DEMO_MODE
+
+afterEach(() => {
+  if (originalDemo === undefined) {
+    delete process.env.DEMO_MODE
+  } else {
+    process.env.DEMO_MODE = originalDemo
+  }
+})
 
 test('対応する画像 MIME は拡張子を返す', () => {
   expect(extForMime('image/png')).toBe('png')
@@ -55,6 +67,33 @@ test('パストラバーサル・不正なファイル名を拒否する', () =>
 
 test('サイズ上限は 10MB', () => {
   expect(MAX_IMAGE_BYTES).toBe(10 * 1024 * 1024)
+})
+
+// docs/38-デモモード計画.md §5。デモは 1 ファイルを 2MB に縮める
+test('maxUploadBytes は通常 10MB / デモは 2MB', () => {
+  delete process.env.DEMO_MODE
+  expect(maxUploadBytes()).toBe(MAX_IMAGE_BYTES)
+
+  process.env.DEMO_MODE = '1'
+  expect(maxUploadBytes()).toBe(DEMO_MAX_IMAGE_BYTES)
+  expect(DEMO_MAX_IMAGE_BYTES).toBe(2 * 1024 * 1024)
+})
+
+// 本文の事前チェック (Content-Length) もデモ上限で効くこと。
+// 通常なら通る 5MB が、デモでは 2MB を超えるので 413 で弾かれる
+test('checkUploadRequest の本文上限もデモでは 2MB に縮む', () => {
+  const fiveMB = String(5 * 1024 * 1024)
+
+  delete process.env.DEMO_MODE
+  expect(
+    checkUploadRequest(uploadRequest({ host: 'localhost', 'content-length': fiveMB })),
+  ).toBeNull()
+
+  process.env.DEMO_MODE = '1'
+  expect(
+    checkUploadRequest(uploadRequest({ host: 'localhost', 'content-length': fiveMB }))
+      ?.status,
+  ).toBe(413)
 })
 
 const PNG_HEAD = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])

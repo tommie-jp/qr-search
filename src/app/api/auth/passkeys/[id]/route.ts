@@ -1,5 +1,5 @@
 import type { NextResponse } from 'next/server'
-import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyIfDemoMode, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { apiFail, apiOk } from '@/lib/authApi'
 import { deletePasskey } from '@/lib/passkeys'
 
@@ -13,7 +13,9 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
+  // デモでは登録も削除も閉じる (docs/38 §4。パスキー設定画面ごと落とす)
+  const denied =
+    denyIfDemoMode() ?? (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }

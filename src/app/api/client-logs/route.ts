@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyIfDemoMode, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { deviceLabel, parseClientLogPayload } from '@/lib/clientLogPayload'
 import { pushBrowserLogs } from '@/lib/logBuffer'
 
@@ -11,7 +11,10 @@ import { pushBrowserLogs } from '@/lib/logBuffer'
 // 同一サイトの検査も要る — 開けっ放しにすると、第三者のページから
 // ログイン済みのブラウザを使ってバッファを埋め、本物の警告を押し流せる。
 export async function POST(request: Request): Promise<NextResponse> {
-  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
+  // デモでは /logs を閉じる (docs/38 §4)。共有アカウントでは他の訪問者の
+  // 操作痕が見えるため、転送も受けない (ClientLogCapture も layout で外す)
+  const denied =
+    denyIfDemoMode() ?? (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }

@@ -1,7 +1,7 @@
 import { verifyRegistrationResponse } from '@simplewebauthn/server'
 import type { RegistrationResponseJSON } from '@simplewebauthn/server'
 import type { NextResponse } from 'next/server'
-import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyIfDemoMode, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { apiFail, apiOk, apiPasskeyDisabled, readJsonObject } from '@/lib/authApi'
 import { normalizePasskeyLabel } from '@/lib/passkeyLabel'
 import { savePasskey } from '@/lib/passkeys'
@@ -12,7 +12,9 @@ import { webauthnConfig } from '@/lib/webauthnConfig'
 // パスキー登録の 2 歩目 — 認証器が作った公開鍵を確かめて保存する
 // (docs/29-パスキー計画.md §6)。
 export async function POST(request: Request): Promise<NextResponse> {
-  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
+  // デモでは登録を閉じる (docs/38 §4。register-options と対で塞ぐ)
+  const denied =
+    denyIfDemoMode() ?? (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }

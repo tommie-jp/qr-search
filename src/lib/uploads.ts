@@ -1,3 +1,4 @@
+import { isDemoMode } from './appEnv'
 import {
   type AudioFormat,
   AUDIO_EXTENSION_ALTERNATION,
@@ -22,6 +23,18 @@ const MIME_TO_EXT: Record<string, string> = {
 }
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+// デモインスタンスでの 1 ファイル上限 (docs/38-デモモード計画.md §5)。
+// guest に書き込みを許す代わりに縮める。総量クォータは別計画だが、
+// 1 枚を小さくするだけでも「ファイル置き場」化をだいぶ抑えられる。
+export const DEMO_MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+// いま効いている 1 ファイル上限。添付 (画像・音声・PDF・テキスト) はどれも
+// /api/images の 1 経路なので、ここを見れば全種別に効く。定数ではなく関数に
+// するのは、DEMO_MODE を起動時 env で切り替えるため (テストも env で差せる)。
+export function maxUploadBytes(): number {
+  return isDemoMode() ? DEMO_MAX_IMAGE_BYTES : MAX_IMAGE_BYTES
+}
 
 // 保存ファイル名は「サーバが生成した UUID + 対応拡張子」のみ。
 // クライアント由来の文字列をパスに使わないことでトラバーサルを防ぐ。
@@ -507,7 +520,6 @@ export function textSaveInfo(
 
 // multipart のヘッダ等のオーバーヘッド分を上限に足す
 export const MULTIPART_OVERHEAD_BYTES = 1024 * 1024
-const MAX_BODY_BYTES = MAX_IMAGE_BYTES + MULTIPART_OVERHEAD_BYTES
 
 export interface UploadRejection {
   status: number
@@ -519,9 +531,12 @@ export interface UploadRejection {
 // maxBodyBytes を差し替えられるのは ENEX インポート (docs/28 §4) のため。
 // ENEX は 1 ファイルに全ノートと添付が入るので画像 1 枚より桁が大きい。
 // **CSRF の判定はどの経路でも同じ**なので、上限だけを引数にして本体は共有する。
+//
+// 既定を定数ではなく maxUploadBytes() から都度求めるのは、DEMO_MODE を
+// 起動時 env で切り替えるため (docs/38 §5)。デモでは本文上限も 2MB に縮む。
 export function checkUploadRequest(
   request: Request,
-  maxBodyBytes: number = MAX_BODY_BYTES,
+  maxBodyBytes: number = maxUploadBytes() + MULTIPART_OVERHEAD_BYTES,
 ): UploadRejection | null {
   // CSRF 対策: ブラウザがクロスオリジン POST に付ける Origin がホストと
   // 食い違う場合は本文を読む前に拒否する (同一オリジンの fetch は許可)

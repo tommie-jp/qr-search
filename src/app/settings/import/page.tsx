@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { EnexImporter } from "@/components/EnexImporter";
+import { isDemoMode } from "@/lib/appEnv";
 import { requireUser } from "@/lib/session";
 
 // サイト名は付けない。root layout の title.template が付ける
@@ -12,6 +14,11 @@ export const metadata: Metadata = {
 // proxy.ts も未ログインの画面 GET を止めるが、それは楽観的な検査であって
 // 唯一の砦にはしない (docs/18 §4)。ここでも requireUser() で確かめる。
 export default async function ImportSettingsPage() {
+  // デモでは取り込みを出さない (docs/38-デモモード計画.md §4)。API 側でも塞ぐが、
+  // URL 直打ちに備えてページも 404 に倒す
+  if (isDemoMode()) {
+    notFound();
+  }
   await requireUser();
 
   return (

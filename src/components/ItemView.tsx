@@ -22,6 +22,7 @@ import {
   BOX_CLASS,
   STICKY_ACTIONS_CLASS,
 } from "@/components/ui";
+import { isDemoMode } from "@/lib/appEnv";
 import { renderCircuits } from "@/lib/circuitCache";
 
 interface ItemViewProps {
@@ -89,8 +90,10 @@ export async function ItemView({ itemNo, item, saved }: ItemViewProps) {
         <TrashedBanner itemNo={itemNo} restoreAction={restoreItemsAction} />
       )}
 
-      {/* 未登録のノートにはトグルを出さない。まだ公開する中身がない (docs/22 §7) */}
-      {item && (
+      {/* 未登録のノートにはトグルを出さない。まだ公開する中身がない (docs/22 §7)。
+          デモモードでは公開機能を封じるのでトグル自体を出さない
+          (docs/38-デモモード計画.md §3。Server Action 側でも塞いでいる) */}
+      {item && !isDemoMode() && (
         <PublicToggle
           itemNo={itemNo}
           publicAt={item.publicAt}

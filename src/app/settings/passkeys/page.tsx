@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { PasskeyManager, type PasskeyRow } from "@/components/PasskeyManager";
+import { isDemoMode } from "@/lib/appEnv";
 import { formatJstDateTime } from "@/lib/datetime";
 import { listPasskeys } from "@/lib/passkeys";
 import { requireUser } from "@/lib/session";
@@ -19,6 +21,11 @@ export const metadata: Metadata = {
 // proxy.ts も未ログインの画面 GET を止めるが、それは楽観的な検査であって
 // 唯一の砦にはしない (docs/18 §4)。
 export default async function PasskeySettingsPage() {
+  // デモでは設定系を出さない (docs/38-デモモード計画.md §4)。導線 (ヘッダの
+  // リンク) も隠すが、URL 直打ちに備えてページ側でも 404 に倒す
+  if (isDemoMode()) {
+    notFound();
+  }
   await requireUser();
 
   const passkeys = await listPasskeys();

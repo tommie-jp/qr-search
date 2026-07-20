@@ -5,6 +5,7 @@ import pkg from "../../package.json";
 import { ClientLogCapture } from "@/components/ClientLogCapture";
 import { DebugConsole } from "@/components/DebugConsole";
 import { DebugConsoleButton } from "@/components/DebugConsoleButton";
+import { DemoBanner } from "@/components/DemoBanner";
 import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { LoginButton } from "@/components/LoginButton";
@@ -19,6 +20,7 @@ import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
 import {
+  isDemoMode,
   isProductionEnv,
   LOCAL_THEME_COLOR,
   PROD_THEME_COLOR,
@@ -89,6 +91,10 @@ export default async function RootLayout({
   // 完全なクラス名を両方書いて選ぶこと
   const isProd = isProductionEnv();
 
+  // デモインスタンスの目印 (docs/38-デモモード計画.md §6)。バナー・バッジ・
+  // 設定系リンクの出し分けに使う。デモは本番相当で立てるので isProd とは独立
+  const isDemo = isDemoMode();
+
   return (
     <html lang="ja" className="h-full antialiased">
       <body
@@ -133,35 +139,47 @@ export default async function RootLayout({
               </a>
               {user ? (
                 <>
-                  {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
-                      見えても 401 だが、押せない物を見せない */}
-                  <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
-                    <LogIcon />
-                    ログ
-                  </Link>
+                  {/* デモでは設定系の導線を出さない (docs/38-デモモード計画.md §4)。
+                      ログ・パスキー・インポートはいずれもページ/API 側でも
+                      塞いでいるが、押せない物を見せない */}
+                  {!isDemo && (
+                    <>
+                      {/* サーバログ (docs/21)。未ログインではリンク自体を出さない —
+                          見えても 401 だが、押せない物を見せない */}
+                      <Link href="/logs" className={HEADER_MENU_ITEM_CLASS}>
+                        <LogIcon />
+                        ログ
+                      </Link>
+                    </>
+                  )}
                   {/* その場で見る側のログ (docs/30-ブラウザログ計画.md §2)。
                       /logs は事後に読むもので、network まで見たいときは
-                      端末の上に DevTools 相当を出すしかない */}
+                      端末の上に DevTools 相当を出すしかない。デモでも自分の
+                      セッション内で完結するので残す (docs/38 §8) */}
                   <DebugConsoleButton />
-                  {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
-                      ここが登録への唯一の導線なので、ログイン中は常に出す */}
-                  <Link
-                    href={PASSKEY_SETTINGS_PATH}
-                    className={HEADER_MENU_ITEM_CLASS}
-                  >
-                    <KeyIcon />
-                    パスキー
-                  </Link>
-                  {/* Evernote (.enex) の取り込み (docs/28-エクスポート計画.md §4)。
-                      たまにしか使わないのでメニューの奥でよいが、導線が
-                      ここしか無いので出しておく */}
-                  <Link
-                    href="/settings/import"
-                    className={HEADER_MENU_ITEM_CLASS}
-                  >
-                    <ImportIcon />
-                    インポート
-                  </Link>
+                  {!isDemo && (
+                    <>
+                      {/* パスキーの管理 (docs/29-パスキー計画.md §8)。
+                          ここが登録への唯一の導線なので、ログイン中は常に出す */}
+                      <Link
+                        href={PASSKEY_SETTINGS_PATH}
+                        className={HEADER_MENU_ITEM_CLASS}
+                      >
+                        <KeyIcon />
+                        パスキー
+                      </Link>
+                      {/* Evernote (.enex) の取り込み (docs/28-エクスポート計画.md §4)。
+                          たまにしか使わないのでメニューの奥でよいが、導線が
+                          ここしか無いので出しておく */}
+                      <Link
+                        href="/settings/import"
+                        className={HEADER_MENU_ITEM_CLASS}
+                      >
+                        <ImportIcon />
+                        インポート
+                      </Link>
+                    </>
+                  )}
                   <LogoutButton variant="menu" />
                 </>
               ) : (
@@ -197,6 +215,16 @@ export default async function RootLayout({
                 LOCAL
               </span>
             )}
+            {/* デモの目印 (docs/38-デモモード計画.md §6)。本番相当で立てるので
+                LOCAL とは別に出る。バナーと対で「消えるデータ」を伝える */}
+            {isDemo && (
+              <span
+                className="rounded bg-amber-500 px-1.5 py-0.5 text-xs font-bold text-white"
+                title="デモ環境。保存したデータは定期的に削除される"
+              >
+                DEMO
+              </span>
+            )}
             {/* ユーザー名だけはメニューの外に残す — 「誰で入っているか」は
                 一目で確かめたい情報で、押す物でもないため */}
             {user && (
@@ -209,6 +237,8 @@ export default async function RootLayout({
             )}
           </div>
         </header>
+        {/* デモの常時バナー (docs/38-デモモード計画.md §6)。ヘッダ直後に置く */}
+        {isDemo && <DemoBanner />}
         {/* 遷移アニメーションは各ページの <PageTransition> が持つ
             (layout の要素は unmount されず enter/exit が起きないため) */}
         {/* max-w-2xl はメモの本文が読める行長に収めるための上限。
@@ -224,8 +254,10 @@ export default async function RootLayout({
             転送はログイン中だけ仕掛ける — 受け口は 401 を返すので、
             未ログインで拾っても運べず、無駄な要求になる。
             eruda は逆に未ログインでも要る。「ログインできない不具合」の
-            手掛かりはブラウザ側にしか無く、そのとき転送は使えない */}
-        {user && <ClientLogCapture />}
+            手掛かりはブラウザ側にしか無く、そのとき転送は使えない。
+            デモでは /logs を閉じる (docs/38 §4) ので転送も仕掛けない
+            (受け口も 403 を返す) */}
+        {user && !isDemo && <ClientLogCapture />}
         <DebugConsole />
       </body>
     </html>

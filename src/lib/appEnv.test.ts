@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { isProductionEnv } from "./appEnv";
+import { isDemoMode, isProductionEnv } from "./appEnv";
 
 const original = process.env.APP_ENV;
+const originalDemo = process.env.DEMO_MODE;
 
 afterEach(() => {
   if (original === undefined) {
     delete process.env.APP_ENV;
   } else {
     process.env.APP_ENV = original;
+  }
+  if (originalDemo === undefined) {
+    delete process.env.DEMO_MODE;
+  } else {
+    process.env.DEMO_MODE = originalDemo;
   }
 });
 
@@ -44,6 +50,34 @@ describe("isProductionEnv", () => {
     for (const value of ["development", "prod", "Production", "staging"]) {
       process.env.APP_ENV = value;
       expect(isProductionEnv(), `APP_ENV=${value}`).toBe(false);
+    }
+  });
+});
+
+// isProductionEnv とは逆で、判定を間違えると「デモなのに保護が効かない」=
+// 無防備な書き込み可サイトになる。DEMO_MODE=1 を明示したときだけ true が満たすべき性質。
+describe("isDemoMode", () => {
+  test("DEMO_MODE=1 を明示したときだけデモとみなす", () => {
+    // Arrange
+    process.env.DEMO_MODE = "1";
+
+    // Act & Assert
+    expect(isDemoMode()).toBe(true);
+  });
+
+  test("未設定ならデモではない", () => {
+    // Arrange
+    delete process.env.DEMO_MODE;
+
+    // Act & Assert
+    expect(isDemoMode()).toBe(false);
+  });
+
+  test("1 以外の値 (true/yes/空文字) はデモではない", () => {
+    // Arrange & Act & Assert
+    for (const value of ["", "true", "yes", "0", "on"]) {
+      process.env.DEMO_MODE = value;
+      expect(isDemoMode(), `DEMO_MODE=${JSON.stringify(value)}`).toBe(false);
     }
   });
 });

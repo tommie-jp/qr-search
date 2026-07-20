@@ -32,6 +32,11 @@ services:
       # 画面をピンク + タイトル [LOCAL] にして本番との誤認を防ぐ。
       # 既定を production にしてはいけない (設定漏れが本番の見た目に倒れる)
       APP_ENV: ${APP_ENV:-}
+      # デモモード (docs/38-デモモード計画.md)。隔離デモインスタンス専用で、
+      # 本番・ローカルでは空。DEMO_MODE=1 のときだけ公開機能・設定系を閉じ、
+      # アップロード上限を縮める。**APP_ENV とは逆で欠落が「保護オフ」に倒れる**
+      # ため、デモを立てるときは compose override に DEMO_MODE=1 を直書きする
+      DEMO_MODE: ${DEMO_MODE:-}
       # JAN の商品情報取得 (docs/14)。未設定でも起動する (取得しないだけ)
       YAHOO_SHOPPING_APP_ID: ${YAHOO_SHOPPING_APP_ID:-}
       # ISBN の書影取得 (docs/19)。未設定でも起動する (書影が入らないだけ)。

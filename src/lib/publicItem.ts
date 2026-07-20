@@ -6,6 +6,9 @@
 //
 // DB にも next/headers にも触らない純粋な層にする (auth.ts と同じ流儀)。
 // 行を取ってくるのは items.ts、リクエストと結びつけるのはページの役目。
+// (env の参照は純粋な層のまま — appEnv.ts / site.ts と同じ扱い)
+
+import { isDemoMode } from "./appEnv"
 
 // getItem() の返り値 (Item) をそのまま渡せる形にしておく。判定に要る 2 列だけを
 // 求めることで、$queryRaw で列を絞った行からも呼べる
@@ -23,6 +26,14 @@ export interface PublicCheckable {
 // 絞られる。呼び出し側が `item!` と書かずに済む = 判定を通さずに中身へ触る
 // 書き方のほうが面倒になる、という形にしておきたい。
 export function isPublicItem<T extends PublicCheckable>(item: T | null): item is T {
+  // デモインスタンスでは公開を一切認めない (docs/38-デモモード計画.md §3)。
+  // ここが公開判定の正本なので、未ログイン閲覧の口 (item/print ページ・公開画像の
+  // 配信・公開ノート閲覧で起動する TeX 子プロセス) がまとめて閉じる。再シードの
+  // 種を本番 dump から作って public_at 付きの行が紛れても、ここ 1 箇所で塞がる。
+  if (isDemoMode()) {
+    return false
+  }
+
   if (item === null) {
     return false
   }

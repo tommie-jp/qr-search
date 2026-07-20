@@ -1,5 +1,15 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import { isPublicItem, type PublicCheckable } from './publicItem'
+
+const originalDemo = process.env.DEMO_MODE
+
+afterEach(() => {
+  if (originalDemo === undefined) {
+    delete process.env.DEMO_MODE
+  } else {
+    process.env.DEMO_MODE = originalDemo
+  }
+})
 
 // 日付そのものに意味はない。「非 null かどうか」だけを見る判定なので、
 // 読み手が値に気を取られないよう固定値を 1 つ置く
@@ -31,5 +41,12 @@ describe('isPublicItem', () => {
 
   test('ゴミ箱かつ非公開も当然 非公開', () => {
     expect(isPublicItem(item({ deletedAt: SOME_TIME }))).toBe(false)
+  })
+
+  // docs/38-デモモード計画.md §3。デモでは公開の口をすべて閉じるので、
+  // 公開済みの行でも未ログインには見せない (種に public_at が紛れても塞がる)
+  test('デモモードでは公開済みでも非公開に倒す', () => {
+    process.env.DEMO_MODE = '1'
+    expect(isPublicItem(item({ publicAt: SOME_TIME }))).toBe(false)
   })
 })

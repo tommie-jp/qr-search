@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { isDemoMode } from '@/lib/appEnv'
 import { parseBulkTagForm } from '@/lib/bulkTags'
 import {
   emptyTrash,
@@ -97,6 +98,13 @@ export async function updateItemAction(formData: FormData): Promise<void> {
 // proxy.ts も未ログインの POST は 401 にするが、それは楽観的な検査でしかない。
 export async function setItemPublicAction(formData: FormData): Promise<void> {
   await requireUser()
+  // デモインスタンスでは公開機能そのものを無効にする (docs/38-デモモード計画.md §3)。
+  // UI ではトグルを出さない (ItemView) が、Server Action は画面を通さず id さえ
+  // 判れば叩ける口なので、ここでも塞ぐ。isPublicItem() 側でも公開を認めないので
+  // 二重の防御になる (万一 public_at が立っても未ログインには見えない)。
+  if (isDemoMode()) {
+    throw new Error('デモモードでは公開機能は使えません')
+  }
   const itemNo = readItemNo(formData)
   // '1' だけを公開と読む。判らない値は非公開へ倒す (既定を閉じる側へ)
   const isPublic = formData.get('public') === '1'

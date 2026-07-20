@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
+import { denyCrossSite, denyIfDemoMode, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { clearLogBuffer } from '@/lib/logBuffer'
 
 // ログの控えを消す (docs/30-ブラウザログ計画.md §7)。/logs のクリアボタンが呼ぶ。
@@ -9,7 +9,9 @@ import { clearLogBuffer } from '@/lib/logBuffer'
 // 開けっ放しにすると、第三者のページからログイン済みのブラウザを使って
 // 調査中の証拠を消せてしまう。
 export async function POST(request: Request): Promise<NextResponse> {
-  const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
+  // デモでは /logs を閉じる (docs/38 §4。表示・転送・消去をまとめて塞ぐ)
+  const denied =
+    denyIfDemoMode() ?? (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
   }

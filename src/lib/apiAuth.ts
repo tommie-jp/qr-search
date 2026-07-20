@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isDemoMode } from './appEnv'
 import { isCrossSiteRequest } from './crossSite'
 import { currentUser } from './session'
 
@@ -41,6 +42,27 @@ export function denyCrossSite(request: Request): NextResponse | null {
   }
   return NextResponse.json(
     { success: false, data: null, error: 'クロスサイトからの呼び出しは許可されていません' },
+    { status: 403, headers: { 'Cache-Control': 'no-store' } },
+  )
+}
+
+// デモインスタンスで閉じる口を断る (docs/38-デモモード計画.md §4)。
+// 対象は「共有アカウントのデモでは害しかない」もの — パスキー登録・ENEX
+// インポート・ログの閲覧/転送/消去。ログインの有無に依らず塞ぐので、
+// ログイン検査より前に置いてよい (デモではログイン済みでも通さない)。
+//
+// **旗の欠落に頼らない**のが要点。パスキーは WEBAUTHN 未設定でも無効になるが、
+// それに寄りかからず明示的に断つ (docs/38 §2 の「欠落は無防備へ倒れる」対策)。
+//
+// 使い方 (ログイン検査より前に置く。?? で繋ぐ):
+//   const denied = denyIfDemoMode() ?? (await denyUnlessLoggedIn())
+//   if (denied) return denied
+export function denyIfDemoMode(): NextResponse | null {
+  if (!isDemoMode()) {
+    return null
+  }
+  return NextResponse.json(
+    { success: false, data: null, error: 'デモモードでは利用できません' },
     { status: 403, headers: { 'Cache-Control': 'no-store' } },
   )
 }
