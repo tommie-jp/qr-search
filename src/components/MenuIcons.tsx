@@ -75,6 +75,18 @@ export function LogIcon() {
   );
 }
 
+// インポート: 箱へ入っていく下向きの矢印。エクスポート (docs/28) を
+// 足すときに矢印の向きだけで対にできるモチーフを選ぶ
+export function ImportIcon() {
+  return (
+    <StrokeIcon className="text-amber-600">
+      <path {...TINT} d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
+      <path d="M12 3v10" />
+      <path d="M8 9l4 4 4-4" />
+    </StrokeIcon>
+  );
+}
+
 // パスキー: 鍵。指紋と迷ったが、20px では指紋の渦が潰れて丸い染みになる
 export function KeyIcon() {
   return (

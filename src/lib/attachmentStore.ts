@@ -1,0 +1,109 @@
+// 「受け取ったバイト列を添付として保存する」判断を 1 箇所に集めた入口。
+//
+// 手で貼ったアップロード (/api/images の POST) と ENEX インポート
+// (docs/28-エクスポート計画.md §4) の 2 経路から呼ぶ。**形式の判定と変換を
+// 2 か所に書くと必ず片方だけ古くなる** — 実際 uploads.ts のコメントが
+// 「名前の作り方を 2 通りに散らすと片方だけトラバーサル対策が抜ける」と
+// 書いているのと同じ理由で、判定側もここへ寄せる。
+//
+// 形式はクライアント / ENEX の申告 MIME ではなく**中身の先頭バイト**で決める。
+// ENEX の <resource><mime> は書き出し元の申告でしかなく、信用する理由がない。
+
+import { saveImage, savePlainAttachment } from './imageStore'
+import { moveMoovToFront } from './mp4Faststart'
+import { normalizeImage } from './normalizeImage'
+import {
+  audioSaveInfo,
+  type ImageFormat,
+  MAX_IMAGE_BYTES,
+  PDF_EXT,
+  PDF_MIME,
+  sniffAudioFormat,
+  sniffImageFormat,
+  sniffPdf,
+  tooLargeMessage,
+} from './uploads'
+
+export const UNSUPPORTED_ATTACHMENT_MESSAGE =
+  '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, PDF: pdf)'
+
+export type AttachmentResult =
+  | {
+      ok: true
+      // 本文から参照する URL (/api/images/<name>)
+      url: string
+      // 保存名。取り消し (インポートの巻き戻し) で行を消すために返す
+      name: string
+      // 画像なら本文に ![](url) で貼れる。音声・PDF はリンクにする
+      isImage: boolean
+    }
+  | { ok: false; reason: string }
+
+// 保存できたら url / name を、できなければ理由を返す。
+//
+// **例外は投げない**。呼び出し側は「1 件だめでも残りは続ける」(インポート) と
+// 「400 で断る」(アップロード) のどちらかで、どちらも理由の文字列が要る。
+export async function storeAttachment(
+  // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける
+  bytes: Uint8Array<ArrayBuffer>,
+): Promise<AttachmentResult> {
+  if (bytes.byteLength > MAX_IMAGE_BYTES) {
+    return { ok: false, reason: tooLargeMessage() }
+  }
+
+  // まず画像として判定し、外れたら音声 (mp3/m4a/wav/webm)、PDF の順に試す
+  const imageFormat = sniffImageFormat(bytes)
+  if (imageFormat) {
+    return storeImage(bytes, imageFormat)
+  }
+
+  const audioFormat = sniffAudioFormat(bytes)
+  if (audioFormat) {
+    // 音声は変換もサムネも要らない。中身をそのまま保存する。
+    // 唯一の例外が m4a の moov 並べ替えで、これは変換ではなく**箱の詰め替え**
+    // (音声データは 1 バイトも変わらない)。iOS Safari の録音とボイスメモは
+    // moov が末尾に付き、そのままだと <audio> が再生を始められない
+    const { mime, ext } = audioSaveInfo(audioFormat)
+    const stored = audioFormat === 'm4a' ? (moveMoovToFront(bytes) ?? bytes) : bytes
+    return succeed(await savePlainAttachment(stored, mime, ext), false)
+  }
+
+  if (sniffPdf(bytes)) {
+    // PDF もそのまま保存し、表示はブラウザ内蔵ビューアに任せる
+    return succeed(await savePlainAttachment(bytes, PDF_MIME, PDF_EXT), false)
+  }
+
+  return { ok: false, reason: UNSUPPORTED_ATTACHMENT_MESSAGE }
+}
+
+// 画像の保存 (HEIC/TIFF は WebP へ変換してから)。
+async function storeImage(
+  bytes: Uint8Array<ArrayBuffer>,
+  format: ImageFormat,
+): Promise<AttachmentResult> {
+  // ブラウザが表示できない形式 (HEIC/TIFF) は保存前に WebP へ変換する。
+  // 復号に失敗する = 壊れた画像なので断る (500 にはしない)
+  let normalized
+  try {
+    normalized = await normalizeImage(bytes, format)
+  } catch (error) {
+    // 失敗は握り潰さずログに残す (thumbnail.ts と同じ流儀)。「特定の 1 枚が
+    // 壊れている」のか「HEIC 復号器が丸ごと動いていない」(alpine/musl の
+    // イメージ更新後など) のかを、件数と形式で切り分けられるようにする
+    console.error(
+      `画像の正規化に失敗しました (${format}, ${bytes.byteLength} bytes):`,
+      error,
+    )
+    return {
+      ok: false,
+      reason: '画像を読み込めませんでした (壊れているか未対応の画像です)',
+    }
+  }
+
+  const url = await saveImage(normalized.bytes, normalized.mime, normalized.ext)
+  return succeed(url, true)
+}
+
+function succeed(url: string, isImage: boolean): AttachmentResult {
+  return { ok: true, url, name: url.slice(url.lastIndexOf('/') + 1), isImage }
+}

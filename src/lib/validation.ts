@@ -1,5 +1,10 @@
 export type Mode = 'memo' | 'url'
 
+// memo / url 1 件の文字数上限。フォーム投稿 (actions.ts) と ENEX インポート
+// (lib/enex/importEnex.ts) の両方が同じ上限を見る。片方だけ緩いと、取り込めた
+// のに編集画面から保存し直せないノートができる
+export const MAX_TEXT_LENGTH = 10000
+
 // Ver1 の実データは 4 桁数字が大半だが、"100x" のような
 // 非数字の itemNo も 1 件存在するため英数字を許容する
 const ITEM_NO_PATTERN = /^[0-9A-Za-z_-]{1,20}$/

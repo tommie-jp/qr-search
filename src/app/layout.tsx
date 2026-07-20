@@ -9,7 +9,12 @@ import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
 import { LoginButton } from "@/components/LoginButton";
 import { LogoutButton } from "@/components/LogoutButton";
-import { GithubIcon, KeyIcon, LogIcon } from "@/components/MenuIcons";
+import {
+  GithubIcon,
+  ImportIcon,
+  KeyIcon,
+  LogIcon,
+} from "@/components/MenuIcons";
 import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
 import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
@@ -146,6 +151,16 @@ export default async function RootLayout({
                   >
                     <KeyIcon />
                     パスキー
+                  </Link>
+                  {/* Evernote (.enex) の取り込み (docs/28-エクスポート計画.md §4)。
+                      たまにしか使わないのでメニューの奥でよいが、導線が
+                      ここしか無いので出しておく */}
+                  <Link
+                    href="/settings/import"
+                    className={HEADER_MENU_ITEM_CLASS}
+                  >
+                    <ImportIcon />
+                    インポート
                   </Link>
                   <LogoutButton variant="menu" />
                 </>

@@ -17,14 +17,12 @@ import {
 import { parseBackUrl, parseSelectedItemNos } from '@/lib/itemSelection'
 import { requireUser } from '@/lib/session'
 import { addTagsToMemo, removeTagsFromMemo } from '@/lib/tagEdit'
-import { isValidItemNo, parseMode } from '@/lib/validation'
+import { isValidItemNo, MAX_TEXT_LENGTH, parseMode } from '@/lib/validation'
 import {
   parseViewMode,
   VIEW_MODE_COOKIE,
   VIEW_MODE_COOKIE_MAX_AGE,
 } from '@/lib/viewMode'
-
-const MAX_TEXT_LENGTH = 10000
 
 function readText(formData: FormData, key: string): string {
   const value = formData.get(key)

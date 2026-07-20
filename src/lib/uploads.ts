@@ -435,7 +435,8 @@ export function sniffPdf(bytes: Uint8Array): boolean {
 }
 
 // multipart のヘッダ等のオーバーヘッド分を上限に足す
-const MAX_BODY_BYTES = MAX_IMAGE_BYTES + 1024 * 1024
+export const MULTIPART_OVERHEAD_BYTES = 1024 * 1024
+const MAX_BODY_BYTES = MAX_IMAGE_BYTES + MULTIPART_OVERHEAD_BYTES
 
 export interface UploadRejection {
   status: number
@@ -443,7 +444,14 @@ export interface UploadRejection {
 }
 
 // 本文を読む前に弾けるものだけを見る。問題なければ null。
-export function checkUploadRequest(request: Request): UploadRejection | null {
+//
+// maxBodyBytes を差し替えられるのは ENEX インポート (docs/28 §4) のため。
+// ENEX は 1 ファイルに全ノートと添付が入るので画像 1 枚より桁が大きい。
+// **CSRF の判定はどの経路でも同じ**なので、上限だけを引数にして本体は共有する。
+export function checkUploadRequest(
+  request: Request,
+  maxBodyBytes: number = MAX_BODY_BYTES,
+): UploadRejection | null {
   // CSRF 対策: ブラウザがクロスオリジン POST に付ける Origin がホストと
   // 食い違う場合は本文を読む前に拒否する (同一オリジンの fetch は許可)
   const origin = request.headers.get('origin')
@@ -454,8 +462,11 @@ export function checkUploadRequest(request: Request): UploadRejection | null {
   // メモリ枯渇対策: formData() は本文全体をバッファするため、
   // Content-Length の時点で明らかに大きすぎるものは先に弾く
   const contentLength = Number(request.headers.get('content-length') ?? 0)
-  if (contentLength > MAX_BODY_BYTES) {
-    return { status: 413, error: tooLargeMessage() }
+  if (contentLength > maxBodyBytes) {
+    return {
+      status: 413,
+      error: tooLargeMessage(maxBodyBytes - MULTIPART_OVERHEAD_BYTES),
+    }
   }
 
   return null
@@ -471,6 +482,6 @@ function isSameOrigin(origin: string, request: Request): boolean {
   }
 }
 
-export function tooLargeMessage(): string {
-  return `ファイルが大きすぎます (最大 ${MAX_IMAGE_BYTES / 1024 / 1024}MB)`
+export function tooLargeMessage(maxBytes: number = MAX_IMAGE_BYTES): string {
+  return `ファイルが大きすぎます (最大 ${Math.round(maxBytes / 1024 / 1024)}MB)`
 }
