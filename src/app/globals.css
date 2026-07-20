@@ -139,3 +139,79 @@ summary {
     animation: none !important;
   }
 }
+
+/* PDF ビューアのテキストレイヤ (docs/12-添付ファイル種類拡張メモ.md)。
+   canvas の絵の上に透明な span を重ね、選択・コピー・ブラウザ内検索・
+   読み上げを効かせる (canvas だけだと絵にしか見えない)。
+
+   pdfjs の pdf_viewer.css から**この用途に要る分だけ**を写した。全部取り込むと
+   ツールバーや注釈エディタまで付いてくるうえ、遅延読み込みしている本体と違って
+   CSS は初回から乗ってしまう。span の font-size / transform の式は TextLayer が
+   出力する custom property (--font-height / --scale-x / --rotate) と対になって
+   いるので、**式の形を変えないこと** (変えると文字が絵とずれる)。
+   --total-scale-factor は pdfService.renderTextLayer が要素へ直接入れる。 */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  color-scheme: only light;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  /* TextLayer が内部で呼ぶ setLayerDimensions は width/height を
+     round(down, var(--total-scale-factor) * Npx, var(--scale-round-x)) で
+     上書きする。この 2 つが無いと式ごと無効になり、寸法が
+     inset:0 任せの成り行きになる (たまたま合うだけの状態)。
+     公式 viewer と同じ 1px 刻みを与えて、絵と文字の寸法を確定させる */
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x))
+    scale(var(--min-font-size-inv));
+}
+
+/* 構造だけの入れ物。行の中に段を作らせない */
+.textLayer .markedContent {
+  display: contents;
+}
+
+/* 画像の代替テキストは選択させない (絵の上で文字を掴んでしまうため) */
+.textLayer span[role="img"] {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* 文字が透明なので、選択範囲は背景色で見せる */
+.textLayer ::selection {
+  background: rgb(0 90 255 / 0.25);
+}

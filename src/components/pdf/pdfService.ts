@@ -50,9 +50,22 @@ export interface PdfDocumentHandle {
     canvas: HTMLCanvasElement,
     cssWidth: number,
   ): Promise<void>
+  // ページのテキストを canvas の上へ透明な span として重ねる。
+  // これで選択・コピー・ブラウザ内検索・読み上げが効くようになる
+  // (canvas だけだと絵にしか見えない)。
+  renderTextLayer(
+    pageNumber: number,
+    container: HTMLElement,
+    cssWidth: number,
+  ): Promise<void>
   // そのページの描画が走っていれば中断する。画面外へ出た canvas を
   // 解放する前に呼ぶ (描き込み中の canvas を 0 幅にしない)
   cancelPage(pageNumber: number): void
+  // PDF の生バイト列。共有シートへ渡すのに使う。
+  // **表示のために既に読み込んだものを返す**ので、取り直しの通信は起きない
+  // (共有はユーザー操作の直後に呼ぶ必要があり、間に fetch を挟むと
+  // iOS が transient activation 切れで弾く)
+  getData(): Promise<Uint8Array>
   // worker ごと破棄する。**閉じたら必ず呼ぶこと** — wasm ヒープは縮まないので、
   // 抱えたままだと後から開く OCR や画像検索がモデルを積めずに落ちる
   // (ocrService.ts の disposeOcr と同じ理由)
@@ -95,6 +108,7 @@ export async function loadPdfDocument(url: string): Promise<PdfDocumentHandle> {
   const doc = await task.promise
   // ページごとの描画タスク。同じページへ描き直すときに前のを中断する
   const tasks = new Map<number, { cancel: () => void }>()
+  const textLayers = new Map<number, { cancel: () => void }>()
 
   return {
     numPages: doc.numPages,
@@ -141,9 +155,50 @@ export async function loadPdfDocument(url: string): Promise<PdfDocumentHandle> {
       }
     },
 
+    async renderTextLayer(pageNumber, container, cssWidth) {
+      textLayers.get(pageNumber)?.cancel()
+
+      const page = await doc.getPage(pageNumber)
+      const base = page.getViewport({ scale: 1 })
+      // **canvas とは倍率が違う**。canvas は DPR を掛けた実ピクセルで描くが、
+      // テキストは CSS ピクセル上に置くので、画面上の見た目の倍率で組む。
+      // 混同すると文字の当たり判定が絵とずれる
+      const scale = cssWidth / base.width
+      const viewport = page.getViewport({ scale })
+
+      container.replaceChildren()
+      // 倍率を先に入れてから TextLayer を作る。TextLayer は内部で
+      // setLayerDimensions を呼び、container の width/height を
+      //   round(down, var(--total-scale-factor) * <ページ寸法>px, var(--scale-round-x))
+      // という式で**上書きする**。--total-scale-factor と --scale-round-x/y の
+      // 両方が要り、欠けると式ごと無効になる (globals.css の .textLayer が
+      // --scale-round-x/y を持つ。こちらは倍率を入れる)
+      container.style.setProperty('--total-scale-factor', String(scale))
+
+      const layer = new lib.TextLayer({
+        textContentSource: page.streamTextContent(),
+        container,
+        viewport,
+      })
+      textLayers.set(pageNumber, layer)
+      try {
+        await layer.render()
+      } finally {
+        if (textLayers.get(pageNumber) === layer) {
+          textLayers.delete(pageNumber)
+        }
+      }
+    },
+
     cancelPage(pageNumber) {
       tasks.get(pageNumber)?.cancel()
       tasks.delete(pageNumber)
+      textLayers.get(pageNumber)?.cancel()
+      textLayers.delete(pageNumber)
+    },
+
+    getData() {
+      return doc.getData()
     },
 
     async destroy() {
@@ -151,6 +206,10 @@ export async function loadPdfDocument(url: string): Promise<PdfDocumentHandle> {
         running.cancel()
       }
       tasks.clear()
+      for (const layer of textLayers.values()) {
+        layer.cancel()
+      }
+      textLayers.clear()
       await task.destroy()
     },
   }

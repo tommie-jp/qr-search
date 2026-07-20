@@ -14,6 +14,7 @@ import {
   type PdfDocumentHandle,
 } from "./pdfService";
 import { isStandaloneDisplay, subscribeDisplayMode } from "@/lib/displayMode";
+import { canShareFiles, isShareAborted, sharePdf } from "@/lib/shareFile";
 import { BUSY_SPINNER_CLASS, SECONDARY_BUTTON_CLASS } from "../ui";
 
 // ページを先読みする距離。スクロールで現れる直前に描き始めることで、
@@ -48,6 +49,7 @@ function PdfPage({
 }) {
   const holderRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -80,19 +82,39 @@ function PdfPage({
       setFailed(true);
     });
 
+    // テキストレイヤは絵とは独立に載せる。失敗しても選択できなくなるだけで
+    // 絵は出ているので、ページ全体をエラーにはしない
+    const textLayer = textLayerRef.current;
+    if (textLayer) {
+      doc
+        .renderTextLayer(pageNumber, textLayer, cssWidth)
+        .catch((error: unknown) => {
+          if (!alive || isRenderCancelled(error)) {
+            return;
+          }
+          console.error(
+            `PDF ${pageNumber} ページ目のテキストレイヤに失敗しました:`,
+            error,
+          );
+        });
+    }
+
     return () => {
       alive = false;
       // 描き込み中の canvas を 0 幅にしないよう、先に中断する
       doc.cancelPage(pageNumber);
       canvas.width = 0;
       canvas.height = 0;
+      // テキストの span も破棄する (ページあたり数百ノードになるため)
+      textLayer?.replaceChildren();
     };
   }, [doc, pageNumber, cssWidth, visible]);
 
   return (
     <div
       ref={holderRef}
-      className="mx-auto bg-white shadow"
+      // relative … テキストレイヤ (absolute inset-0) を絵にぴったり重ねるため
+      className="relative mx-auto bg-white shadow"
       // 描く前・解放後も高さを保ち、スクロール位置が飛ばないようにする
       style={{ width: cssWidth, minHeight: cssWidth * aspect }}
     >
@@ -101,7 +123,12 @@ function PdfPage({
           {pageNumber} ページ目を表示できませんでした。
         </p>
       ) : (
-        <canvas ref={canvasRef} aria-label={`${pageNumber} ページ目`} />
+        <>
+          <canvas ref={canvasRef} aria-label={`${pageNumber} ページ目`} />
+          {/* 透明な文字を絵の上に重ねる (選択・コピー・検索・読み上げ用)。
+              スタイルは globals.css の .textLayer */}
+          <div ref={textLayerRef} className="textLayer" />
+        </>
       )}
     </div>
   );
@@ -125,6 +152,16 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
   const canOpenNewTab = useSyncExternalStore(
     subscribeDisplayMode,
     () => !isStandaloneDisplay(),
+    () => false,
+  );
+
+  // 共有シートへの導線。**機能があると判るまで出さない** (displayMode と同じ流儀)。
+  // 判定はブラウザの対応可否で行う — standalone かどうかではない。
+  // 対応していない環境 (デスクトップ Linux Chrome など) では自然に消える
+  const canShare = useSyncExternalStore(
+    // 対応可否は実行中に変わらないので購読しない
+    () => () => {},
+    () => canShareFiles(),
     () => false,
   );
 
@@ -186,6 +223,23 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
     };
   }, [url]);
 
+  // 共有シートを開く。バイト列は表示のために読み込み済みのものを使うので、
+  // ここで通信は起きない (通信を挟むと iOS が transient activation 切れで弾く)
+  const handleShare = async () => {
+    if (!doc) {
+      return;
+    }
+    try {
+      await sharePdf(await doc.getData(), label);
+    } catch (e) {
+      // 共有シートを閉じただけならエラーではない
+      if (isShareAborted(e)) {
+        return;
+      }
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   // ページの表示幅を器から測る。回転・リサイズにも追従させる
   const measure = useCallback(() => {
     const el = scrollRef.current;
@@ -220,6 +274,17 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
           >
             新しいタブ
           </a>
+        )}
+        {/* 印刷・保存・他アプリ送りは OS の共有シートに委ねる。standalone には
+            他に PDF を外へ出す手段が無いので、ここが唯一の出口になる */}
+        {canShare && doc && (
+          <button
+            type="button"
+            onClick={() => void handleShare()}
+            className={`shrink-0 ${SECONDARY_BUTTON_CLASS}`}
+          >
+            共有
+          </button>
         )}
         <button
           type="button"
