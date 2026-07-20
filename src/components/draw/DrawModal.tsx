@@ -48,12 +48,17 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // 拡大と移動。ジェスチャを受けるのは「手」道具のときだけで、
-  // 描く道具との取り合いが起きないようにしている (docs/36 §4)
+  // 拡大と送り (docs/36 §4)。2 本指とホイールはどの道具でも効き、
+  // 1 本指ドラッグでの送りだけ「移動」道具に限る。
+  // 2 本指の開始時には描きかけの線を捨てる — その関数は useDrawCanvas から
+  // 出てくるが、useDrawCanvas はこのフックの zoom を受けるので、
+  // 相互参照を ref で切る
+  const cancelInputRef = useRef<() => void>(() => undefined);
   const gestures = useStageGestures({
     stageRef,
     contentRef,
-    enabled: tool === "pan",
+    dragPanEnabled: tool === "pan",
+    onTwoFingerStart: () => cancelInputRef.current(),
   });
 
   const {
@@ -68,6 +73,7 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     redo,
     clear,
     exportImage,
+    cancelActiveInput,
   } = useDrawCanvas({
     tool,
     color: prefs.color,
@@ -79,6 +85,11 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     canvasElRef,
     containerRef: stageRef,
   });
+
+  // ジェスチャ側 (レンダー順で先に居る) から最新の打ち切り関数を呼べるようにする
+  useEffect(() => {
+    cancelInputRef.current = cancelActiveInput;
+  }, [cancelActiveInput]);
 
   // 画面の回転やキーボードの開閉で描画領域が変わっても、canvas 全体が
   // 収まるように表示だけを拡縮する (論理サイズ = 書き出す解像度は変えない)
@@ -219,9 +230,11 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
         ref={stageRef}
         // **スクロールさせない**。canvas の上にスクロールできる親があると、
         // 指が canvas の外へ出た瞬間に fabric の座標がスクロール量ぶん飛ぶ
-        // (docs/36 §4-3)。送りは中身の transform で行う
-        className={`relative flex-1 overflow-hidden px-2 ${
-          tool === "pan" ? "cursor-grab touch-none" : ""
+        // (docs/36 §4-3)。送りは中身の transform で行う。
+        // touch-none は常時 — 2 本指ジェスチャをどの道具でも受けるので、
+        // canvas の外 (余白) から始まるピンチもブラウザに渡さない
+        className={`relative flex-1 touch-none overflow-hidden px-2 ${
+          tool === "pan" ? "cursor-grab" : ""
         }`}
       >
         {/* 縮めた後の見た目の大きさを持つ枠。これが無いと、transform は

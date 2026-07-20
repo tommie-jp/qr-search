@@ -106,8 +106,14 @@ function createShape(
   return null;
 }
 
-// fabric の canvas にドラッグ描画を取り付ける。戻り値は取り外し関数
-export function attachShapeTool(fc: fabric.Canvas, deps: ShapeToolDeps): () => void {
+export interface ShapeToolHandle {
+  // 進行中のドラッグを何も置かずに打ち切る (2 本指ジェスチャの開始時に呼ぶ)
+  cancel: () => void;
+  detach: () => void;
+}
+
+// fabric の canvas にドラッグ描画を取り付ける
+export function attachShapeTool(fc: fabric.Canvas, deps: ShapeToolDeps): ShapeToolHandle {
   let start: DrawPoint | null = null;
   let last: DrawPoint | null = null;
   let preview: fabric.FabricObject | null = null;
@@ -180,10 +186,25 @@ export function attachShapeTool(fc: fabric.Canvas, deps: ShapeToolDeps): () => v
   fc.on("mouse:move", onMove);
   fc.on("mouse:up", onUp);
 
-  return () => {
-    fc.off("mouse:down", onDown);
-    fc.off("mouse:move", onMove);
-    fc.off("mouse:up", onUp);
+  const cancel = () => {
+    if (!start) {
+      return;
+    }
+    clearPreview();
+    start = null;
+    last = null;
+    preview = null;
+    fc.requestRenderAll();
+    deps.endPreview(false);
+  };
+
+  return {
+    cancel,
+    detach: () => {
+      fc.off("mouse:down", onDown);
+      fc.off("mouse:move", onMove);
+      fc.off("mouse:up", onUp);
+    },
   };
 }
 

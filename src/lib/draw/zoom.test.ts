@@ -4,6 +4,7 @@ import {
   clampZoom,
   MAX_ZOOM,
   MIN_ZOOM,
+  panForPinch,
   panForZoom,
   pinchCenter,
   pinchSpan,
@@ -107,6 +108,65 @@ describe('panForZoom', () => {
 
     // Assert
     expect(next).toEqual({ left: 40, top: 20 })
+  })
+})
+
+describe('panForPinch', () => {
+  test('pans by the centre movement when the zoom does not change', () => {
+    // Arrange & Act — 2 本指を開かず、右下へ 30,20 だけ平行移動した
+    const next = panForPinch({
+      pan: { left: 100, top: 50 },
+      from: 2,
+      startCenter: { x: 100, y: 100 },
+      currentCenter: { x: 130, y: 120 },
+      to: 2,
+    })
+
+    // Assert — 中身が指に付いてくる = 送りは指の移動ぶん減る
+    expect(next).toEqual({ left: 70, top: 30 })
+  })
+
+  test('matches panForZoom when the centre stays still', () => {
+    // Arrange
+    const input = {
+      pan: { left: 100, top: 50 },
+      from: 1,
+      to: 2,
+    }
+    const center = { x: 100, y: 50 }
+
+    // Act & Assert
+    expect(
+      panForPinch({ ...input, startCenter: center, currentCenter: center }),
+    ).toEqual(panForZoom({ ...input, pointer: center }))
+  })
+
+  test('zooms and pans in one motion', () => {
+    // Arrange & Act — つまんだ点 (中身の 200,100) を 2 倍にしつつ右へ 10 運ぶ
+    const next = panForPinch({
+      pan: { left: 100, top: 50 },
+      from: 1,
+      startCenter: { x: 100, y: 50 },
+      currentCenter: { x: 110, y: 50 },
+      to: 2,
+    })
+
+    // Assert — 2 倍後の位置 400 から今の中心 110 を引く
+    expect(next).toEqual({ left: 290, top: 150 })
+  })
+
+  test('never returns a negative offset', () => {
+    // Arrange & Act
+    const next = panForPinch({
+      pan: { left: 0, top: 0 },
+      from: 1,
+      startCenter: { x: 0, y: 0 },
+      currentCenter: { x: 50, y: 50 },
+      to: 1,
+    })
+
+    // Assert
+    expect(next).toEqual({ left: 0, top: 0 })
   })
 })
 

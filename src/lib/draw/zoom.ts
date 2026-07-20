@@ -59,18 +59,40 @@ export function pinchCenter(a: DrawPoint, b: DrawPoint): DrawPoint {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
 }
 
-// つまんだ点が指の下から動かないように送り量を求める。
+export interface PinchPanInput {
+  // ジェスチャ開始時の送りと倍率
+  readonly pan: PanOffset
+  readonly from: number
+  // 開始時の 2 本指の中心と、いまの中心 (枠の左上から測った値)
+  readonly startCenter: DrawPoint
+  readonly currentCenter: DrawPoint
+  readonly to: number
+}
+
+// つまんだ中身の点が、動いた指の中心に付いてくるように送りを求める。
 //
-// 中身の座標 = (送り + 指の位置) / 倍率。これは倍率を変えても変わらない
-// (同じ点をつまみ続けている) ので、新しい倍率での位置から指の位置を引けば
-// 新しい送り量になる。
-export function panForZoom({ pan, pointer, from, to }: ZoomPanInput): PanOffset {
-  const contentX = (pan.left + pointer.x) / from
-  const contentY = (pan.top + pointer.y) / from
+// 開始時に指の中心の下にあった中身の座標 = (送り + 中心) / 倍率。
+// ピンチの間じゅう「その点が今の中心の下に居続ける」ようにするので、
+// 新しい倍率での位置から今の中心を引けば新しい送りになる。
+// 指を開けば拡大、平行移動すれば送り、が 1 つの式で同時に効く
+export function panForPinch({
+  pan,
+  from,
+  startCenter,
+  currentCenter,
+  to,
+}: PinchPanInput): PanOffset {
+  const contentX = (pan.left + startCenter.x) / from
+  const contentY = (pan.top + startCenter.y) / from
   return {
-    left: Math.max(0, contentX * to - pointer.x),
-    top: Math.max(0, contentY * to - pointer.y),
+    left: Math.max(0, contentX * to - currentCenter.x),
+    top: Math.max(0, contentY * to - currentCenter.y),
   }
+}
+
+// ホイール・ボタン用: 軸の 1 点が動かない拡大 (中心が動かないピンチと同じ)
+export function panForZoom({ pan, pointer, from, to }: ZoomPanInput): PanOffset {
+  return panForPinch({ pan, from, startCenter: pointer, currentCenter: pointer, to })
 }
 
 // 中身が枠から出ている分までしか送らない。収まっているなら送らない

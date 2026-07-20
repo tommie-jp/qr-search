@@ -26,7 +26,7 @@ import {
 } from "@/lib/draw/history";
 import type { DrawTool } from "./drawTools";
 import { buildFill, buildMosaic } from "./rasterTool";
-import { attachShapeTool } from "./shapeTool";
+import { attachShapeTool, type ShapeToolHandle } from "./shapeTool";
 
 export type { DrawTool };
 
@@ -90,6 +90,9 @@ export interface DrawCanvasApi {
   redo: () => void;
   clear: () => void;
   exportImage: () => Promise<{ blob: Blob; extension: string }>;
+  // 2 本指ジェスチャの開始時に呼ぶ。1 本目の指で始まってしまった描きかけの
+  // 線・図形を何も残さず打ち切り、指を離したときのタップ発火も見送らせる
+  cancelActiveInput: () => void;
 }
 
 interface UseDrawCanvasParams {
@@ -146,7 +149,9 @@ export function useDrawCanvas({
   const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const eraserDisposerRef = useRef<(() => void) | null>(null);
   const eraserRef = useRef<EraserBrush | null>(null);
-  const detachShapeToolRef = useRef<(() => void) | null>(null);
+  const shapeToolRef = useRef<ShapeToolHandle | null>(null);
+  // 2 本指ジェスチャが始まったら、その down から始まるタップ発火を見送る
+  const suppressTapRef = useRef(false);
   const historyRef = useRef<DrawHistory>(createHistory(""));
 
   const [size, setSize] = useState<CanvasSize | null>(null);
@@ -403,9 +408,17 @@ export function useDrawCanvas({
         fc.on(name, scheduleSnapshot);
       }
 
-      // 文字道具: 何も無い所を押したらその場に文字を置いて編集に入る
-      fc.on("mouse:down", (options) => {
-        if (toolRef.current !== "text" || options.target) {
+      // タップで即発火する道具 (文字・塗りつぶし) は **mouse:up** で発火する。
+      // down で発火すると、2 本指ジェスチャの 1 本目の指でも発火してしまい、
+      // ピンチのつもりが文字や塗りを置くことになる。up まで待ち、その間に
+      // 2 本目が着いたら見送る (suppressTapRef)
+      fc.on("mouse:down", () => {
+        suppressTapRef.current = false;
+      });
+
+      // 文字道具: 何も無い所を押して離したら、その場に文字を置いて編集に入る
+      fc.on("mouse:up", (options) => {
+        if (toolRef.current !== "text" || options.target || suppressTapRef.current) {
           return;
         }
         const point = fc.getScenePoint(options.e);
@@ -446,8 +459,8 @@ export function useDrawCanvas({
       // 塗りつぶし: クリックした点と繋がった範囲を塗る (docs/35)。
       // 結果は 1 枚のオブジェクトとして足すので、履歴も消しゴムも
       // object:added の既存経路に乗る
-      fc.on("mouse:down", (options) => {
-        if (toolRef.current !== "fill") {
+      fc.on("mouse:up", (options) => {
+        if (toolRef.current !== "fill" || suppressTapRef.current) {
           return;
         }
         const point = fc.getScenePoint(options.e);
@@ -465,7 +478,7 @@ export function useDrawCanvas({
 
       // 矢印・矩形・楕円のドラッグ描画 (docs/36 §1)。
       // ドラッグ中は仮の図形を出し入れするので履歴を止め、離したときに 1 手積む
-      detachShapeToolRef.current = attachShapeTool(fc, {
+      shapeToolRef.current = attachShapeTool(fc, {
         getTool: () => toolRef.current,
         getColor: () => colorRef.current,
         // 図形の線は内容 → fitScale。タップ判定は指の動き → displayScale
@@ -509,8 +522,8 @@ export function useDrawCanvas({
       disposed = true;
       clearTimeout(snapshotTimerRef.current);
       releaseEraser();
-      detachShapeToolRef.current?.();
-      detachShapeToolRef.current = null;
+      shapeToolRef.current?.detach();
+      shapeToolRef.current = null;
       const fc = fcRef.current;
       fcRef.current = null;
       void fc?.dispose();
@@ -574,6 +587,46 @@ export function useDrawCanvas({
     // 拡大しながら選択しても、枠の太さが画面上で一定になるように当て直す
     applySelectionStyle();
   }, [color, width, displayScale, applyBrushStyle, applySelectionStyle]);
+
+  // 2 本指ジェスチャの開始で、進行中の入力をすべて打ち切る (docs/36 §4-5)。
+  // ペン・消しゴムのストローク中断に公開 API は無く、_isCurrentlyDrawing を
+  // 折るのが唯一の手段。名前が変わっても描画自体は壊れないよう防御的に触る
+  const cancelActiveInput = useCallback(() => {
+    suppressTapRef.current = true; // 指を離したときの文字・塗りの発火を見送る
+    shapeToolRef.current?.cancel(); // 図形のドラッグは仮表示ごと捨てる
+    const fc = fcRef.current;
+    if (!fc) {
+      return;
+    }
+    const internal = fc as unknown as { _isCurrentlyDrawing?: boolean };
+    if (!internal._isCurrentlyDrawing) {
+      return;
+    }
+    try {
+      // これで canvas 側は以降の move を無視し、up でもブラシを確定しない
+      internal._isCurrentlyDrawing = false;
+      const brush = fc.freeDrawingBrush;
+      if (brush instanceof EraserBrush) {
+        // active を折ってから up を呼ぶと、確定 (super) を跳ばして
+        // after:render リスナの後始末だけが走る (@erase2d の実装で確認)。
+        // active は型上 private だが、実体は普通のプロパティ
+        const eraser = brush as unknown as {
+          active: boolean;
+          onMouseUp: (context: { e: Event; pointer: fabric.Point }) => boolean;
+        };
+        eraser.active = false;
+        eraser.onMouseUp({
+          e: new MouseEvent("mouseup"),
+          pointer: new fabric.Point(0, 0),
+        });
+      }
+      // 描きかけの線は上段 canvas にしか無いので、拭えば消える
+      fc.clearContext(fc.getTopContext());
+      fc.requestRenderAll();
+    } catch {
+      // 打ち切れなくても、描き続けられることを優先して黙って進む
+    }
+  }, []);
 
   const undo = useCallback(() => {
     const next = undoHistory(historyRef.current);
@@ -640,5 +693,6 @@ export function useDrawCanvas({
     redo,
     clear,
     exportImage,
+    cancelActiveInput,
   };
 }
