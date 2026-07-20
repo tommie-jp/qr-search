@@ -419,6 +419,10 @@ export function useDrawCanvas({
         text.enterEditing();
         text.hiddenTextarea?.focus();
       });
+      // 複数選択は fabric が ActiveSelection を内部で作るので、
+      // 出来たその場で選択枠のスタイルを当てる
+      fc.on("selection:created", applySelectionStyle);
+
       // 空のまま編集を抜けたら消す (見えないゴミを残さない)
       fc.on("text:editing:exited", (event) => {
         const text = event.target;
@@ -500,6 +504,7 @@ export function useDrawCanvas({
       void fc?.dispose();
     };
   }, [
+    applySelectionStyle,
     backgroundUrl,
     canvasElRef,
     containerRef,
