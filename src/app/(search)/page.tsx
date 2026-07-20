@@ -6,10 +6,10 @@ import {
   setViewModeAction,
   trashItemsAction,
 } from "@/app/actions";
+import { AutoLoadMore } from "@/components/AutoLoadMore";
 import { BottomActionBar } from "@/components/BottomActionBar";
 import { ItemList } from "@/components/ItemList";
 import { PageTransition } from "@/components/PageTransition";
-import { PendingLink } from "@/components/PendingLink";
 import { PropsTable } from "@/components/PropsTable";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
@@ -17,7 +17,6 @@ import { SelectModeProvider } from "@/components/SelectModeProvider";
 import {
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
-  COMPACT_ACTION_LINK_CLASS,
   WIDE_RESULTS_CLASS,
 } from "@/components/ui";
 import { isProductionEnv } from "@/lib/appEnv";
@@ -190,31 +189,16 @@ async function HomeResults({
         trashedMatches={trashedMatches}
       />
 
-      <div className="flex items-center justify-between">
-        {result.page > 1 ? (
-          <PendingLink
-            href={buildSearchUrl(query, result.page - 1, sort)}
-            className={COMPACT_ACTION_LINK_CLASS}
-          >
-            ← 前へ
-          </PendingLink>
-        ) : (
-          <span />
-        )}
-        <span className="text-sm text-gray-500">
-          {result.page} / {result.pageCount} ページ
-        </span>
-        {result.page < result.pageCount ? (
-          <PendingLink
-            href={buildSearchUrl(query, result.page + 1, sort)}
-            className={COMPACT_ACTION_LINK_CLASS}
-          >
-            次へ →
-          </PendingLink>
-        ) : (
-          <span />
-        )}
-      </div>
+      {/* ページ送りは「前へ/次へ」からオンデマンド表示へ (docs/33)。
+          searchItems が 1〜N ページの累積を返すので、末尾の「さらに表示」が
+          見えたら次の page へ replace するだけで一覧が伸びる。
+          全件出し切ったら何も出さない (件数は先頭に常にある) */}
+      {result.page < result.pageCount && (
+        <AutoLoadMore
+          href={buildSearchUrl(query, result.page + 1, sort)}
+          remaining={result.total - result.items.length}
+        />
+      )}
     </SearchResults>
   );
 }

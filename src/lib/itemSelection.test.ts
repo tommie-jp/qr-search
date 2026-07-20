@@ -29,8 +29,10 @@ describe('parseSelectedItemNos', () => {
   })
 
   test('異常に多い itemNo は上限で打ち切る (DoS 防御)', () => {
-    const fd = form(Array.from({ length: 300 }, (_, i): [string, string] => ['itemNo', `${i}`]))
-    expect(parseSelectedItemNos(fd).length).toBe(100)
+    // 上限 5000 はオンデマンド表示 (docs/33) の「読み込んだ全件から選べる」
+    // を妨げない値。正当な選択が全ノート規模に及ぶため
+    const fd = form(Array.from({ length: 6000 }, (_, i): [string, string] => ['itemNo', `${i}`]))
+    expect(parseSelectedItemNos(fd).length).toBe(5000)
   })
 })
 

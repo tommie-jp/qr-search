@@ -259,6 +259,50 @@ describe.skipIf(!runDbTests)(
       expect(r.total).toBeGreaterThanOrEqual(seed.length)
     })
 
+    // オンデマンド表示 (docs/33): page N は「N ページ目だけ」ではなく
+    // 「1〜N ページ目までの累積」を返す。クライアントに蓄積 state を
+    // 持たせないための意味論変更。
+    describe('pagination (累積読み込み)', () => {
+      const TOKEN = 'zzftpagetoken'
+      const NOTES = 25 // PAGE_SIZE(20) を 1 ページ分だけ超える数
+
+      beforeAll(async () => {
+        for (let i = 0; i < NOTES; i++) {
+          const itemNo = `zzftpn${String(i).padStart(2, '0')}`
+          await prisma.item.upsert({
+            where: { itemNo },
+            update: { memo: TOKEN },
+            create: { itemNo, itemNoNum: null, memo: TOKEN },
+          })
+        }
+        // 全行を同じ updated_at にする。同時刻でも並びが揺れないこと
+        // (タイブレーク) を検証するため
+        await prisma.$executeRaw`
+          UPDATE items SET updated_at = '2026-03-01T00:00:00Z'
+          WHERE item_no LIKE 'zzftpn%'
+        `
+      })
+
+      test('page 2 returns pages 1..2 cumulatively (先頭 20 件は page 1 と同一)', async () => {
+        const p1 = await searchItems(TOKEN, 1)
+        expect(p1.items).toHaveLength(20)
+        expect(p1.total).toBe(NOTES)
+        expect(p1.pageCount).toBe(2)
+
+        const p2 = await searchItems(TOKEN, 2)
+        expect(p2.items).toHaveLength(NOTES)
+        expect(p2.items.slice(0, 20).map((i) => i.itemNo)).toEqual(
+          p1.items.map((i) => i.itemNo),
+        )
+      })
+
+      test('equal updated_at rows keep a stable order (item_no でタイブレーク)', async () => {
+        const r = await searchItems(TOKEN, 2)
+        const nos = r.items.map((i) => i.itemNo)
+        expect(nos).toEqual([...nos].sort())
+      })
+    })
+
     describe('tag search', () => {
       test('#tag matches items carrying that tag', async () => {
         const r = await searchItems('#zzfttag1', 1)

@@ -243,6 +243,12 @@ function buildOrderBy(sort: Sort): Prisma.Sql {
 
 // q は memo / url の全文検索 (&@)、または itemNo の前方一致。
 // 空白 (半角/全角) 区切りは AND、"OR"/"|" は OR (DNF)。文法は search.ts 参照。
+//
+// page N は「N ページ目の 20 件」ではなく「1〜N ページ目の累積」を返す
+// (docs/33-オンデマンド表示計画.md §2)。オンデマンド表示の要:
+// クライアントは蓄積 state を持たず、URL の ?page=N だけで表示範囲が決まる。
+// 毎回先頭から引き直すので OFFSET 型の重複/欠落も起きない。
+// 個人規模 (数百〜数千件) では全件でも誤差 (docs/15 §2-2 と同じ判断)。
 export async function searchItems(
   query: string,
   page: number,
@@ -255,8 +261,14 @@ export async function searchItems(
   `
   const total = totalRows[0]?.count ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const safePage = Math.min(Math.max(1, page), pageCount)
-  const offset = (safePage - 1) * PAGE_SIZE
+  // floor が要る: ?page=1.5 のような値をそのまま掛けると LIMIT 30 になり、
+  // 半端な page が次ページの URL にも伝播する
+  const intPage = Math.floor(page)
+  const safePage = Math.min(
+    Math.max(1, Number.isFinite(intPage) ? intPage : 1),
+    pageCount,
+  )
+  const limit = safePage * PAGE_SIZE
 
   // 列は camelCase へ射影し既存の Item 型に合わせる (findMany と同じ形)。
   const items = await prisma.$queryRaw<Item[]>`
@@ -274,7 +286,7 @@ export async function searchItems(
     FROM items
     ${where}
     ${buildOrderBy(sort)}
-    LIMIT ${PAGE_SIZE} OFFSET ${offset}
+    LIMIT ${limit}
   `
 
   return { items, total, page: safePage, pageCount }

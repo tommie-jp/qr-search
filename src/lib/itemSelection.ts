@@ -5,9 +5,10 @@
 import { buildSearchUrl } from './searchUrl'
 import { isValidItemNo, parseSort } from './validation'
 
-// 1 回の一括操作で処理する最大アイテム数 (選択はページ内=最大 20 件だが、
-// 細工されたフォームに備えてループを有界にする)。
-const MAX_BULK_ITEMS = 100
+// 1 回の一括操作で処理する最大アイテム数。オンデマンド表示 (docs/33) で
+// 選択は読み込んだ全件に及ぶようになったため、全ノート規模 (数百〜数千)
+// を上限にする。細工されたフォームに備えてループを有界にする意図は同じ。
+const MAX_BULK_ITEMS = 5000
 
 // チェックされた itemNo を検証済み・重複なしで返す (フォームの並び順)。
 export function parseSelectedItemNos(formData: FormData): string[] {
