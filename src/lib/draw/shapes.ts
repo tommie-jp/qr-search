@@ -55,6 +55,20 @@ export function dragDistance(from: DrawPoint, to: DrawPoint): number {
   return Math.hypot(to.x - from.x, to.y - from.y)
 }
 
+// 線の**中心**がドラッグした矩形の上へ来るよう、左上を太さの半分だけ戻す。
+// fabric は left/top を「ストロークを含む見た目の箱」の角として扱うので、
+// そのまま渡すとストロークの外縁が角に来て、図形全体が太さの半分だけ
+// 内側 (右下) に寄る。ペン・矢印は線の中心がポインタに乗るため、
+// 図形も同じ意味に揃える
+export function strokeCenteredRect(rect: DragRect, strokeWidth: number): DragRect {
+  return {
+    left: rect.left - strokeWidth / 2,
+    top: rect.top - strokeWidth / 2,
+    width: rect.width,
+    height: rect.height,
+  }
+}
+
 export function arrowGeometry(
   from: DrawPoint,
   to: DrawPoint,

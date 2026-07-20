@@ -4,6 +4,7 @@ import {
   arrowPathData,
   dragDistance,
   normalizeDragRect,
+  strokeCenteredRect,
 } from './shapes'
 
 describe('normalizeDragRect', () => {
@@ -49,6 +50,25 @@ describe('dragDistance', () => {
   test('is zero when the pointer has not moved', () => {
     // Arrange & Act & Assert
     expect(dragDistance({ x: 7, y: 7 }, { x: 7, y: 7 })).toBe(0)
+  })
+})
+
+describe('strokeCenteredRect', () => {
+  test('pulls the top-left corner back by half the stroke', () => {
+    // Arrange & Act
+    const rect = strokeCenteredRect({ left: 100, top: 50, width: 200, height: 80 }, 24)
+
+    // Assert — 見た目の箱が [88, 38]〜[324, 154] となり、線の中心が
+    // ドラッグした [100, 50]〜[300, 130] にちょうど乗る
+    expect(rect).toEqual({ left: 88, top: 38, width: 200, height: 80 })
+  })
+
+  test('leaves the rect untouched when there is no stroke', () => {
+    // Arrange
+    const dragged = { left: 100, top: 50, width: 200, height: 80 }
+
+    // Act & Assert
+    expect(strokeCenteredRect(dragged, 0)).toEqual(dragged)
   })
 })
 

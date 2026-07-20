@@ -358,6 +358,10 @@ export function useDrawCanvas({
         const text = new fabric.IText("", {
           left: point.x,
           top: point.y,
+          // v7 の既定 origin は center (shapeTool の SHAPE_DEFAULTS 参照)。
+          // 押した所から右下へ書き始める、従来の文字の置かれ方にする
+          originX: "left",
+          originY: "top",
           fill: colorRef.current,
           fontFamily: FONT_FAMILY,
           fontSize: toCanvasUnits(
