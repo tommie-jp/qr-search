@@ -39,15 +39,27 @@ export function generateEmbeddingInBackground(
   bytes: Uint8Array,
   mime: string,
 ): void {
-  void (async () => {
-    const embedding = await computeEmbeddingBytes(bytes, mime)
-    if (!embedding) {
-      return
-    }
-    try {
-      await prisma.image.update({ where: { name }, data: { embedding } })
-    } catch (err) {
-      console.error(`埋め込みを保存できませんでした (name=${name})`, err)
-    }
-  })()
+  void generateEmbedding(name, bytes, mime)
+}
+
+// 上と同じことを「待てる」形で行う。**何があっても throw しない**のは同じ。
+//
+// 一括取り込み (scripts/importEnex.ts) 用。あちらは処理を終えると
+// prisma.$disconnect() してプロセスを畳むので、待たないと最後の数枚の
+// 埋め込みが切断と競合して黙って欠ける (画像検索から漏れるだけなので
+// 気づきにくい)。待つぶん遅くなるが、CLI は応答時間を気にする場所ではない。
+export async function generateEmbedding(
+  name: string,
+  bytes: Uint8Array,
+  mime: string,
+): Promise<void> {
+  const embedding = await computeEmbeddingBytes(bytes, mime)
+  if (!embedding) {
+    return
+  }
+  try {
+    await prisma.image.update({ where: { name }, data: { embedding } })
+  } catch (err) {
+    console.error(`埋め込みを保存できませんでした (name=${name})`, err)
+  }
 }

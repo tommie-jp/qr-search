@@ -9,7 +9,10 @@
 
 import { randomUUID } from 'node:crypto'
 import { prisma } from './db'
-import { generateEmbeddingInBackground } from './embedding/embedImageServer'
+import {
+  generateEmbedding,
+  generateEmbeddingInBackground,
+} from './embedding/embedImageServer'
 import { makeThumbnail } from './thumbnail'
 
 // 画像を保存し、本文から参照する URL を返す。
@@ -34,6 +37,13 @@ export interface SaveImageOptions {
   // null の行は scripts/backfillEmbeddings.ts が後から埋める設計になっている
   // (この関数がもともと生成失敗を握り潰しているのと同じ理由)。
   deferEmbedding?: boolean
+
+  // 埋め込みの生成を**待つ**。既定は待たない (応答を止めないため)。
+  //
+  // 一括取り込み (scripts/importEnex.ts) 用。CLI は処理を終えると
+  // prisma.$disconnect() してプロセスを畳むので、待たないと最後の数枚が
+  // 切断と競合して黙って欠ける。deferEmbedding が true のときは無関係
+  awaitEmbedding?: boolean
 }
 
 export async function saveImage(
@@ -51,7 +61,11 @@ export async function saveImage(
   // 初回はモデル読み込みで数秒かかるため応答を待たせない。生成できなければ
   // embedding は null のままで、scripts/backfillEmbeddings.ts が後から埋める。
   if (!options.deferEmbedding) {
-    generateEmbeddingInBackground(name, bytes, mime)
+    if (options.awaitEmbedding) {
+      await generateEmbedding(name, bytes, mime)
+    } else {
+      generateEmbeddingInBackground(name, bytes, mime)
+    }
   }
   return `/api/images/${name}`
 }

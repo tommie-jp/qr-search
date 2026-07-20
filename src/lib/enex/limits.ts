@@ -21,6 +21,20 @@
 // 絞り、エッジの防波堤を下げない (docs/28-エクスポート計画.md §4)。
 export const MAX_ENEX_BYTES = 10 * 1024 * 1024
 
+// CLI (scripts/importEnex.ts) で受け付ける添付 1 件の上限。
+//
+// Web の口が使う 10MB (uploads.ts の MAX_IMAGE_BYTES) は、エッジのボディ上限
+// 12MB に収まる大きさとして決めたもので、**DB に置ける大きさの上限ではない**。
+// ファイルから直接読む CLI は HTTP を通らないので、その制限を持ち込まない。
+//
+// iPhone の写真は 10MB を普通に超える (手元の書き出しでは 10 枚中 3 枚が
+// 11〜12MB)。ここで弾くと移行のたびに写真が虫食いになる。
+//
+// 縮小はしない。移行は一方通行なので、元の解像度を黙って落とすより
+// そのまま入れて、必要になってから間引くほうが取り返しがつく。
+// 青天井にしないのは、細工したファイルで巨大な行を作られないため
+export const MAX_CLI_ATTACHMENT_BYTES = 50 * 1024 * 1024
+
 export function enexTooLargeMessage(actualBytes: number): string {
   const actual = (actualBytes / 1024 / 1024).toFixed(1)
   const limit = MAX_ENEX_BYTES / 1024 / 1024

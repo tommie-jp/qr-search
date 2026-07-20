@@ -53,6 +53,13 @@ export interface ImportOptions {
   // 走るので、ここを true にして**その場で索引まで作ってしまう**のがよい。
   // 後で backfill を回す手間が消える。
   embedImages?: boolean
+
+  // 添付 1 件の上限 (既定: attachmentStore の 10MB)。
+  //
+  // Web の口は既定のまま。CLI は MAX_CLI_ATTACHMENT_BYTES を渡す —
+  // 10MB は HTTP アップロードの都合で決めた値で、ファイルから読む経路に
+  // 持ち込むと iPhone の写真が虫食いになる (limits.ts に理由)
+  maxAttachmentBytes?: number
 }
 
 export interface ImportReport {
@@ -226,6 +233,10 @@ async function storeResources(
     const deferEmbedding = !options.embedImages
     const stored = await storeAttachment(decodeResourceData(resource), {
       deferEmbedding,
+      // その場で作るなら**待つ**。CLI は取り込み後すぐ接続を畳むので、
+      // 待たないと最後の数枚が切断と競合して黙って欠ける
+      awaitEmbedding: !deferEmbedding,
+      maxBytes: options.maxAttachmentBytes,
     })
     if (!stored.ok) {
       report.skipped.push({

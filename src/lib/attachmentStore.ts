@@ -27,6 +27,22 @@ import {
 export const UNSUPPORTED_ATTACHMENT_MESSAGE =
   '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, PDF: pdf)'
 
+export interface StoreAttachmentOptions extends SaveImageOptions {
+  // 1 件あたりの上限 (既定: MAX_IMAGE_BYTES = 10MB)。
+  //
+  // 既定値は **HTTP でアップロードする経路の都合**で決まっている — エッジ
+  // (Caddyfile / deploy/nginx) のボディ上限 12MB に収まる大きさ。DB に
+  // 置ける大きさの上限ではない。
+  //
+  // ファイルから直接読む一括取り込み (scripts/importEnex.ts) は HTTP を
+  // 通らないので、この制限を課す理由がない。実際、iPhone の写真は 10MB を
+  // 普通に超える (手元の書き出しでは 10 枚中 3 枚が 11〜12MB)。
+  //
+  // 判定は**変換前のバイト列**に対して行う点に注意。HEIC は保存時に WebP へ
+  // 縮むが、その前にここで弾かれる
+  maxBytes?: number
+}
+
 export type AttachmentResult =
   | {
       ok: true
@@ -46,11 +62,11 @@ export type AttachmentResult =
 export async function storeAttachment(
   // Prisma の Bytes は ArrayBuffer 実体の Uint8Array だけを受ける
   bytes: Uint8Array<ArrayBuffer>,
-  // 画像のときだけ効く (音声・PDF は元々埋め込みを作らない)
-  options: SaveImageOptions = {},
+  options: StoreAttachmentOptions = {},
 ): Promise<AttachmentResult> {
-  if (bytes.byteLength > MAX_IMAGE_BYTES) {
-    return { ok: false, reason: tooLargeMessage() }
+  const maxBytes = options.maxBytes ?? MAX_IMAGE_BYTES
+  if (bytes.byteLength > maxBytes) {
+    return { ok: false, reason: tooLargeMessage(maxBytes) }
   }
 
   // まず画像として判定し、外れたら音声 (mp3/m4a/wav/webm)、PDF の順に試す

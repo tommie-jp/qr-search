@@ -29,8 +29,8 @@ import readline from 'node:readline/promises'
 import { prisma } from '@/lib/db'
 import { enmlRejectReason } from '@/lib/enex/enmlToMarkdown'
 import { type ImportReport, importEnex } from '@/lib/enex/importEnex'
-import { MAX_ENEX_BYTES } from '@/lib/enex/limits'
-import { parseEnex } from '@/lib/enex/parseEnex'
+import { MAX_CLI_ATTACHMENT_BYTES, MAX_ENEX_BYTES } from '@/lib/enex/limits'
+import { decodeResourceData, parseEnex } from '@/lib/enex/parseEnex'
 
 interface Args {
   file: string
@@ -101,6 +101,7 @@ function check(xml: string): void {
 
   let resources = 0
   let rejected = 0
+  let bytes = 0
   const problems: string[] = []
   for (const note of notes) {
     resources += note.resources.length
@@ -108,13 +109,27 @@ function check(xml: string): void {
     for (const bad of note.rejectedResources) {
       problems.push(`  添付が読めない: ${bad.fileName ?? bad.mime} (${bad.reason})`)
     }
+    // 大きすぎる添付は取り込み時に落ちる。**下見で判るなら先に言う** —
+    // 取り込んでから「本文には跡だけ残った」と知るのでは遅い
+    for (const resource of note.resources) {
+      const size = decodeResourceData(resource).byteLength
+      bytes += size
+      if (size > MAX_CLI_ATTACHMENT_BYTES) {
+        problems.push(
+          `  添付が大きすぎる: ${resource.fileName ?? resource.mime} ` +
+            `(${mb(size)} / 上限 ${mb(MAX_CLI_ATTACHMENT_BYTES)})`,
+        )
+      }
+    }
     const reason = enmlRejectReason(note.content)
     if (reason !== null) {
       problems.push(`  本文を変換できない: ${note.title || '(無題)'} — ${reason}`)
     }
   }
 
-  console.log(`添付: ${resources} 件 (読めないもの ${rejected} 件)`)
+  console.log(
+    `添付: ${resources} 件 / 計 ${mb(bytes)} (読めないもの ${rejected} 件)`,
+  )
   if (problems.length === 0) {
     console.log('取り込めなさそうなものは見当たらない')
     return
@@ -186,7 +201,12 @@ async function main(): Promise<void> {
   }
 
   const started = Date.now()
-  const report = await importEnex(xml, { embedImages: args.embed })
+  const report = await importEnex(xml, {
+    embedImages: args.embed,
+    // Web の口の 10MB は HTTP アップロードの都合。ファイルから読むここでは
+    // 持ち込まない (iPhone の写真は普通に超える。limits.ts に理由)
+    maxAttachmentBytes: MAX_CLI_ATTACHMENT_BYTES,
+  })
   console.log(`\n所要 ${((Date.now() - started) / 1000).toFixed(1)} 秒`)
   printReport(report)
 

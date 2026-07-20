@@ -279,10 +279,48 @@ test('画像の埋め込みは作らず、その枚数を返す', async () => {
     ),
   )
 
-  expect(storeAttachment).toHaveBeenCalledWith(expect.anything(), {
-    deferEmbedding: true,
-  })
+  expect(storeAttachment).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ deferEmbedding: true }),
+  )
   expect(report.deferredImageIndex).toBe(1)
+})
+
+// ローカルからの一括取り込みはメモリに余裕があるので、その場で索引まで作る。
+// **待つ**のが要点 — CLI は取り込み後すぐ接続を畳むので、待たないと
+// 最後の数枚の埋め込みが切断と競合して黙って欠ける
+test('embedImages を立てると埋め込みを作って待つ', async () => {
+  const report = await importEnex(
+    enex(
+      note(`<title>題名</title><content>${enml('<div>本文</div>')}</content>
+        <resource><data encoding="base64">${PNG_BASE64}</data><mime>image/png</mime></resource>`),
+    ),
+    { embedImages: true },
+  )
+
+  expect(storeAttachment).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ deferEmbedding: false, awaitEmbedding: true }),
+  )
+  // その場で作ったので「後回しにした枚数」には数えない
+  expect(report.deferredImageIndex).toBe(0)
+})
+
+// 10MB は HTTP アップロードの都合で決めた値。ファイルから読む CLI には
+// 持ち込まない (iPhone の写真は普通に超える)
+test('添付 1 件の上限を呼び出し側から渡せる', async () => {
+  await importEnex(
+    enex(
+      note(`<title>題名</title><content>${enml('<div>本文</div>')}</content>
+        <resource><data encoding="base64">${PNG_BASE64}</data><mime>image/png</mime></resource>`),
+    ),
+    { maxAttachmentBytes: 50 * 1024 * 1024 },
+  )
+
+  expect(storeAttachment).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ maxBytes: 50 * 1024 * 1024 }),
+  )
 })
 
 test('画像でない添付は枚数に数えない', async () => {
