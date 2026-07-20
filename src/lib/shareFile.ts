@@ -27,6 +27,27 @@ export function canShareFiles(nav: Navigator = navigator): boolean {
   }
 }
 
+// タッチが主入力の端末か (スマホ・タブレット)。SSR では判定できないので false。
+//
+// 共有ボタンは **API が使えるかではなく、要るか**で出し分ける。マウス主体の
+// PC はプレイヤーの ⋮ メニューや右クリックでダウンロードでき、共有ボタンは
+// 冗長 (しかも Windows の share ダイアログは挙動が不安定)。共有が唯一の出口
+// なのはタッチ端末 — 特に iOS には長押しもダウンロードも無い (docs/12)。
+// UA 判定は使わず、メディアクエリで判る事実だけで決める (displayMode と同じ流儀)。
+export function isCoarsePointer(win?: Window): boolean {
+  const w = win ?? (typeof window === 'undefined' ? undefined : window)
+  if (!w || typeof w.matchMedia !== 'function') {
+    return false
+  }
+  return w.matchMedia('(pointer: coarse)').matches
+}
+
+// 共有ボタンを出してよいか = ファイル共有 API が使え、かつタッチ端末。
+// 音声プレイヤーと PDF ビューアの両方がこの 1 本を見る。
+export function shouldOfferShare(): boolean {
+  return canShareFiles() && isCoarsePointer()
+}
+
 // 共有シートに出すファイル名を作る。
 //
 // 保存名 (URL 末尾) は `<UUID>.<ext>` で、UUID のままでは共有先で何のファイルか

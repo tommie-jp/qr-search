@@ -3,10 +3,10 @@
 import { useRef, useState, useSyncExternalStore } from "react";
 import {
   attachmentShareName,
-  canShareFiles,
   isShareAborted,
   isShareActivationLost,
   shareFile,
+  shouldOfferShare,
 } from "@/lib/shareFile";
 import { SECONDARY_BUTTON_CLASS } from "../ui";
 
@@ -41,11 +41,11 @@ interface AudioBytes {
 //   3. 先読みが間に合わず fetch を挟んで弾かれたら「もう一度」に変える。
 //      バイト列は取れているので、2 回目は通信なし = 操作直後のまま送れる。
 export function AudioPlayer({ src, label }: AudioPlayerProps) {
-  // ファイル共有に対応する環境でだけボタンを出す (displayMode と同じ「判るまで
-  // 出さない」流儀)。share があってもファイルを受けない環境があるので canShare で見る
+  // 共有が「唯一の出口」であるタッチ端末でだけボタンを出す (shouldOfferShare)。
+  // マウス主体の PC は ⋮ メニュー・右クリックでダウンロードでき、共有は冗長
   const canShare = useSyncExternalStore(
     () => () => {},
-    () => canShareFiles(),
+    () => shouldOfferShare(),
     () => false,
   );
 

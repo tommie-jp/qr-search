@@ -14,7 +14,7 @@ import {
   type PdfDocumentHandle,
 } from "./pdfService";
 import { isStandaloneDisplay, subscribeDisplayMode } from "@/lib/displayMode";
-import { canShareFiles, isShareAborted, shareFile } from "@/lib/shareFile";
+import { isShareAborted, shareFile, shouldOfferShare } from "@/lib/shareFile";
 import { BUSY_SPINNER_CLASS, SECONDARY_BUTTON_CLASS } from "../ui";
 
 // ページを先読みする距離。スクロールで現れる直前に描き始めることで、
@@ -155,13 +155,13 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
     () => false,
   );
 
-  // 共有シートへの導線。**機能があると判るまで出さない** (displayMode と同じ流儀)。
-  // 判定はブラウザの対応可否で行う — standalone かどうかではない。
-  // 対応していない環境 (デスクトップ Linux Chrome など) では自然に消える
+  // 共有シートへの導線。共有が「唯一の出口」であるタッチ端末でだけ出す
+  // (shouldOfferShare)。マウス主体の PC は「新しいタブ」からネイティブビューアで
+  // ダウンロードでき、共有は冗長 (Windows の share ダイアログは挙動も不安定)
   const canShare = useSyncExternalStore(
     // 対応可否は実行中に変わらないので購読しない
     () => () => {},
-    () => canShareFiles(),
+    () => shouldOfferShare(),
     () => false,
   );
 
