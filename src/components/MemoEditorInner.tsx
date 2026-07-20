@@ -69,11 +69,14 @@ const ACCEPTED_AUDIO_TYPES =
 // 本文にはリンクだけを出す
 const ACCEPTED_PDF_TYPES = "application/pdf,.pdf";
 
-// テキスト系 (docs/12-添付ファイル種類拡張メモ.md)。**拡張子だけを並べる** —
-// サーバが受ける条件が「名前が txt/csv/md であること + 中身がテキストとして
-// 読めること」なので、text/plain で広げると README のような拡張子なしの
-// ファイルを選べてしまい、選んだのに挿入されない形になる
-const ACCEPTED_TEXT_TYPES = ".txt,.csv,.md";
+// テキスト系 (docs/12-添付ファイル種類拡張メモ.md)。**MIME も併記する** —
+// iOS の file picker は accept の各項目を UTI に変換して照合し、`.md` には
+// iOS 標準の UTI が無いため、拡張子だけだと Evernote 等から渡る .md が
+// どれにも一致せずグレーアウトする。`text/plain` (= public.plain-text) を
+// 足すと、plain-text 系として型付けされた .md が選べるようになる。
+// これで拡張子なしのテキストも選べてしまうが、対象外は reportIgnored と
+// サーバの拒否メッセージがちゃんと知らせるので無反応にはならない
+const ACCEPTED_TEXT_TYPES = "text/plain,text/csv,text/markdown,.txt,.csv,.md";
 
 const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${ACCEPTED_PDF_TYPES},${ACCEPTED_TEXT_TYPES}`;
 
