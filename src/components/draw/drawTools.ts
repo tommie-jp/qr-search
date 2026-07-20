@@ -5,6 +5,7 @@
 
 export type DrawTool =
   | "pen"
+  | "marker"
   | "eraser"
   | "arrow"
   | "rect"
