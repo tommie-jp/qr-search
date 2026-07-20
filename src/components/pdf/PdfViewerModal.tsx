@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   isRenderCancelled,
   loadPdfDocument,
   type PdfDocumentHandle,
 } from "./pdfService";
+import { isStandaloneDisplay, subscribeDisplayMode } from "@/lib/displayMode";
 import { BUSY_SPINNER_CLASS, SECONDARY_BUTTON_CLASS } from "../ui";
 
 // ページを先読みする距離。スクロールで現れる直前に描き始めることで、
@@ -110,6 +117,17 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
   const [pageWidth, setPageWidth] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // 「新しいタブ」を出してよいか。**ブラウザだと判るまで出さない**。
+  // ホーム画面起動 (standalone) では target="_blank" が効かず、同じ webview が
+  // PDF へ遷移して戻れなくなる — このビューアで直したはずの不具合に、
+  // ヘッダの導線から逆戻りしてしまう (displayMode.ts に経緯)。
+  // サーバ側スナップショットは false (= 出さない) にして、判るまで導線を作らない
+  const canOpenNewTab = useSyncExternalStore(
+    subscribeDisplayMode,
+    () => !isStandaloneDisplay(),
+    () => false,
+  );
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -192,15 +210,17 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
       <div className="flex items-center gap-3 bg-white px-3 py-2 text-sm">
         <span className="min-w-0 flex-1 truncate font-bold">{label}</span>
         {/* 逃げ道: ブラウザ起動なら内蔵ビューアの方が快適なこともある。
-            standalone では同じ webview で開いてしまうので既定にはしない */}
-        <a
-          href={url}
-          rel="noreferrer"
-          target="_blank"
-          className="shrink-0 text-blue-700 underline"
-        >
-          新しいタブ
-        </a>
+            standalone では戻れなくなるので**出さない** (canOpenNewTab) */}
+        {canOpenNewTab && (
+          <a
+            href={url}
+            rel="noreferrer"
+            target="_blank"
+            className="shrink-0 text-blue-700 underline"
+          >
+            新しいタブ
+          </a>
+        )}
         <button
           type="button"
           onClick={onClose}
