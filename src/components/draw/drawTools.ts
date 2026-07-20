@@ -12,5 +12,6 @@ export type DrawTool =
   | "rect"
   | "ellipse"
   | "mosaic"
+  | "pan"
   | "select"
   | "text";

@@ -95,6 +95,8 @@ interface UseDrawCanvasParams {
   // 測る前 (0) や画面の回転にも追従する
   availableWidth: number;
   availableHeight: number;
+  // 「手」道具での拡大率 (1 = 全体が収まる大きさ)。docs/36 §4
+  zoom: number;
   // fabric を載せる canvas 要素
   canvasElRef: React.RefObject<HTMLCanvasElement | null>;
   // 白紙のときの器の縦横比を決めるために測る、canvas を置く枠。
@@ -124,6 +126,7 @@ export function useDrawCanvas({
   backgroundUrl,
   availableWidth,
   availableHeight,
+  zoom,
   canvasElRef,
   containerRef,
 }: UseDrawCanvasParams): DrawCanvasApi {
@@ -140,7 +143,7 @@ export function useDrawCanvas({
 
   // 論理サイズを表示領域に収める倍率。canvas 全体が見えていないと
   // 描いた端が確かめられないので、幅と高さの両方を満たす方に合わせる
-  const displayScale =
+  const fitScale =
     size && availableWidth > 0 && availableHeight > 0
       ? Math.min(
           availableWidth / size.width,
@@ -148,6 +151,10 @@ export function useDrawCanvas({
           MAX_DISPLAY_SCALE,
         )
       : 1;
+  // 拡大中も太さ・文字の大きさは**画面上の見た目を保つ**ため、この倍率で割る。
+  // 論理 px としては細くなるが、「拡大して細部を描き込む」用途では望みの
+  // 挙動そのもの (docs/36 §4-2)
+  const displayScale = fitScale * zoom;
   const [isPreparing, setIsPreparing] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });

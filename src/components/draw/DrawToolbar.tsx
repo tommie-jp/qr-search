@@ -18,7 +18,30 @@ const TOOLS: ReadonlyArray<{ id: DrawTool; label: string }> = [
   { id: "eraser", label: "消しゴム" },
   { id: "select", label: "選択" },
   { id: "text", label: "文字" },
+  { id: "pan", label: "移動" },
 ];
+
+// 太さが効かない道具では、選択肢を出しても迷わせるだけなので伏せる
+const WIDTH_TOOLS: ReadonlySet<DrawTool> = new Set<DrawTool>([
+  "pen",
+  "marker",
+  "eraser",
+  "arrow",
+  "rect",
+  "ellipse",
+  "text",
+]);
+
+// 色が効かない道具 (消す・隠す・動かす・選ぶ) も同じ
+const COLOR_TOOLS: ReadonlySet<DrawTool> = new Set<DrawTool>([
+  "pen",
+  "marker",
+  "fill",
+  "arrow",
+  "rect",
+  "ellipse",
+  "text",
+]);
 
 // 44px 四方を確保する (指で狙う場所なので詰めない)。
 // 選んでいる道具は青、それ以外は白抜き — 別々のクラスにして、
@@ -42,6 +65,12 @@ interface DrawToolbarProps {
   onRedo: () => void;
   onClear: () => void;
   disabled: boolean;
+  zoom: number;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
 }
 
 export function DrawToolbar({
@@ -57,6 +86,12 @@ export function DrawToolbar({
   onRedo,
   onClear,
   disabled,
+  zoom,
+  canZoomIn,
+  canZoomOut,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
 }: DrawToolbarProps) {
   return (
     <div className="flex items-center gap-2 overflow-x-auto px-3 py-2 text-sm">
@@ -76,7 +111,7 @@ export function DrawToolbar({
         type="color"
         value={color}
         onChange={(event) => onColor(event.target.value)}
-        disabled={disabled}
+        disabled={disabled || !COLOR_TOOLS.has(tool)}
         aria-label="色"
         title="色"
         className="size-11 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
@@ -84,7 +119,7 @@ export function DrawToolbar({
       <select
         value={width}
         onChange={(event) => onWidth(Number(event.target.value))}
-        disabled={disabled}
+        disabled={disabled || !WIDTH_TOOLS.has(tool)}
         aria-label="太さ"
         title="太さ"
         className={`${BUTTON_OFF} appearance-none`}
@@ -118,6 +153,38 @@ export function DrawToolbar({
         className={BUTTON_DANGER}
       >
         全消し
+      </button>
+      {/* 拡大は「移動」道具でのピンチでも変えられる。ボタンは指の無い
+          環境と、倍率を戻す手立てのために置く (docs/36 §4) */}
+      <button
+        type="button"
+        onClick={onZoomOut}
+        disabled={disabled || !canZoomOut}
+        aria-label="縮小"
+        title="縮小"
+        className={BUTTON_OFF}
+      >
+        −
+      </button>
+      <button
+        type="button"
+        onClick={onZoomReset}
+        disabled={disabled || zoom === 1}
+        aria-label="全体を表示"
+        title="全体を表示"
+        className={BUTTON_OFF}
+      >
+        {Math.round(zoom * 100)}%
+      </button>
+      <button
+        type="button"
+        onClick={onZoomIn}
+        disabled={disabled || !canZoomIn}
+        aria-label="拡大"
+        title="拡大"
+        className={BUTTON_OFF}
+      >
+        ＋
       </button>
     </div>
   );

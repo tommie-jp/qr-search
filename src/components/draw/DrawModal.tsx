@@ -20,6 +20,7 @@ import { BUSY_NOTICE_CLASS, BUSY_SPINNER_CLASS } from "@/components/ui";
 import type { DrawTool } from "./drawTools";
 import { DrawToolbar } from "./DrawToolbar";
 import { useDrawCanvas } from "./useDrawCanvas";
+import { useStageGestures } from "./useStageGestures";
 
 const BAR_BUTTON_CLASS =
   "inline-flex min-h-11 shrink-0 items-center justify-center rounded px-3 font-medium text-white transition active:scale-95 disabled:opacity-40 disabled:active:scale-100";
@@ -46,6 +47,10 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // 拡大と移動。ジェスチャを受けるのは「手」道具のときだけで、
+  // 描く道具との取り合いが起きないようにしている (docs/36 §4)
+  const gestures = useStageGestures({ stageRef, enabled: tool === "pan" });
+
   const {
     size,
     displayScale,
@@ -65,6 +70,7 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     backgroundUrl: useBackground ? sourceImageUrl : null,
     availableWidth: area.width,
     availableHeight: area.height,
+    zoom: gestures.zoom,
     canvasElRef,
     containerRef: stageRef,
   });
@@ -177,11 +183,16 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
 
       <div
         ref={stageRef}
-        className="relative flex flex-1 items-center justify-center overflow-hidden px-2"
+        // 拡大するとはみ出すのでスクロールで送る。中央寄せに
+        // justify-center を使うと、はみ出した側が掴めなくなるため m-auto にする
+        className={`relative flex flex-1 overflow-auto overscroll-contain px-2 ${
+          tool === "pan" ? "cursor-grab touch-none" : ""
+        }`}
       >
         {/* 縮めた後の見た目の大きさを持つ枠。これが無いと、transform は
             レイアウトを変えないので中央揃えが原寸基準になってずれる */}
         <div
+          className="m-auto"
           style={
             size
               ? {
@@ -233,6 +244,12 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
         onRedo={redo}
         onClear={clear}
         disabled={isBusy}
+        zoom={gestures.zoom}
+        canZoomIn={gestures.canZoomIn}
+        canZoomOut={gestures.canZoomOut}
+        onZoomIn={() => gestures.zoomBy(gestures.zoomStep)}
+        onZoomOut={() => gestures.zoomBy(1 / gestures.zoomStep)}
+        onZoomReset={gestures.resetZoom}
       />
 
       <div className="flex items-center gap-3 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
