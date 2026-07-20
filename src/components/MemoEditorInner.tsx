@@ -5,6 +5,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recordingAltText } from "@/lib/audio/audioRecorder";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
@@ -31,6 +32,13 @@ import {
   SECONDARY_BUTTON_CLASS,
 } from "./ui";
 import { useAudioRecording } from "./useAudioRecording";
+
+// fabric 一式は重いので、お絵かきを開くまで読み込まない
+// (CodeMirror を遅延させているのと同じ流儀。MemoEditor.tsx 参照)
+const DrawModal = dynamic(() => import("./draw/DrawModal"), {
+  ssr: false,
+  loading: () => null,
+});
 
 export interface MemoEditorInnerProps {
   value: string;
@@ -160,6 +168,18 @@ const BASIC_SETUP = {
 let uploadSeq = 0;
 let ocrSeq = 0;
 
+interface InsertFilesOptions {
+  // 音声の画像記法に入れる alt。録音は日時を残したいので上書きする
+  // (ファイル選択・ペースト由来の音声は既定の "audio" のまま)
+  audioAlt?: string;
+  // 画像の alt。お絵かきは「いつ描いたか」を残して全文検索から引けるようにする
+  // (ファイル選択・ペースト由来の画像は既定の空のまま)
+  imageAlt?: string;
+  // 挿入した画像を続けて OCR するか。お絵かきは自分で描いたものなので読まない
+  // (要るときは「後から OCR」ボタンで読ませられる)
+  ocr?: boolean;
+}
+
 // markdown 用 CodeMirror エディタ本体 (制御コンポーネント)。
 // 画像はペースト / ドラッグ&ドロップ / 画像ボタンで /api/images へアップロードし、
 // カーソル位置に ![](url) を挿入する
@@ -187,6 +207,11 @@ export default function MemoEditorInner({
   // undo / redo ボタンの活殺 (docs/11-アプリ的UIUX計画.md §2-4)。
   // 履歴自体は basicSetup が既定で持っている (Ctrl+Z も従来どおり効く)
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
+  // お絵かき画面。null なら閉じている。開くときにカーソルの近くの画像を控え、
+  // 下敷きの候補として渡す (docs/34-お絵かき計画.md §2)
+  const [drawing, setDrawing] = useState<{ sourceImageUrl: string | null } | null>(
+    null,
+  );
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -223,7 +248,9 @@ export default function MemoEditorInner({
       if (!view) {
         return;
       }
-      await insertFiles(view, [result.file], recordingAltText(result.recordedAt));
+      await insertFiles(view, [result.file], {
+        audioAlt: recordingAltText(result.recordedAt),
+      });
     },
     onError: setError,
   });
@@ -296,13 +323,12 @@ export default function MemoEditorInner({
     }
   };
 
-  // audioAlt: 音声の画像記法に入れる alt。録音は日時を残したいので上書きする
-  // (ファイル選択・ペースト由来の音声は既定の "audio" のまま)
   const insertFiles = async (
     view: EditorView,
     files: File[],
-    audioAlt = "audio",
+    options: InsertFilesOptions = {},
   ) => {
+    const { audioAlt = "audio", imageAlt = "", ocr = true } = options;
     setError(null);
     try {
       for (const [index, file] of files.entries()) {
@@ -326,10 +352,10 @@ export default function MemoEditorInner({
             ? `![${audioAlt}](${url})`
             : isPdf
               ? `![${pdfAltText(file.name)}](${url})`
-              : `![](${url})`;
+              : `![${imageAlt}](${url})`;
           replaceToken(view, token, markup);
-          if (isAudio || isPdf) {
-            continue; // 画像でないものは OCR しない
+          if (isAudio || isPdf || !ocr) {
+            continue; // 画像でないもの・OCR を頼まれていないものは読まない
           }
           // 挿入した画像を OCR し、直後に引用ブロックを差し込む。
           // アップロードの流れは止めない (url は UUID で一意なので位置を引ける)。
@@ -435,6 +461,34 @@ export default function MemoEditorInner({
     }
   };
 
+  // 「お絵かき」: カーソルの近くに自前画像があればそれを下敷きにして開く。
+  // 「後から OCR」と同じ探し方 (imageAtCursor) なので、画像の上で押せば
+  // その画像に描ける。下敷きが要らなければお絵かき画面で白紙に切り替えられる
+  const openDrawing = () => {
+    const view = editorRef.current?.view;
+    if (!view) {
+      return;
+    }
+    setError(null);
+    const hit = imageAtCursor(
+      view.state.doc.toString(),
+      view.state.selection.main.head,
+    );
+    setDrawing({ sourceImageUrl: hit?.url ?? null });
+  };
+
+  // 描いたものは 1 枚の画像として、ファイル選択と同じ挿入経路に流す。
+  // 元にした画像は書き換えない (描いたものは別の画像として増える)
+  const insertDrawing = (file: File, alt: string) => {
+    setDrawing(null);
+    const view = editorRef.current?.view;
+    if (!view) {
+      return;
+    }
+    view.focus();
+    void insertFiles(view, [file], { imageAlt: alt, ocr: false });
+  };
+
   // 履歴の深さが変わったときだけボタンの活殺を更新する。
   // onUpdate はカーソル移動でも呼ばれるので、同じ値なら前の state を
   // 返して再レンダリングを止める。
@@ -522,6 +576,14 @@ export default function MemoEditorInner({
         </button>
         <button
           type="button"
+          onClick={openDrawing}
+          disabled={busy}
+          className={SECONDARY_BUTTON_CLASS}
+        >
+          お絵かき
+        </button>
+        <button
+          type="button"
           onClick={() => void runOcrAtCursor()}
           disabled={busy}
           className={SECONDARY_BUTTON_CLASS}
@@ -575,6 +637,13 @@ export default function MemoEditorInner({
         hidden
         onChange={(e) => handleFilePick(e.target.files)}
       />
+      {drawing && (
+        <DrawModal
+          sourceImageUrl={drawing.sourceImageUrl}
+          onCancel={() => setDrawing(null)}
+          onInsert={insertDrawing}
+        />
+      )}
     </div>
   );
 }
