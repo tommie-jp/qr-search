@@ -34,6 +34,7 @@ interface DrawModalProps {
 
 export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   // 近くに画像があればそれを下敷きにして開く。要らなければ「白紙にする」で外せる
   const [useBackground, setUseBackground] = useState(sourceImageUrl !== null);
@@ -49,7 +50,11 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
 
   // 拡大と移動。ジェスチャを受けるのは「手」道具のときだけで、
   // 描く道具との取り合いが起きないようにしている (docs/36 §4)
-  const gestures = useStageGestures({ stageRef, enabled: tool === "pan" });
+  const gestures = useStageGestures({
+    stageRef,
+    contentRef,
+    enabled: tool === "pan",
+  });
 
   const {
     size,
@@ -90,6 +95,25 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     });
     observer.observe(element);
     return () => observer.disconnect();
+  }, []);
+
+  // **枠のスクロール量は常に 0 に保つ**。overflow: hidden でも、中の要素に
+  // 焦点が移るとブラウザは「見える位置まで送る」ためにスクロールさせる
+  // (文字道具は fabric の隠し textarea に焦点を当てる)。ここが 0 でなくなると
+  // fabric の座標がその分ずれる (docs/36 §4-3)
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      return;
+    }
+    const reset = () => {
+      if (stage.scrollLeft !== 0 || stage.scrollTop !== 0) {
+        stage.scrollLeft = 0;
+        stage.scrollTop = 0;
+      }
+    };
+    stage.addEventListener("scroll", reset);
+    return () => stage.removeEventListener("scroll", reset);
   }, []);
 
   const requestClose = () => {
@@ -152,6 +176,16 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
 
   const isBusy = isPreparing || isSaving;
 
+  // 中身の置き場所。枠に収まるうちは中央に置き、はみ出したら送った分だけ
+  // 左・上へずらす (スクロールの代わり。docs/36 §4-3)
+  const content = size
+    ? { width: size.width * displayScale, height: size.height * displayScale }
+    : { width: 0, height: 0 };
+  const offset = {
+    x: Math.max(0, (area.width - content.width) / 2) - gestures.pan.left,
+    y: Math.max(0, (area.height - content.height) / 2) - gestures.pan.top,
+  };
+
   return createPortal(
     <div
       role="dialog"
@@ -183,21 +217,24 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
 
       <div
         ref={stageRef}
-        // 拡大するとはみ出すのでスクロールで送る。中央寄せに
-        // justify-center を使うと、はみ出した側が掴めなくなるため m-auto にする
-        className={`relative flex flex-1 overflow-auto overscroll-contain px-2 ${
+        // **スクロールさせない**。canvas の上にスクロールできる親があると、
+        // 指が canvas の外へ出た瞬間に fabric の座標がスクロール量ぶん飛ぶ
+        // (docs/36 §4-3)。送りは中身の transform で行う
+        className={`relative flex-1 overflow-hidden px-2 ${
           tool === "pan" ? "cursor-grab touch-none" : ""
         }`}
       >
         {/* 縮めた後の見た目の大きさを持つ枠。これが無いと、transform は
-            レイアウトを変えないので中央揃えが原寸基準になってずれる */}
+            レイアウトを変えないので中身の位置を測れない */}
         <div
-          className="m-auto"
+          ref={contentRef}
           style={
             size
               ? {
                   width: size.width * displayScale,
                   height: size.height * displayScale,
+                  // 収まっているうちは中央に、はみ出したら送った分だけずらす
+                  transform: `translate(${offset.x}px, ${offset.y}px)`,
                 }
               : undefined
           }

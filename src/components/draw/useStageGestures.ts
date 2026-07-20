@@ -1,35 +1,43 @@
 "use client";
 
-// 拡大と移動 (docs/36-お絵かき拡張計画.md §4)。
+// 拡大と送り (docs/36-お絵かき拡張計画.md §4)。
 //
-// **「手」道具のときだけ**ジェスチャを受ける。描く道具と同時に有効にすると
+// **「移動」道具のときだけ**ジェスチャを受ける。描く道具と同時に有効にすると
 // 「1 本指は描画、2 本指は拡大」の振り分けが要り、2 本目の指が着いた瞬間に
 // 描きかけのストロークを捨てる処理 (fabric の内部状態に手を入れる) まで
 // 必要になる。道具で分ければその難所がまるごと消える。
 //
-// 拡大は CSS の表示倍率で行う (zoom.ts の冒頭を参照)。はみ出した分は枠の
-// スクロールで送るので、パンは scrollLeft / scrollTop を動かすだけで済む。
+// 送りは **transform であって scroll ではない**。スクロールできる親を canvas の
+// 上に置くと、指が canvas の外へ出た瞬間に座標がスクロール量ぶん飛ぶ
+// (zoom.ts の冒頭を参照)。
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
+  clampPan,
   clampZoom,
+  type PanOffset,
+  panForZoom,
   pinchCenter,
   pinchSpan,
-  type ScrollOffset,
-  scrollForZoom,
 } from "@/lib/draw/zoom";
 
 // +/- ボタン 1 回ぶんの倍率
 const ZOOM_STEP = 1.5;
 
+const NO_PAN: PanOffset = { left: 0, top: 0 };
+
 interface UseStageGesturesParams {
+  // ジェスチャを受ける枠 (canvas を囲む見えている範囲)
   stageRef: React.RefObject<HTMLElement | null>;
-  // 「手」道具を選んでいるか
+  // 拡大した中身そのもの。送りの上限を測るのに使う
+  contentRef: React.RefObject<HTMLElement | null>;
+  // 「移動」道具を選んでいるか
   enabled: boolean;
 }
 
 export interface StageGestures {
   zoom: number;
+  pan: PanOffset;
   zoomBy: (factor: number) => void;
   resetZoom: () => void;
   canZoomIn: boolean;
@@ -39,23 +47,41 @@ export interface StageGestures {
 
 export function useStageGestures({
   stageRef,
+  contentRef,
   enabled,
 }: UseStageGesturesParams): StageGestures {
   const [zoom, setZoom] = useState(1);
-  // 倍率を変えると中身の大きさが変わる。先にスクロールを書いても、まだ
-  // 小さいままの中身に合わせて丸められてしまうので、描画の後に当てる
-  const pendingScrollRef = useRef<ScrollOffset | null>(null);
+  const [pan, setPan] = useState<PanOffset>(NO_PAN);
 
-  useLayoutEffect(() => {
-    const stage = stageRef.current;
-    const pending = pendingScrollRef.current;
-    if (!stage || !pending) {
-      return;
-    }
-    stage.scrollLeft = pending.left;
-    stage.scrollTop = pending.top;
-    pendingScrollRef.current = null;
-  }, [zoom, stageRef]);
+  // 送りの上限は「拡大後の中身 − 枠」。中身は倍率を変えた後の寸法で測りたいが、
+  // 変えた直後はまだ描き直されていないので、倍率の比から見込みで出す
+  const limitFor = useCallback(
+    (nextZoom: number, currentZoom: number) => {
+      const stage = stageRef.current;
+      const content = contentRef.current;
+      if (!stage || !content) {
+        return null;
+      }
+      const box = content.getBoundingClientRect();
+      const ratio = currentZoom > 0 ? nextZoom / currentZoom : 1;
+      return {
+        content: { width: box.width * ratio, height: box.height * ratio },
+        view: { width: stage.clientWidth, height: stage.clientHeight },
+      };
+    },
+    [stageRef, contentRef],
+  );
+
+  const applyZoom = useCallback(
+    (nextZoom: number, pointer: { x: number; y: number }, fromZoom: number, fromPan: PanOffset) => {
+      const next = clampZoom(nextZoom);
+      const moved = panForZoom({ pan: fromPan, pointer, from: fromZoom, to: next });
+      const limit = limitFor(next, fromZoom);
+      setZoom(next);
+      setPan(limit ? clampPan(moved, limit.content, limit.view) : moved);
+    },
+    [limitFor],
+  );
 
   // 枠の中心を軸に拡大する (ボタン用)
   const zoomBy = useCallback(
@@ -64,26 +90,22 @@ export function useStageGestures({
       if (!stage) {
         return;
       }
-      setZoom((current) => {
-        const next = clampZoom(current * factor);
-        pendingScrollRef.current = scrollForZoom({
-          scroll: { left: stage.scrollLeft, top: stage.scrollTop },
-          pointer: { x: stage.clientWidth / 2, y: stage.clientHeight / 2 },
-          from: current,
-          to: next,
-        });
-        return next;
-      });
+      applyZoom(
+        zoom * factor,
+        { x: stage.clientWidth / 2, y: stage.clientHeight / 2 },
+        zoom,
+        pan,
+      );
     },
-    [stageRef],
+    [applyZoom, pan, stageRef, zoom],
   );
 
   const resetZoom = useCallback(() => {
-    pendingScrollRef.current = { left: 0, top: 0 };
     setZoom(1);
+    setPan(NO_PAN);
   }, []);
 
-  // --- 「手」道具のジェスチャ ---------------------------------------------
+  // --- 「移動」道具のジェスチャ -------------------------------------------
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !enabled) {
@@ -96,52 +118,35 @@ export function useStageGestures({
       return { x: touch.clientX - box.left, y: touch.clientY - box.top };
     };
 
-    // 2 本指: つまんだ点を動かさずに拡大する
     let pinch: {
       span: number;
       center: { x: number; y: number };
       zoom: number;
-      scroll: ScrollOffset;
+      pan: PanOffset;
     } | null = null;
-    // 1 本指: つかんで送る
-    let pan: { x: number; y: number; scroll: ScrollOffset } | null = null;
+    let drag: { x: number; y: number; pan: PanOffset } | null = null;
 
     const onTouchStart = (event: TouchEvent) => {
-      if (event.touches.length === 2) {
-        pan = null;
-        pinch = {
-          span: pinchSpan(localPoint(event.touches[0]), localPoint(event.touches[1])),
-          center: pinchCenter(
-            localPoint(event.touches[0]),
-            localPoint(event.touches[1]),
-          ),
-          zoom,
-          scroll: { left: stage.scrollLeft, top: stage.scrollTop },
-        };
-        event.preventDefault();
+      if (event.touches.length !== 2) {
+        return;
       }
+      drag = null;
+      pinch = {
+        span: pinchSpan(localPoint(event.touches[0]), localPoint(event.touches[1])),
+        center: pinchCenter(localPoint(event.touches[0]), localPoint(event.touches[1])),
+        zoom,
+        pan,
+      };
+      event.preventDefault();
     };
 
     const onTouchMove = (event: TouchEvent) => {
-      if (!pinch || event.touches.length !== 2) {
+      if (!pinch || event.touches.length !== 2 || pinch.span <= 0) {
         return;
       }
       event.preventDefault();
-      const span = pinchSpan(
-        localPoint(event.touches[0]),
-        localPoint(event.touches[1]),
-      );
-      if (pinch.span <= 0) {
-        return;
-      }
-      const next = clampZoom(pinch.zoom * (span / pinch.span));
-      pendingScrollRef.current = scrollForZoom({
-        scroll: pinch.scroll,
-        pointer: pinch.center,
-        from: pinch.zoom,
-        to: next,
-      });
-      setZoom(next);
+      const span = pinchSpan(localPoint(event.touches[0]), localPoint(event.touches[1]));
+      applyZoom(pinch.zoom * (span / pinch.span), pinch.center, pinch.zoom, pinch.pan);
     };
 
     const onTouchEnd = (event: TouchEvent) => {
@@ -150,29 +155,33 @@ export function useStageGestures({
       }
     };
 
-    // 1 本指のドラッグで送る。fabric の器は touch-action: none なので
-    // ブラウザ任せのスクロールは起きず、ここで自分で動かす
+    // 1 本指のドラッグで送る
     const onPointerDown = (event: PointerEvent) => {
       if (pinch) {
         return;
       }
-      pan = {
-        x: event.clientX,
-        y: event.clientY,
-        scroll: { left: stage.scrollLeft, top: stage.scrollTop },
-      };
+      drag = { x: event.clientX, y: event.clientY, pan };
     };
 
     const onPointerMove = (event: PointerEvent) => {
-      if (!pan || pinch) {
+      if (!drag || pinch) {
         return;
       }
-      stage.scrollLeft = pan.scroll.left - (event.clientX - pan.x);
-      stage.scrollTop = pan.scroll.top - (event.clientY - pan.y);
+      const stageBox = { width: stage.clientWidth, height: stage.clientHeight };
+      const content = contentRef.current?.getBoundingClientRect();
+      const moved = {
+        left: drag.pan.left - (event.clientX - drag.x),
+        top: drag.pan.top - (event.clientY - drag.y),
+      };
+      setPan(
+        content
+          ? clampPan(moved, { width: content.width, height: content.height }, stageBox)
+          : moved,
+      );
     };
 
-    const endPan = () => {
-      pan = null;
+    const endDrag = () => {
+      drag = null;
     };
 
     stage.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -181,9 +190,9 @@ export function useStageGestures({
     stage.addEventListener("touchcancel", onTouchEnd);
     stage.addEventListener("pointerdown", onPointerDown);
     stage.addEventListener("pointermove", onPointerMove);
-    stage.addEventListener("pointerup", endPan);
-    stage.addEventListener("pointercancel", endPan);
-    stage.addEventListener("pointerleave", endPan);
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+    stage.addEventListener("pointerleave", endDrag);
 
     return () => {
       stage.removeEventListener("touchstart", onTouchStart);
@@ -192,14 +201,15 @@ export function useStageGestures({
       stage.removeEventListener("touchcancel", onTouchEnd);
       stage.removeEventListener("pointerdown", onPointerDown);
       stage.removeEventListener("pointermove", onPointerMove);
-      stage.removeEventListener("pointerup", endPan);
-      stage.removeEventListener("pointercancel", endPan);
-      stage.removeEventListener("pointerleave", endPan);
+      stage.removeEventListener("pointerup", endDrag);
+      stage.removeEventListener("pointercancel", endDrag);
+      stage.removeEventListener("pointerleave", endDrag);
     };
-  }, [enabled, stageRef, zoom]);
+  }, [applyZoom, contentRef, enabled, pan, stageRef, zoom]);
 
   return {
     zoom,
+    pan,
     zoomBy,
     resetZoom,
     canZoomIn: zoom < clampZoom(Number.POSITIVE_INFINITY),

@@ -1,10 +1,16 @@
-// ピンチでの拡大とスクロールの計算 (docs/36-お絵かき拡張計画.md §4)。
+// ピンチでの拡大と送り (パン) の計算 (docs/36-お絵かき拡張計画.md §4)。
 //
 // 拡大は fabric の viewportTransform ではなく **CSS の表示倍率**で行う。
 // 描画バッファは論理サイズのままなので viewportTransform で拡大しても
 // ぼけ方は変わらず、座標系だけが複雑になる。CSS で拡縮する現行の作りなら
 // fabric がポインタ位置を getBoundingClientRect 比で補正してくれるため
 // (docs/34 §3)、倍率を動かしても座標変換の追加実装が要らない。
+//
+// **送りはスクロールではなく transform で行う** (docs/36 §4-3)。
+// スクロールできる親を canvas の上に置くと、fabric の座標計算が
+// 「イベントの target の祖先」のスクロール量を足す一方、canvas 側の基準位置は
+// 「canvas の祖先」のスクロール量で引くため、指が canvas の外へ出た瞬間に
+// 両者の対象がずれて、スクロール量ぶんちょうど座標が飛ぶ。
 //
 // ここは数の計算だけを持つ (DOM も fabric も触らない)。
 
@@ -16,14 +22,19 @@ export const MIN_ZOOM = 1
 // 伸ばしすぎてもぼけるだけ。細部に描き込むには 4 倍あれば足りる
 export const MAX_ZOOM = 4
 
-export interface ScrollOffset {
+// 中身をどれだけ左・上へ送っているか (スクロール位置と同じ向き)
+export interface PanOffset {
   readonly left: number
   readonly top: number
 }
 
-export interface ZoomScrollInput {
-  // いまのスクロール位置 (枠の中で、中身をどれだけ送っているか)
-  readonly scroll: ScrollOffset
+export interface Size {
+  readonly width: number
+  readonly height: number
+}
+
+export interface ZoomPanInput {
+  readonly pan: PanOffset
   // 枠の左上から測った指 (ピンチの中心) の位置
   readonly pointer: DrawPoint
   readonly from: number
@@ -45,16 +56,25 @@ export function pinchCenter(a: DrawPoint, b: DrawPoint): DrawPoint {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
 }
 
-// つまんだ点が指の下から動かないようにスクロール位置を求める。
+// つまんだ点が指の下から動かないように送り量を求める。
 //
-// 中身の座標 = (スクロール + 指の位置) / 倍率。これは倍率を変えても
-// 変わらない (同じ点をつまみ続けている) ので、新しい倍率での位置から
-// 指の位置を引けば、新しいスクロール位置になる。
-export function scrollForZoom({ scroll, pointer, from, to }: ZoomScrollInput): ScrollOffset {
-  const contentX = (scroll.left + pointer.x) / from
-  const contentY = (scroll.top + pointer.y) / from
+// 中身の座標 = (送り + 指の位置) / 倍率。これは倍率を変えても変わらない
+// (同じ点をつまみ続けている) ので、新しい倍率での位置から指の位置を引けば
+// 新しい送り量になる。
+export function panForZoom({ pan, pointer, from, to }: ZoomPanInput): PanOffset {
+  const contentX = (pan.left + pointer.x) / from
+  const contentY = (pan.top + pointer.y) / from
   return {
     left: Math.max(0, contentX * to - pointer.x),
     top: Math.max(0, contentY * to - pointer.y),
+  }
+}
+
+// 中身が枠から出ている分までしか送らない。収まっているなら送らない
+// (中央に置いたままにする)
+export function clampPan(pan: PanOffset, content: Size, view: Size): PanOffset {
+  return {
+    left: Math.min(Math.max(0, pan.left), Math.max(0, content.width - view.width)),
+    top: Math.min(Math.max(0, pan.top), Math.max(0, content.height - view.height)),
   }
 }
