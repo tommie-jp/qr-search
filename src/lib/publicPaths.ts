@@ -40,6 +40,12 @@ function pwaPaths(): Set<string> {
 // 表示しているだけなので公開してよい (app/docs/*/page.tsx)
 const DOCS_PATHS = new Set(['/docs/search', '/docs/memo'])
 
+// robots.txt はクローラが認証なしで取りに行く (docs/39-デモ公開計画.md §3)。
+// 秘密を含まず、むしろ「デモは disallow」を伝えるために**必ず届く**必要がある。
+// ゲートすると app/robots.ts の内容ではなくログイン画面 (200) が返り、
+// クローラには「robots 指示が無い = 全許可」に見えてしまい disallow が効かない。
+const CRAWLER_PATHS = new Set(['/robots.txt'])
+
 // ログインの入口そのもの。閉じるとログインできない。
 //
 // パスキーのログイン 2 口もここに入る (docs/29-パスキー計画.md §6)。
@@ -53,7 +59,12 @@ let pwaPathsCache: Set<string> | null = null
 
 export function isPublicPath(pathname: string): boolean {
   pwaPathsCache ??= pwaPaths()
-  return LOGIN_PATHS.has(pathname) || pwaPathsCache.has(pathname) || DOCS_PATHS.has(pathname)
+  return (
+    LOGIN_PATHS.has(pathname) ||
+    pwaPathsCache.has(pathname) ||
+    DOCS_PATHS.has(pathname) ||
+    CRAWLER_PATHS.has(pathname)
+  )
 }
 
 // --- 自前で判定する口 (docs/22-ノート公開計画.md §1) ---

@@ -39,6 +39,12 @@ describe('isPublicPath', () => {
     expect(isPublicPath(path)).toBe(true)
   })
 
+  // robots.txt はクローラが認証なしで取りに行く (docs/39-デモ公開計画.md §3)。
+  // ゲートするとログイン画面が返り、デモの disallow が届かない
+  test('/robots.txt is public (crawlers fetch it without auth)', () => {
+    expect(isPublicPath('/robots.txt')).toBe(true)
+  })
+
   // ここから下が本題。ノートの中身が出る画面は閉じる
   test.each([
     '/',
