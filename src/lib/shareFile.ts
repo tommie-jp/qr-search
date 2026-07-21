@@ -27,25 +27,27 @@ export function canShareFiles(nav: Navigator = navigator): boolean {
   }
 }
 
-// タッチが主入力の端末か (スマホ・タブレット)。SSR では判定できないので false。
+// iOS (WebKit) か。SSR では判定できないので false。
 //
-// 共有ボタンは **API が使えるかではなく、要るか**で出し分ける。マウス主体の
-// PC はプレイヤーの ⋮ メニューや右クリックでダウンロードでき、共有ボタンは
-// 冗長 (しかも Windows の share ダイアログは挙動が不安定)。共有が唯一の出口
-// なのはタッチ端末 — 特に iOS には長押しもダウンロードも無い (docs/12)。
-// UA 判定は使わず、メディアクエリで判る事実だけで決める (displayMode と同じ流儀)。
-export function isCoarsePointer(win?: Window): boolean {
-  const w = win ?? (typeof window === 'undefined' ? undefined : window)
-  if (!w || typeof w.matchMedia !== 'function') {
-    return false
-  }
-  return w.matchMedia('(pointer: coarse)').matches
+// 共有ボタンは **API が使えるかではなく、要るか + 実際に動くか**で出し分ける。
+// 実機で全環境を当たった結果 (docs/12)、両方を満たすのは iOS だけだった:
+//   - PC (Win/Mac/Linux): プレイヤーの ⋮ / 右クリックで保存できるうえ、
+//     Windows は files 付き share がブラウザを問わず Permission denied になる
+//     既知問題がある (mdn/browser-compat-data#21312)
+//   - Android Chrome: ⋯ メニューで保存できるうえ、share は同様に恒久拒否
+//   - iOS: 長押しもダウンロードも無く共有が唯一の出口で、share も動く (実機確認)
+//
+// 判定は UA 文字列の解析ではなく **navigator.standalone の有無**で行う。
+// このプロパティは iOS の WebKit にしか存在しない (値ではなく存在で見る —
+// Safari 通常タブでは false が入っているため)。
+export function isIosWebKit(nav: Navigator = navigator): boolean {
+  return typeof (nav as { standalone?: unknown }).standalone === 'boolean'
 }
 
-// 共有ボタンを出してよいか = ファイル共有 API が使え、かつタッチ端末。
+// 共有ボタンを出してよいか = ファイル共有 API が使え、かつ iOS。
 // 音声プレイヤーと PDF ビューアの両方がこの 1 本を見る。
 export function shouldOfferShare(): boolean {
-  return canShareFiles() && isCoarsePointer()
+  return typeof navigator !== 'undefined' && canShareFiles() && isIosWebKit()
 }
 
 // 共有シートに出すファイル名を作る。

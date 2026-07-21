@@ -155,9 +155,9 @@ export function PdfViewerModal({ url, label, onClose }: PdfViewerModalProps) {
     () => false,
   );
 
-  // 共有シートへの導線。共有が「唯一の出口」であるタッチ端末でだけ出す
-  // (shouldOfferShare)。マウス主体の PC は「新しいタブ」からネイティブビューアで
-  // ダウンロードでき、共有は冗長 (Windows の share ダイアログは挙動も不安定)
+  // 共有シートへの導線。共有が「唯一の出口」でありかつ実際に動く iOS でだけ
+  // 出す (shouldOfferShare)。PC は「新しいタブ」からネイティブビューアで保存でき、
+  // Chromium (Win/Android) は files 付き share を恒久拒否する (shareFile.ts)
   const canShare = useSyncExternalStore(
     // 対応可否は実行中に変わらないので購読しない
     () => () => {},

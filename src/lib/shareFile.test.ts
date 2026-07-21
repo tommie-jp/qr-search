@@ -2,7 +2,7 @@ import { expect, test, vi } from 'vitest'
 import {
   attachmentShareName,
   canShareFiles,
-  isCoarsePointer,
+  isIosWebKit,
   isShareAborted,
   isShareActivationLost,
   shareFile,
@@ -11,6 +11,7 @@ import {
 function fakeNavigator(options: {
   share?: unknown
   canShare?: unknown
+  standalone?: boolean
 }): Navigator {
   return options as unknown as Navigator
 }
@@ -88,30 +89,18 @@ test('共有した中身が元のバイト列と一致する', async () => {
   expect([...got]).toEqual([...bytes])
 })
 
-// 共有ボタンは「API が使えるか」ではなく「要るか」で出し分ける。
-// マウス主体の PC は ⋮ メニュー・右クリックで保存でき、共有は冗長なため
-function fakeWindow(coarse: boolean | null): Window {
-  return {
-    matchMedia:
-      coarse === null
-        ? undefined
-        : (query: string) => ({
-            matches: query === '(pointer: coarse)' && coarse,
-          }),
-  } as unknown as Window
-}
-
-test('タッチが主入力 (pointer: coarse) なら true', () => {
-  expect(isCoarsePointer(fakeWindow(true))).toBe(true)
+// 共有ボタンは「API が使えるか」ではなく「要るか + 動くか」で出し分ける。
+// 両方を満たすのは iOS だけ (PC/Android はネイティブ保存があり、Chromium は
+// files 付き share を恒久拒否する)。判定は navigator.standalone の**有無**
+test('iOS WebKit (navigator.standalone が存在) なら true', () => {
+  // Safari 通常タブは false が「入っている」。値ではなく存在で判定する
+  expect(isIosWebKit(fakeNavigator({ standalone: false }))).toBe(true)
+  expect(isIosWebKit(fakeNavigator({ standalone: true }))).toBe(true)
 })
 
-test('マウス主体 (pointer: fine) の PC では false', () => {
-  expect(isCoarsePointer(fakeWindow(false))).toBe(false)
-})
-
-test('matchMedia が無い環境・SSR では false (判るまで出さない)', () => {
-  expect(isCoarsePointer(fakeWindow(null))).toBe(false)
-  expect(isCoarsePointer(undefined)).toBe(false) // window 無し (node)
+test('iOS 以外 (standalone プロパティ自体が無い) では false', () => {
+  expect(isIosWebKit(fakeNavigator({}))).toBe(false)
+  expect(isIosWebKit(fakeNavigator({ share: () => {} }))).toBe(false)
 })
 
 // 保存名 (URL 末尾) は UUID なので、表示名 + 保存名の拡張子で共有名を作る
