@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import type { Item } from "@/generated/prisma/client";
+import { tagSearchHref } from "@/lib/tags";
 import { ImageMasonry } from "./ImageMasonry";
 
 const IMAGE_1 = "0421547b-ee29-4613-a6d4-da0f41f94054.jpg";
@@ -40,8 +41,34 @@ test("1 ノートの複数画像をすべてタイルにし、どれもノート
   // タイルごとにノート詳細へのリンク
   const links = html.match(/href="\/item\/4951"/g);
   expect(links).toHaveLength(2);
-  // どのノートの画像か判る番号バッジ
+  // どのノートの画像か判る番号 (キャプション 1 行目)
   expect(html).toContain("#4951");
+});
+
+test("タイルに #番号・タイトル・タグの 2 行キャプションを添える (compact 準拠)", () => {
+  const html = render([
+    makeItem({
+      itemNo: "88",
+      memo: "ネジ M3\n![](/api/images/" + IMAGE_1 + ")",
+      tags: ["ねじ", "在庫"],
+    }),
+  ]);
+  // 1 行目: #番号 とタイトル (memoSummary)
+  expect(html).toContain("#88");
+  expect(html).toContain("ネジ M3");
+  // 2 行目: タグはタグ検索への別リンク (ノート詳細とは別の行き先)
+  expect(html).toContain("#ねじ");
+  expect(html).toContain(`href="${tagSearchHref("ねじ")}"`);
+  expect(html).toContain(`href="${tagSearchHref("在庫")}"`);
+});
+
+test("タグの無いノートではタグ行を出さない", () => {
+  const html = render([
+    makeItem({ itemNo: "89", memo: `見出し\n![](/api/images/${IMAGE_1})`, tags: [] }),
+  ]);
+  // タイトルは出るが、タグ検索リンクは 1 つも無い
+  expect(html).toContain("見出し");
+  expect(html).not.toContain("/?q=");
 });
 
 test("画像のないノートはタイルにならない", () => {
@@ -71,14 +98,19 @@ test("ページ内に画像が 1 枚も無ければ案内だけを出す", () =>
   expect(html).not.toContain("/api/images/");
 });
 
-test("masonry は CSS multi-column で組む", () => {
+test("行優先で埋まる Grid で組む (multi-column ではない)", () => {
   const html = render([
     makeItem({ itemNo: "70", memo: `![](/api/images/${IMAGE_1})` }),
   ]);
-  // 列数は画面幅に決めさせる (docs/32 §1)
-  expect(html).toContain("columns-");
-  // タイルが列の境目で泣き別れしない
-  expect(html).toContain("break-inside-avoid");
+  // 行優先 (1,2 / 3,4) で並ぶよう Grid にする。列数は画面幅に決めさせる
+  // (docs/32 §1)。縦詰めになる multi-column には戻さない
+  expect(html).toContain("grid");
+  expect(html).toContain("auto-fill");
+  expect(html).not.toContain("columns-");
+  // 枠は aspect-square で固定してレイアウトシフトを消しつつ、object-contain で
+  // 画像全体を余白付きで見せる (切り抜かない。docs/32 §1)
+  expect(html).toContain("aspect-square");
+  expect(html).toContain("object-contain");
   // 20 件 × 複数枚が並ぶので遅延読み込み
   expect(html).toContain('loading="lazy"');
 });
