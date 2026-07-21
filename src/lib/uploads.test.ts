@@ -465,11 +465,15 @@ test('動画の保存名 (UUID + mp4/mkv/mov) を許可する', () => {
   expect(isValidImageName(`${uuid}.mp4`)).toBe(false)
 })
 
-test('動画のクライアントサムネは WebP かつ 200KB 以下だけ受ける', () => {
+test('動画のクライアントサムネは sharp が読める画像かつ 200KB 以下を受ける', () => {
   const webp = new TextEncoder().encode('RIFF\0\0\0\0WEBP')
   expect(isValidVideoThumb(webp)).toBe(true)
-  // WebP でない (PNG) は拒否
-  expect(isValidVideoThumb(PNG_HEAD)).toBe(false)
+  // JPEG・PNG も受ける (Safari は canvas で webp を出せないので JPEG に化ける。
+  // サーバが sharp で webp へ作り直す)
+  expect(isValidVideoThumb(JPEG_HEAD)).toBe(true)
+  expect(isValidVideoThumb(PNG_HEAD)).toBe(true)
+  // 画像でないもの (HTML/SVG) は拒否 (sniffImageFormat が null を返す)
+  expect(isValidVideoThumb(new TextEncoder().encode('<svg onload=alert(1)>'))).toBe(false)
   // 空も拒否
   expect(isValidVideoThumb(new Uint8Array(0))).toBe(false)
   // 上限超過は拒否 (先頭は正しい WebP 署名でも大きさで弾く)

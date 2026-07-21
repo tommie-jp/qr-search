@@ -18,14 +18,18 @@
 const POSTER_MAX_PX = 384;
 
 // 先頭フレームの取得を待つ上限。壊れた動画・デコードできない動画で
-// 永久に待たないための保険。
-const LOAD_TIMEOUT_MS = 5000;
+// 永久に待たないための保険。モバイルのデコードを見込んで少し長めにする。
+const LOAD_TIMEOUT_MS = 8000;
 
 // 真っ黒な 1 フレーム目を避けるため、ごく短い位置へシークしてから描く。
 const SEEK_TARGET_SEC = 0.1;
 
-// WebP の品質。サーバ側サムネ (thumbnail.ts) と揃える。
-const WEBP_QUALITY = 0.8;
+// 出力は **JPEG**。canvas.toBlob('image/webp') は Safari (iOS) が出せず
+// PNG に化けるため、全ブラウザが確実に出せる JPEG にする。サーバが sharp で
+// webp へ作り直すので (uploads.ts isValidVideoThumb / attachmentStore)、
+// ここが webp である必要はない。
+const POSTER_MIME = "image/jpeg";
+const POSTER_QUALITY = 0.85;
 
 // 縦横比を保ったまま POSTER_MAX_PX の箱に収めた描画サイズを求める。
 function fitInside(width: number, height: number): { w: number; h: number } {
@@ -43,10 +47,11 @@ export async function makeVideoPoster(file: File): Promise<Blob | null> {
   }
   const url = URL.createObjectURL(file);
   const video = document.createElement("video");
-  // 音を出さず、勝手に全画面へ行かせず、メタデータだけ先に読ませる
+  // 音を出さず、勝手に全画面へ行かせず、実データまで読ませる (preload=metadata
+  // だと描けるフレームが揃わないことがある)
   video.muted = true;
   video.playsInline = true;
-  video.preload = "metadata";
+  video.preload = "auto";
   video.src = url;
 
   try {
@@ -58,6 +63,7 @@ export async function makeVideoPoster(file: File): Promise<Blob | null> {
         }
         settled = true;
         window.clearTimeout(timer);
+        video.pause();
         resolve(result);
       };
 
@@ -66,6 +72,10 @@ export async function makeVideoPoster(file: File): Promise<Blob | null> {
       const draw = () => {
         try {
           const { w, h } = fitInside(video.videoWidth, video.videoHeight);
+          if (w === 0 || h === 0) {
+            finish(null); // まだフレーム寸法が無い (描けない)
+            return;
+          }
           const canvas = document.createElement("canvas");
           canvas.width = w;
           canvas.height = h;
@@ -75,31 +85,34 @@ export async function makeVideoPoster(file: File): Promise<Blob | null> {
             return;
           }
           ctx.drawImage(video, 0, 0, w, h);
-          canvas.toBlob(
-            (blob) => finish(blob),
-            "image/webp",
-            WEBP_QUALITY,
-          );
+          canvas.toBlob((blob) => finish(blob), POSTER_MIME, POSTER_QUALITY);
         } catch {
           // CORS 汚染・デコード不可などで描けない場合。poster 無しで続行
           finish(null);
         }
       };
 
-      video.onloadedmetadata = () => {
-        // メタデータが揃ったら先頭付近へシークし、seeked でフレームを描く。
-        // シークできない実装のために、loadeddata でも一度試す
-        try {
-          video.currentTime = Math.min(
-            SEEK_TARGET_SEC,
-            Number.isFinite(video.duration) ? video.duration / 2 : SEEK_TARGET_SEC,
-          );
-        } catch {
+      // 描けるフレームが来たら、先頭付近へシークしてから描く (真っ黒回避)。
+      // seek 不可・duration 不正な録画では、その場のフレームをそのまま描く。
+      video.onloadeddata = () => {
+        const canSeek =
+          Number.isFinite(video.duration) && video.duration > SEEK_TARGET_SEC;
+        if (canSeek && Math.abs(video.currentTime - SEEK_TARGET_SEC) > 0.001) {
+          try {
+            video.currentTime = SEEK_TARGET_SEC; // → onseeked → draw
+          } catch {
+            draw();
+          }
+        } else {
           draw();
         }
       };
       video.onseeked = draw;
       video.onerror = () => finish(null);
+
+      // iOS はフレームのデコードを再生で促さないと canvas に描けないことがある。
+      // muted なので自動再生は許される。失敗は無視 (onloadeddata 側で描く)
+      void video.play?.().catch(() => {});
     });
   } finally {
     URL.revokeObjectURL(url);

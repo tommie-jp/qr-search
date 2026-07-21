@@ -558,16 +558,22 @@ export function sniffVideoFormat(bytes: Uint8Array): VideoFormat | null {
   return sniffIsoBmffVideo(bytes)
 }
 
-// クライアントが送ってきた動画サムネ (poster) が信用できるか。WebP に限り、
-// 200KB を超えないものだけを受ける。中身の検証はサーバの唯一の砦なので
-// (クライアント生成物をそのまま thumb カラムへ入れる)、ここで必ず通す。
+// クライアントが送ってきた動画サムネ (poster) が信用できるか。
+//
+// **形式は webp に限定しない。** canvas.toBlob('image/webp') は Safari (iOS) が
+// 出せず PNG/JPEG に化けるため、webp 限定だと iPhone 録画に poster が付かない
+// (実機報告)。クライアントは JPEG を出し、端末によっては PNG になる。sharp が
+// 読める光栅画像 (sniffImageFormat が種別を返すもの = png/jpg/webp/gif/avif/tiff)
+// なら受け、attachmentStore が makeThumbnail で webp へ作り直す。SVG は
+// sniffImageFormat が弾く (スクリプト混入対策) ので、ここも自動で拒否される。
+// 大きさは 200KB を超えないものだけ (バッファ済みの防波堤は route 側にもある)。
 export const MAX_VIDEO_THUMB_BYTES = 200 * 1024
 
 export function isValidVideoThumb(bytes: Uint8Array): boolean {
   return (
     bytes.byteLength > 0 &&
     bytes.byteLength <= MAX_VIDEO_THUMB_BYTES &&
-    sniffImageFormat(bytes) === 'webp'
+    sniffImageFormat(bytes) !== null
   )
 }
 
