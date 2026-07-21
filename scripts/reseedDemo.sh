@@ -61,9 +61,16 @@ echo "OK: ${SEED_NAME} あり"
 log "2/4 app 停止"
 docker compose stop app
 
-log "3/4 ${DB_NAME} を ${SEED_NAME} から作り直す"
+log "3/4 ${DB_NAME} を ${SEED_NAME} から作り直す + PGroonga を REINDEX"
 db_exec dropdb --if-exists --force -U "$DB_USER" "$DB_NAME"
 db_exec createdb -U "$DB_USER" -T "$SEED_NAME" "$DB_NAME"
+# **createdb -T (テンプレート複製) は PGroonga の Groonga 内部構造を壊す。**
+# インデックスは残るが検索で "pgroonga: ... object isn't found" になり、
+# 全文検索 (memo &@~ …、PGroonga が乗っ取る LIKE も) が死ぬ。PGroonga 公式が
+# TEMPLATE 複製後の REINDEX を要求している。app を止めている今のうちに直す。
+# タグ検索 (配列列) は無事なので、REINDEX を忘れると「タグは効くが全文は死ぬ」
+# 形で静かに壊れる (気づきにくい)
+db_exec psql -U "$DB_USER" -d "$DB_NAME" -c "REINDEX DATABASE ${DB_NAME}"
 
 log "4/4 app 起動"
 docker compose start app
