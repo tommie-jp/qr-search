@@ -111,29 +111,49 @@ export function VideoPlayer({ src, label }: VideoPlayerProps) {
       .catch(onShareError);
   };
 
+  // ダウンロード時のファイル名 (UUID のままでは何か判らないので、録画日時 +
+  // 保存拡張子に直す。共有シートのファイル名と揃える)
+  const downloadName = attachmentShareName(src, label, "録画");
+
+  // **書き出しの操作は動画の下に置く。** 横に並べると、<video> は w-full で
+  // フレックス内で縮まず (intrinsic min-width)、iPhone の細い画面ではボタンが
+  // 画面外へ押し出されて「共有ボタンが無い」ように見える (実機で判明)。
   return (
     <span className="flex flex-col gap-1">
+      {/* preload は metadata (開いただけで全データを取らない)。poster は
+          クライアント生成の WebP (?thumb=1)。無ければ配信が 404 → 無視される */}
+      <video
+        controls
+        playsInline
+        preload="metadata"
+        poster={`${src}?thumb=1`}
+        src={src}
+        className="w-full max-w-md rounded"
+      />
       <span className="flex items-center gap-2">
-        {/* preload は metadata (開いただけで全データを取らない)。poster は
-            クライアント生成の WebP (?thumb=1)。無ければ配信が 404 → 無視される */}
-        <video
-          controls
-          playsInline
-          preload="metadata"
-          poster={`${src}?thumb=1`}
-          src={src}
-          className="w-full max-w-md rounded"
-        />
-        {canShare && (
+        {canShare ? (
+          // iOS: <video> には長押し共有もダウンロードも無いので、共有シートを出す
           <button
             type="button"
             onClick={handleShare}
             onPointerDown={prefetch}
             disabled={phase === "busy"}
-            className={`shrink-0 ${SECONDARY_BUTTON_CLASS}`}
+            className={SECONDARY_BUTTON_CLASS}
           >
             {phase === "retry" ? "もう一度" : "共有"}
           </button>
+        ) : (
+          // iOS 以外: files 付き share は Windows で恒久拒否 (shareFile.ts) なので
+          // 使わず、素直なダウンロードリンクにする。プレイヤーの ⋮ からも保存
+          // できるが、明示ボタンがある方が判りやすい (Android にも口ができる)。
+          // 同一オリジンなので download 属性でそのまま保存できる
+          <a
+            href={src}
+            download={downloadName}
+            className={SECONDARY_BUTTON_CLASS}
+          >
+            保存
+          </a>
         )}
       </span>
       {error && <span className="text-sm text-red-700">{error}</span>}
