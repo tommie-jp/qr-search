@@ -60,6 +60,30 @@ export interface ImportOptions {
   // 10MB は HTTP アップロードの都合で決めた値で、ファイルから読む経路に
   // 持ち込むと iPhone の写真が虫食いになる (limits.ts に理由)
   maxAttachmentBytes?: number
+
+  // 1 回で取り込むノート数の上限 (既定: MAX_NOTES_PER_IMPORT = 500)。
+  //
+  // Web の口の 500 は「細工したファイルで採番を延々と回されない」ための
+  // 安全弁。**自分のファイルを自分で渡す CLI には不要**なので、CLI は
+  // Infinity を渡して全件を対象にする。500 を超えて黙って切り捨てると、
+  // 再実行で先頭 500 件が二重になる罠がある (docs/28 §4)。
+  maxNotes?: number
+
+  // 全ノートへ必ず付けるタグ (正規化前でよい)。
+  //
+  // `#evernote` を機械的に足すのに使う (docs/28 §4)。**由来の印**で、
+  // 移行に不満が出たとき「#evernote で全選択 → ゴミ箱」でやり直せる
+  // ようにするのが狙い。要らなくなれば一括タグ削除で外せる。
+  // ノートブック名の代わりの分類タグ (--tag) とは役割が違う。
+  fixedTags?: string[]
+
+  // 既に取り込んだノートを見つけたらスキップするか (既定: スキップする)。
+  //
+  // 手で選択してバッチを作ると、選択の重なり・同じファイルの再実行で
+  // 重複が現実に起きる (docs/28 §4/§5)。同じ created_at (ENEX 由来・秒精度)
+  // かつ同じ題名の既存ノートがあれば入れ直さない。判定を切りたい
+  // (入れ直したい) ときだけ false にする。
+  allowDuplicate?: boolean
 }
 
 export interface ImportReport {
@@ -71,6 +95,10 @@ export interface ImportReport {
   // 黙って作らないと「取り込んだのに画像検索に出てこない」だけが見えて、
   // 不具合と区別が付かない。数を返して画面で知らせる
   deferredImageIndex: number
+  // 既に取り込み済みでスキップしたノート数 (重複判定)。skipped とは分けて数える —
+  // 「失敗して入らなかった」ではなく「既にあるので入れなかった」で、
+  // 再実行の正常な結果だから (これが多い = 冪等に効いている)
+  duplicateSkipped: number
 }
 
 // ENEX 1 ファイルを取り込む。
@@ -86,13 +114,15 @@ export async function importEnex(
     imported: [],
     skipped: [],
     deferredImageIndex: 0,
+    duplicateSkipped: 0,
   }
 
-  const targets = notes.slice(0, MAX_NOTES_PER_IMPORT)
-  for (const over of notes.slice(MAX_NOTES_PER_IMPORT)) {
+  const maxNotes = options.maxNotes ?? MAX_NOTES_PER_IMPORT
+  const targets = notes.slice(0, maxNotes)
+  for (const over of notes.slice(maxNotes)) {
     report.skipped.push({
       label: noteLabel(over),
-      reason: `1 回に取り込めるのは ${MAX_NOTES_PER_IMPORT} 件までです`,
+      reason: `1 回に取り込めるのは ${maxNotes} 件までです`,
     })
   }
 
@@ -119,6 +149,17 @@ async function importNote(
   report: ImportReport,
   options: ImportOptions,
 ): Promise<void> {
+  // **添付を保存する前に**重複を見る (docs/28 §4)。ここで弾けば、
+  // スキップしたノートのゴミ (画像行) が残らない。
+  //
+  // 同じファイルの再実行・選択の重なりで二重取り込みが現実に起きるため、
+  // 既定でスキップする。判定は「同じ created_at (秒精度) + 同じ題名」。
+  // この組はほぼ一意で、同時刻・同題名で別内容のノートは実用上あり得ない。
+  if (options.allowDuplicate !== true && (await isDuplicate(note))) {
+    report.duplicateSkipped += 1
+    return
+  }
+
   // XML の時点で読めなかった添付 (base64 でない・中身が空) も、
   // 保存に失敗したものと同じ列に並べる。利用者にとっては同じ「入らなかった添付」
   for (const rejected of note.rejectedResources) {
@@ -136,7 +177,7 @@ async function importNote(
   // (見送りと例外) あるので、片付けはここ 1 箇所に集める
   let outcome: WriteOutcome
   try {
-    outcome = await writeNote(note, media, report)
+    outcome = await writeNote(note, media, report, options)
   } catch (error) {
     await discardAttachments(savedNames)
     throw error // 外側の catch がレポートに載せる
@@ -156,6 +197,7 @@ async function writeNote(
   note: EnexNote,
   media: Map<string, EnexMedia>,
   report: ImportReport,
+  options: ImportOptions,
 ): Promise<WriteOutcome> {
   // 変換にかける前に断る。turndown は木を再帰で歩くので、細工した ENML は
   // 変換を始めた時点でイベントループを塞ぐ (enmlToMarkdown.ts の enmlRejectReason)
@@ -167,7 +209,8 @@ async function writeNote(
   const converted = enmlToMarkdown(note.content, media)
   reportConversionLosses(note, converted, report)
 
-  const memo = buildMemo(note.title, converted.markdown, collectTags(note, report))
+  const tags = collectTags(note, report, options.fixedTags ?? [])
+  const memo = buildMemo(note.title, converted.markdown, tags)
   if (memo.length > MAX_TEXT_LENGTH) {
     // 上限を超えたノートは切り詰めずに飛ばす。黙って削るとどこが欠けたか
     // 判らないまま「取り込めた」ことになる
@@ -289,8 +332,29 @@ function reportConversionLosses(
   }
 }
 
-function collectTags(note: EnexNote, report: ImportReport): string[] {
+// ノートの memo に入れるタグを集める。
+//
+// **固定タグ (#evernote など) を先頭に置く** — 補完・検索で拾いやすい
+// 位置に由来の印を出す。fixedTags もタグ記法に寄せてから入れる
+// (enexTagToMemoTag が全角化や記号を畳む)。重複は初出順で 1 つに。
+function collectTags(
+  note: EnexNote,
+  report: ImportReport,
+  fixedTags: string[],
+): string[] {
   const tags: string[] = []
+  const add = (tag: string | null) => {
+    if (tag !== null && !tags.includes(tag)) {
+      tags.push(tag)
+    }
+  }
+
+  // 固定タグは呼び出し側 (#evernote / --tag) が決めた印なので、書けない
+  // 文字だったときも利用者のタグと違って報告はしない (黙って畳む)
+  for (const raw of fixedTags) {
+    add(enexTagToMemoTag(raw))
+  }
+
   for (const raw of note.tags) {
     const tag = enexTagToMemoTag(raw)
     if (tag === null) {
@@ -300,11 +364,36 @@ function collectTags(note: EnexNote, report: ImportReport): string[] {
       })
       continue
     }
-    if (!tags.includes(tag)) {
-      tags.push(tag)
-    }
+    add(tag)
   }
   return tags
+}
+
+// 既に取り込み済みのノートか (docs/28 §4)。
+//
+// 「同じ created_at (ENEX 由来・秒精度) + 同じ題名 (memo 1 行目)」で照合する。
+// この組はほぼ一意で、同時刻・同題名で別内容のノートは実用上あり得ない。
+//
+// **日時の無いノートは判定対象外** (常に新規として入れる)。照合の鍵が
+// 題名だけになり、同名の別ノート (「メモ」「無題」など) を取り違えるため。
+// 数が出ても実害は「同名ノートが 2 件」で、日時ありの誤スキップより軽い。
+//
+// title 列は無いので memo の 1 行目で見る。buildMemo が題名を 1 行目に
+// 置くので、取り込み済みノートの memo 先頭は必ず題名になっている。
+async function isDuplicate(note: EnexNote): Promise<boolean> {
+  const created = note.createdAt ?? note.updatedAt
+  // buildMemo は題名を trim して 1 行目に置くので、照合も trim 済みで比べる
+  const title = note.title.trim()
+  if (created === null || title === '') {
+    return false
+  }
+  const rows = await prisma.$queryRaw<{ one: number }[]>`
+    SELECT 1 AS one FROM items
+    WHERE created_at = ${created}
+      AND split_part(memo, E'\n', 1) = ${title}
+    LIMIT 1
+  `
+  return rows.length > 0
 }
 
 // ENEX の作成・更新日時をそのまま反映する。

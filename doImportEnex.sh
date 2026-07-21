@@ -15,12 +15,18 @@
 # 直前に自分で取っていること。
 #
 # 使い方:
-#   ./doImportEnex.sh <file.enex>                 # vps2 へ (バックアップ込み)
-#   ./doImportEnex.sh <file.enex> --local         # ローカルの db へ (下見用)
-#   ./doImportEnex.sh <file.enex> --check         # ファイルを読むだけ (DB に触らない)
-#   ./doImportEnex.sh <file.enex> --no-embed      # 画像検索の索引を作らない
-#   ./doImportEnex.sh <file.enex> --yes           # 確認プロンプトを省く
-#   ./doImportEnex.sh <file.enex> --skip-backup   # バックアップを省く (非推奨)
+#   ./doImportEnex.sh <file.enex...>              # vps2 へ (バックアップ込み)
+#   ./doImportEnex.sh <file.enex...> --local      # ローカルの db へ (下見用)
+#   ./doImportEnex.sh <file.enex...> --check      # ファイルを読むだけ (DB に触らない)
+#   ./doImportEnex.sh <file.enex...> --tag レシピ  # 全ノートにタグを追記
+#   ./doImportEnex.sh <file.enex...> --force      # 取り込み済みも入れ直す
+#   ./doImportEnex.sh <file.enex...> --no-embed   # 画像検索の索引を作らない
+#   ./doImportEnex.sh <file.enex...> --yes        # 確認プロンプトを省く
+#   ./doImportEnex.sh <file.enex...> --skip-backup # バックアップを省く (非推奨)
+#
+# 複数ファイルを一度に渡せる。バックアップは最初に 1 回だけ取り、SSH トンネルも
+# 張りっぱなしで使い回す (ファイルごとに 4GB 級のダンプを繰り返さない)。
+# #evernote は全ノートに必ず付く (由来の印。要らなければ後で一括削除できる)。
 #
 # 手順の推奨:
 #   1. ./doCopyDBfromVPS2.sh          本番のコピーをローカルに作る (採番も本番と同じ)
@@ -48,37 +54,41 @@ log() { echo ""; echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 usage() {
-  echo "usage: $0 <file.enex> [--local] [--check] [--no-embed] [--yes] [--skip-backup]" >&2
+  echo "usage: $0 <file.enex...> [--local] [--check] [--tag NAME] [--force] [--no-embed] [--yes] [--skip-backup]" >&2
   exit 1
 }
 
-FILE=""
+FILES=()
 LOCAL=0
 SKIP_BACKUP=0
+IS_CHECK=0
+# CLI (scripts/importEnex.ts) へそのまま渡す引数。--local と --skip-backup は
+# ラッパー固有なので混ぜない
 PASS_THROUGH=()
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --local) LOCAL=1 ;;
     --skip-backup) SKIP_BACKUP=1 ;;
-    --check | --no-embed | --yes) PASS_THROUGH+=("$arg") ;;
+    --check) IS_CHECK=1; PASS_THROUGH+=("$1") ;;
+    --no-embed | --force | --yes) PASS_THROUGH+=("$1") ;;
+    --tag)
+      # --tag は値を取る。CLI 側と同じ扱いで、次の引数もそのまま渡す
+      [ $# -ge 2 ] || die "--tag にはタグ名が要ります (例: --tag レシピ)"
+      PASS_THROUGH+=("$1" "$2")
+      shift
+      ;;
     -*) usage ;;
     *)
-      [ -z "$FILE" ] || usage
-      FILE="$arg"
+      [ -f "$1" ] || die "ファイルが無い: $1"
+      FILES+=("$1")
       ;;
   esac
+  shift
 done
-[ -n "$FILE" ] || usage
-[ -f "$FILE" ] || die "ファイルが無い: $FILE"
-
-# --check は DB に触らないので、トンネルもバックアップも要らない
-IS_CHECK=0
-for arg in ${PASS_THROUGH+"${PASS_THROUGH[@]}"}; do
-  [ "$arg" = "--check" ] && IS_CHECK=1
-done
+[ ${#FILES[@]} -gt 0 ] || usage
 
 run_import() {
-  npx tsx scripts/importEnex.ts "$FILE" ${PASS_THROUGH+"${PASS_THROUGH[@]}"}
+  npx tsx scripts/importEnex.ts "${FILES[@]}" ${PASS_THROUGH+"${PASS_THROUGH[@]}"}
 }
 
 if [ "$IS_CHECK" = "1" ]; then
