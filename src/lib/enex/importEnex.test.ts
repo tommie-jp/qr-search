@@ -6,6 +6,7 @@ const upsertItem = vi.fn()
 const nextItemNo = vi.fn()
 const storeAttachment = vi.fn()
 const executeRaw = vi.fn()
+const queryRaw = vi.fn()
 const deleteMany = vi.fn()
 
 vi.mock('@/lib/items', () => ({
@@ -21,6 +22,8 @@ vi.mock('@/lib/attachmentStore', () => ({
 vi.mock('@/lib/db', () => ({
   prisma: {
     $executeRaw: (...args: unknown[]) => executeRaw(...args),
+    // 重複判定 (isDuplicate) が使う。既定は「重複なし」(空配列)
+    $queryRaw: (...args: unknown[]) => queryRaw(...args),
     image: { deleteMany: (args: unknown) => deleteMany(args) },
   },
 }))
@@ -45,6 +48,7 @@ beforeEach(() => {
   nextItemNo.mockImplementation(async () => String(no++))
   upsertItem.mockResolvedValue(undefined)
   executeRaw.mockResolvedValue(1)
+  queryRaw.mockResolvedValue([]) // 既定は重複なし
   deleteMany.mockResolvedValue({ count: 0 })
   storeAttachment.mockResolvedValue({
     ok: true,
@@ -76,6 +80,108 @@ test('複数ノートには別々の番号を振る', async () => {
     ),
   )
   expect(report.imported.map((n) => n.itemNo)).toEqual(['1000', '1001'])
+})
+
+// --- 重複判定 (docs/28 §4) ---
+
+const noteWithDate = (title: string) =>
+  note(
+    `<title>${title}</title><content>${enml('<div>本文</div>')}</content>` +
+      '<created>20240115T093000Z</created>',
+  )
+
+test('既に取り込み済みのノートはスキップして数える', async () => {
+  // 重複判定のクエリが 1 行返す = 既にある
+  queryRaw.mockResolvedValue([{ one: 1 }])
+
+  const report = await importEnex(enex(noteWithDate('うどん')))
+
+  expect(report.imported).toEqual([])
+  expect(report.duplicateSkipped).toBe(1)
+  expect(upsertItem).not.toHaveBeenCalled()
+  // 添付の保存より前に弾くので、ゴミも残らない
+  expect(storeAttachment).not.toHaveBeenCalled()
+})
+
+test('--force (allowDuplicate) なら重複でも入れ直す', async () => {
+  queryRaw.mockResolvedValue([{ one: 1 }])
+
+  const report = await importEnex(enex(noteWithDate('うどん')), {
+    allowDuplicate: true,
+  })
+
+  expect(report.imported).toHaveLength(1)
+  expect(report.duplicateSkipped).toBe(0)
+  // 判定クエリ自体を撃たない (allowDuplicate のとき isDuplicate を呼ばない)
+  expect(queryRaw).not.toHaveBeenCalled()
+})
+
+// 日時の無いノートは題名だけの照合になり、同名の別ノートを取り違えるので
+// 判定対象から外す (常に新規)
+test('日時の無いノートは重複判定せず常に入る', async () => {
+  queryRaw.mockResolvedValue([{ one: 1 }])
+
+  const report = await importEnex(
+    enex(note(`<title>無題</title><content>${enml('<div>x</div>')}</content>`)),
+  )
+
+  expect(report.imported).toHaveLength(1)
+  expect(queryRaw).not.toHaveBeenCalled()
+})
+
+// --- ノート数の上限 ---
+
+test('既定では 500 件を超えると切り捨ててレポートに載せる', async () => {
+  const many = Array.from(
+    { length: 3 },
+    (_, i) => note(`<title>n${i}</title><content>${enml('<div>x</div>')}</content>`),
+  ).join('')
+
+  const report = await importEnex(enex(many), { maxNotes: 2 })
+
+  expect(report.imported).toHaveLength(2)
+  expect(report.skipped).toHaveLength(1)
+  expect(report.skipped[0].reason).toMatch(/2 件までです/)
+})
+
+test('maxNotes を Infinity にすると全件取り込む (CLI の挙動)', async () => {
+  const many = Array.from(
+    { length: 5 },
+    (_, i) => note(`<title>n${i}</title><content>${enml('<div>x</div>')}</content>`),
+  ).join('')
+
+  const report = await importEnex(enex(many), {
+    maxNotes: Number.POSITIVE_INFINITY,
+  })
+
+  expect(report.imported).toHaveLength(5)
+  expect(report.skipped).toEqual([])
+})
+
+// --- 固定タグ (#evernote など) ---
+
+test('fixedTags を全ノートの memo 先頭タグ行へ入れる', async () => {
+  await importEnex(
+    enex(note(`<title>題名</title><content>${enml('<div>本文</div>')}</content>`)),
+    { fixedTags: ['evernote', 'レシピ'] },
+  )
+
+  const memo = upsertItem.mock.calls[0][1].memo as string
+  expect(memo).toBe('題名\n\n#evernote #レシピ\n\n本文')
+})
+
+test('固定タグと ENEX のタグは両方入り、重複は畳む', async () => {
+  await importEnex(
+    enex(
+      `<note><title>題名</title><content>${enml('<div>本文</div>')}</content>` +
+        '<tag>レシピ</tag><tag>和食</tag></note>',
+    ),
+    { fixedTags: ['evernote', 'レシピ'] },
+  )
+
+  const memo = upsertItem.mock.calls[0][1].memo as string
+  // 固定タグが先、その後に ENEX のタグ。'レシピ' は重複なので 1 回だけ
+  expect(memo).toContain('#evernote #レシピ #和食')
 })
 
 // --- 入らなかったものが必ずレポートに出るか ---

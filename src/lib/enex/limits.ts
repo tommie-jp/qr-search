@@ -35,6 +35,23 @@ export const MAX_ENEX_BYTES = 10 * 1024 * 1024
 // 青天井にしないのは、細工したファイルで巨大な行を作られないため
 export const MAX_CLI_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
+// CLI が読み込める 1 ファイルの上限。
+//
+// Node は 1 つの文字列を 512MB (`buffer.constants.MAX_STRING_LENGTH`) までしか
+// 持てない。readFileSync(path, 'utf8') はファイル全体を 1 つの文字列にするので、
+// 512MB を超える .enex は変換以前に `ERR_STRING_TOO_LONG` で落ちる。
+// **その意味不明なエラーを見せる前に**、余白を取った 400MB で断って
+// 「選択を分けて書き出し直す」よう案内する (docs/13-EVERNOTE全ノート移行メモ.md)。
+export const MAX_CLI_ENEX_BYTES = 400 * 1024 * 1024
+
+// このタグを ENEX 由来の全ノートに必ず付ける (docs/28-エクスポート計画.md §4)。
+//
+// **由来の印**。移行に不満が出たとき「#evernote で全選択 → ゴミ箱」で
+// やり直せるようにするのが狙い。要らなくなれば一括タグ削除で外せる。
+// enex ではなく evernote にしたのは、後から探すとき頭に浮かぶのは
+// ファイル形式ではなくサービス名だから。
+export const EVERNOTE_TAG = 'evernote'
+
 export function enexTooLargeMessage(actualBytes: number): string {
   const actual = (actualBytes / 1024 / 1024).toFixed(1)
   const limit = MAX_ENEX_BYTES / 1024 / 1024
