@@ -6,8 +6,16 @@
 // これのためにアップロードを止める価値はない (画像の makeThumbnail と同じ流儀)。
 // iOS カメラロールの HEVC など、そのブラウザがデコードできない動画では
 // 先頭フレームを描けず null になる — その場合 poster 無しで保存される。
+//
+// **thumbnail.ts (sharp) を import しないこと。** これはクライアント
+// (MemoEditorInner) から読まれるモジュールで、sharp を引き込むと Node 専用の
+// `fs` がクライアントバンドルに入って壊れる (E2E で 500 になり判明)。サーバは
+// 受け取った poster を makeThumbnail で作り直す (THUMB_MAX_PX へ再縮小) ので、
+// ここの縮小は「送信量を抑える前処理」でよく、寸法を厳密に揃える必要はない。
 
-import { THUMB_MAX_PX } from "../thumbnail";
+// クライアント側の先頭フレーム縮小の一辺 (px)。サーバの THUMB_MAX_PX (384) と
+// 揃えてあるが、独立した定数として持つ (sharp を引き込まないため)。
+const POSTER_MAX_PX = 384;
 
 // 先頭フレームの取得を待つ上限。壊れた動画・デコードできない動画で
 // 永久に待たないための保険。
@@ -19,12 +27,12 @@ const SEEK_TARGET_SEC = 0.1;
 // WebP の品質。サーバ側サムネ (thumbnail.ts) と揃える。
 const WEBP_QUALITY = 0.8;
 
-// 縦横比を保ったまま THUMB_MAX_PX の箱に収めた描画サイズを求める。
+// 縦横比を保ったまま POSTER_MAX_PX の箱に収めた描画サイズを求める。
 function fitInside(width: number, height: number): { w: number; h: number } {
   if (width <= 0 || height <= 0) {
-    return { w: THUMB_MAX_PX, h: THUMB_MAX_PX };
+    return { w: POSTER_MAX_PX, h: POSTER_MAX_PX };
   }
-  const scale = Math.min(1, THUMB_MAX_PX / Math.max(width, height));
+  const scale = Math.min(1, POSTER_MAX_PX / Math.max(width, height));
   return { w: Math.round(width * scale), h: Math.round(height * scale) };
 }
 
