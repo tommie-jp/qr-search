@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isDemoMode } from '@/lib/appEnv'
 import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { lookupBook } from '@/lib/bookLookup'
 import { saveCoverImage } from '@/lib/coverImage'
@@ -29,6 +30,18 @@ export async function GET(
   const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
+  }
+
+  // デモインスタンスでは外部 API のキーを持たせない (docs/39-デモ公開計画.md §5)。
+  // 黙って「見つかりませんでした」になるより、デモだと明示する方が親切なので、
+  // 取得を試みる前に demoDisabled を返す。表示文言はクライアント (MemoEditor) 側
+  if (isDemoMode()) {
+    return NextResponse.json({
+      success: false,
+      data: null,
+      error: 'デモ版では書籍情報を取得できません',
+      demoDisabled: true,
+    })
   }
 
   const { isbn } = await params

@@ -128,6 +128,34 @@ describe('事前入力の口の拒否系 (実 DB・外部 API 不要)', () => {
     expect((await res.json()).success).toBe(true)
   })
 
+  // デモは外部 API のキーを持たないので、取得を試みず demoDisabled を返す
+  // (docs/39-デモ公開計画.md §5)。黙って notFound にせず「デモ版では…」と明示する
+  test('デモモードでは書影の口が demoDisabled を返す (外部 API を叩かない)', async () => {
+    vi.stubEnv('DEMO_MODE', '1')
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const [request, ctx] = booksRequest({ 'sec-fetch-site': 'same-origin' })
+    const body = await (await books(request, ctx)).json()
+
+    expect(body.demoDisabled).toBe(true)
+    expect(body.error).toContain('デモ版')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  test('デモモードでは商品情報の口が demoDisabled を返す (外部 API を叩かない)', async () => {
+    vi.stubEnv('DEMO_MODE', '1')
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const [request, ctx] = productsRequest({ 'sec-fetch-site': 'same-origin' })
+    const body = await (await products(request, ctx)).json()
+
+    expect(body.demoDisabled).toBe(true)
+    expect(body.error).toContain('デモ版')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
   test('自分のページからの fetch は通る (商品情報の口)', async () => {
     const [request, ctx] = productsRequest({ 'sec-fetch-site': 'same-origin' })
     const res = await products(request, ctx)

@@ -31,6 +31,14 @@ const PREFILL_NOUN: Record<PrefillKind, string> = {
   product: "商品情報",
 };
 
+// デモインスタンスの取得無効メッセージ (docs/39-デモ公開計画.md §5)。
+// product は取得中などの noun (「商品情報」) と違い「JAN 情報」と呼ぶ —
+// デモでは外部キーが無く、そもそも JAN で引けないことを直接伝えるため。
+const PREFILL_DEMO_MESSAGE: Record<PrefillKind, string> = {
+  book: "デモ版では書籍情報を取得できません",
+  product: "デモ版では JAN 情報を取得できません",
+};
+
 function prefillMessage(kind: PrefillKind, status: PrefillStatus): string {
   const noun = PREFILL_NOUN[kind];
   const messages: Record<PrefillStatus, string> = {
@@ -41,6 +49,7 @@ function prefillMessage(kind: PrefillKind, status: PrefillStatus): string {
     skipped: `${noun}を取得しましたが、編集中のため反映していません`,
     notFound: `${noun}が見つかりませんでした`,
     error: `${noun}の取得に失敗しました`,
+    demoDisabled: PREFILL_DEMO_MESSAGE[kind],
   };
   return messages[status];
 }

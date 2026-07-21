@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isDemoMode } from '@/lib/appEnv'
 import { denyCrossSite, denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { lookupProduct } from '@/lib/productLookup'
 import { isJan } from '@/lib/scanRegister'
@@ -25,6 +26,18 @@ export async function GET(
   const denied = (await denyUnlessLoggedIn()) ?? denyCrossSite(request)
   if (denied) {
     return denied
+  }
+
+  // デモインスタンスでは Yahoo! の Client ID を持たせない (docs/39-デモ公開計画.md §5)。
+  // 黙って「見つかりませんでした」になるより、デモだと明示する (books と同じ扱い)。
+  // 表示文言はクライアント (MemoEditor) 側
+  if (isDemoMode()) {
+    return NextResponse.json({
+      success: false,
+      data: null,
+      error: 'デモ版では JAN 情報を取得できません',
+      demoDisabled: true,
+    })
   }
 
   const { jan } = await params

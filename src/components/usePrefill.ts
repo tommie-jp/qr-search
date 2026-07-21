@@ -21,6 +21,11 @@ const API_PATH: Record<PrefillKind, string> = {
   product: "/api/products",
 };
 
+// デモインスタンスは外部 API のキーを持たないため、取得の口が demoDisabled を
+// 返す (docs/39-デモ公開計画.md §5)。通常の失敗 (error) とは分けて、専用の
+// 文言を出したいので、独立した例外にして catch で見分ける。
+class DemoDisabledError extends Error {}
+
 // 自分のサーバの /api/books/<isbn> か /api/products/<jan> を引く。
 // 外部 API を直接叩かない理由は各ルート (route.ts) に書いてある
 // (books は NDL の CORS、products はキーの秘匿)。
@@ -33,6 +38,10 @@ async function fetchSummary(
     signal,
   });
   const body = await res.json().catch(() => null);
+  // デモは「失敗」ではなく「無効」。専用文言を出すため先に見分ける
+  if (body?.demoDisabled) {
+    throw new DemoDisabledError();
+  }
   if (!res.ok || !body?.success) {
     throw new Error(body?.error ?? `取得に失敗しました (HTTP ${res.status})`);
   }
@@ -46,13 +55,15 @@ async function fetchSummary(
 //   skipped  … 取得できたが、打ち始めていたので入れなかった
 //   notFound … どの API にも無かった
 //   error    … 通信・サーバの失敗
+//   demoDisabled … デモインスタンスで取得を無効にしている (docs/39 §5)
 export type PrefillStatus =
   | "idle"
   | "loading"
   | "loaded"
   | "skipped"
   | "notFound"
-  | "error";
+  | "error"
+  | "demoDisabled";
 
 interface PrefillOptions {
   // 新規登録するコードが ISBN / JAN のときだけ渡す
@@ -118,6 +129,11 @@ export function usePrefill({
       .catch((err) => {
         if (abort.signal.aborted) {
           return; // ページを離れただけ
+        }
+        // デモは失敗ではないので、専用の status にして専用文言を出す
+        if (err instanceof DemoDisabledError) {
+          setStatus("demoDisabled");
+          return;
         }
         // 握り潰さずに残す (UI にも status で出る)
         console.warn("書誌・商品情報の取得に失敗しました", err);
