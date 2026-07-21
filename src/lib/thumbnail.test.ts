@@ -12,7 +12,10 @@ async function png(width: number, height: number): Promise<Uint8Array> {
   return new Uint8Array(buffer)
 }
 
-test('大きい画像は長辺を THUMB_MAX_PX に縮め、縦横比を保つ', async () => {
+test('大きい画像は縦横比を保ったまま THUMB_MAX_PX の箱に収める', async () => {
+  // 画像モードのタイルは object-contain で全体を見せるので、切り抜かず
+  // 縦横比を保つ (fit: 'inside')。2:1 の絵は長辺が一辺に収まり、短辺は半分
+  // になる (docs/32 §1)
   const thumb = await makeThumbnail(await png(2000, 1000))
 
   const meta = await sharp(thumb!).metadata()

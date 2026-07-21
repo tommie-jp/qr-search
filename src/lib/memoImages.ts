@@ -57,8 +57,18 @@ export function allImageNames(memo: string): string[] {
   return [...seen]
 }
 
+// サムネ生成パラメータ (thumbnail.ts) の版。パラメータを変えたら上げる。
+//
+// ?thumb=1 は 1 年 immutable でブラウザに焼かれる (route.ts の IMMUTABLE_CACHE)
+// ため、DB の thumb を作り直しても URL が同じだと閲覧者には旧サムネが残る。
+// URL に版を混ぜておけば、版を上げた瞬間に全参照が別 URL になりキャッシュを
+// 割って新サムネを取り直す。route はこの値を読まない (thumb=1 だけを見る) ので
+// 増やすだけでよい。v1: 長辺 320 inside → v2: 正方形 384 cover → v3: 384 inside
+// (縦横比維持に戻す。画像モードのタイルを contain 全体表示に変えたため。docs/32 §1)
+const THUMB_VERSION = 3
+
 // 一覧のサムネ配信 URL。?thumb=1 は縮小版を返す
-// (src/app/api/images/[name]/route.ts)。
+// (src/app/api/images/[name]/route.ts)。v はキャッシュバスター (上記)。
 export function thumbUrl(name: string): string {
-  return `${IMAGE_PATH_PREFIX}${name}?thumb=1`
+  return `${IMAGE_PATH_PREFIX}${name}?thumb=1&v=${THUMB_VERSION}`
 }

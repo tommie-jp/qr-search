@@ -13,10 +13,27 @@ import sharp from 'sharp'
 
 export const THUMB_MIME = 'image/webp'
 
-// 長辺の上限 (px)。カード表示のサムネ枠は 5 行分 ≒ 96px なので、
-// 高 DPR (3x) の端末でも足りる 320px を上限にする。
-// 単一の大きさで小・大の両方をまかなう (枠は CSS で決まり、絵は縮む側に強い)。
-export const THUMB_MAX_PX = 320
+// サムネ一辺の px。**縦横比を保ったまま** 384x384 の箱に収める (fit: 'inside')。
+//
+// 画像表示モードのタイルは画像**全体**を余白付き (object-contain) で見せるよう
+// にした (docs/32 §1)。切り抜いた正方形を配ると全体が見えないので、絵は縦横比を
+// 保って持つ。かつては正方形に切り抜いて (fit: 'cover') 持っていた — 当時タイルも
+// object-cover で覆っており、横長写真では短辺が足りず甘く見えたためだが、タイルを
+// contain に変えたことでその理由は消えた。
+//
+// 残る消費者 (compact 40px / 画像検索モーダル 56px / card 96px) は正方形の
+// object-cover のままだが、縦横比維持でも短辺は 4:3 で 288px 確保でき、最大の
+// card 96px を 3x DPR で覆える。パノラマ級に細長い絵だけ短辺が痩せるが、これらは
+// 小さい枠なので実害は小さい。
+//
+// 一辺 384px は最大消費者である画像タイル (≒208 CSS px) を約 1.85x DPR まで、
+// card/モーダル/compact を 3x 以上まで賄う。単一の大きさで全モードを配る方針は
+// 据え置き (枠は CSS で決まり、絵は縮む側に強い)。
+//
+// 生成パラメータを変えたので既存 thumb は作り直しが要る
+// (scripts/backfillThumbs.ts --force)。配信 URL 側もキャッシュを割る
+// (memoImages.ts の thumbUrl の版)。
+export const THUMB_MAX_PX = 384
 
 // 展開後のピクセル数の上限 (解凍爆弾よけ)。
 //
@@ -64,9 +81,12 @@ export async function makeThumbnail(
       // (本文側はブラウザが EXIF を見るので正しく出てしまい、食い違う)
       .rotate()
       .resize(THUMB_MAX_PX, THUMB_MAX_PX, {
-        // 枠に収める。切り抜きは表示側の object-cover に任せる。
-        // 縦横比を保って持てば、小・大どちらの枠にも後から合わせられる
+        // 縦横比を保ったまま 384x384 の箱に収める (切り抜かない)。画像モードの
+        // タイルは object-contain で全体を見せるので、絵の全体を残す必要がある。
+        // 正方形 object-cover の消費者 (compact/モーダル/card) は表示側が枠に
+        // 合わせて切り抜くため、こちらが縦横比維持でも困らない。
         fit: 'inside',
+        // 原画が箱より小さいときは拡大しない (引き伸ばしはボケる)
         withoutEnlargement: true,
       })
       .webp({ quality: 80 })
