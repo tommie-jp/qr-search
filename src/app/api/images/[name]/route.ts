@@ -4,7 +4,11 @@ import { resolveByteRange } from '@/lib/httpRange'
 import { isPublicImageName } from '@/lib/items'
 import { currentUser } from '@/lib/session'
 import { THUMB_MIME } from '@/lib/thumbnail'
-import { isAllowedContentMime, isValidAttachmentName } from '@/lib/uploads'
+import {
+  isAllowedContentMime,
+  isValidAttachmentName,
+  isValidVideoName,
+} from '@/lib/uploads'
 
 interface RouteContext {
   params: Promise<{ name: string }>
@@ -76,7 +80,16 @@ export async function GET(
     if (row?.thumb) {
       return imageResponse(row.thumb, THUMB_MIME, IMMUTABLE_CACHE)
     }
-    // 未生成 (バックフィル前・生成失敗) なら原寸で代替する。一覧は重くなるが
+    // 動画はサムネが無くても**原寸で代替しない**。poster が無いだけで数十 MB の
+    // 動画本体を返してしまうと、一覧や <video poster> の意図に反する。404 を返せば
+    // ブラウザは poster を静かに無視する (docs/14 §Phase4)。行が無い場合も 404。
+    if (isValidVideoName(name)) {
+      return NextResponse.json(
+        { success: false, data: null, error: 'サムネイルがありません' },
+        { status: 404, headers: { 'Cache-Control': FALLBACK_CACHE } },
+      )
+    }
+    // 画像は未生成 (バックフィル前・生成失敗) なら原寸で代替する。一覧は重くなるが
     // 絵は出る。行そのものが無い場合もここを抜け、下の 404 に合流する
   }
 

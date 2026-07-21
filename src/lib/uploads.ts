@@ -8,6 +8,7 @@ import {
   TEXT_EXTENSIONS,
   type TextFormat,
 } from './textFormats'
+import { VIDEO_EXTENSION_ALTERNATION } from './videoFormats'
 
 // 保存できる画像形式 (final mime) → 拡張子。
 // これは「そのまま DB に保存できる = ブラウザが表示できる」形式の表。
@@ -24,15 +25,31 @@ const MIME_TO_EXT: Record<string, string> = {
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
+// 動画だけは別枠で大きい上限を持つ (docs/14-動画挿入計画.md)。3 分・720p・
+// 映像 1Mbps + 音声 64kbps で約 24MB になるため、余裕を見て 30MB。画像・音声・
+// PDF・テキストは従来どおり MAX_IMAGE_BYTES (10MB) のまま — 動画以外を大きく
+// する理由はないので、種別で上限を分ける (判定は attachmentStore が中身を見て)。
+export const MAX_VIDEO_BYTES = 30 * 1024 * 1024
+
 // デモインスタンスでの 1 ファイル上限 (docs/38-デモモード計画.md §5)。
 // guest に書き込みを許す代わりに縮める。総量クォータは別計画だが、
 // 1 枚を小さくするだけでも「ファイル置き場」化をだいぶ抑えられる。
+// 動画はデモでは扱わない (2MB では成立しない。録画ボタンも出さない)。
 export const DEMO_MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
-// いま効いている 1 ファイル上限。添付 (画像・音声・PDF・テキスト) はどれも
-// /api/images の 1 経路なので、ここを見れば全種別に効く。定数ではなく関数に
-// するのは、DEMO_MODE を起動時 env で切り替えるため (テストも env で差せる)。
+// リクエスト全体で受け入れうる 1 ファイルの上限 (= 全種別の最大)。
+// checkUploadRequest の Content-Length 事前チェックと route の申告サイズ検査が
+// 使う「本文を読む前の門」。動画が最大なので非デモでは MAX_VIDEO_BYTES に開く。
+// **種別ごとの上限はこの後 attachmentStore が中身を見て絞る** (動画 30MB /
+// それ以外 10MB)。定数ではなく関数にするのは DEMO_MODE を起動時 env で切り替える
+// ため (テストも env で差せる)。デモでは動画を扱わないので従来の 2MB のまま。
 export function maxUploadBytes(): number {
+  return isDemoMode() ? DEMO_MAX_IMAGE_BYTES : MAX_VIDEO_BYTES
+}
+
+// 動画以外 (画像・音声・PDF・テキスト) の 1 ファイル上限。デモでは 2MB。
+// attachmentStore がスニッフ後にこの値で絞る (route はこれを渡す)。
+export function maxAttachmentBytes(): number {
   return isDemoMode() ? DEMO_MAX_IMAGE_BYTES : MAX_IMAGE_BYTES
 }
 
@@ -209,6 +226,7 @@ export function isValidAttachmentName(name: string): boolean {
   return (
     isValidImageName(name) ||
     isValidAudioName(name) ||
+    isValidVideoName(name) ||
     isValidPdfName(name) ||
     isValidTextName(name)
   )
@@ -220,6 +238,7 @@ export function isAllowedContentMime(mime: string): boolean {
   return (
     mime in MIME_TO_EXT ||
     mime in AUDIO_MIME_TO_EXT ||
+    mime in VIDEO_MIME_TO_EXT ||
     mime === PDF_MIME ||
     mime in TEXT_MIME_TO_EXT
   )
@@ -436,6 +455,120 @@ export function sniffAudioFormat(bytes: Uint8Array): AudioFormat | null {
     return 'webm'
   }
   return sniffIsoBmffAudio(bytes)
+}
+
+// --- 動画 (docs/14-動画挿入計画.md) ---
+//
+// 動画は音声と同じく変換もサムネ生成もサーバではしない。ブラウザが直接再生できる
+// 形式だけを受け付け、images テーブルへそのまま bytes で保存し、そのまま配信する。
+// 音声のスニッフが「動画トラックを持つものを弾く」のに対し、こちらは「動画
+// トラックを持つもの**だけ**を受ける」— ちょうど裏返しの判定になる。
+//
+// サムネイル (poster) はクライアントが先頭フレームから WebP を作って別途送り、
+// thumb カラムへ入れる (サーバに ffmpeg を持ち込まない)。
+
+// スニッフが返す**中身の形式**。保存拡張子とは分ける — webm 動画は中身は
+// video/webm だが、保存名は `.mkv` に写す (videoFormats.ts の経緯: 音声のみの
+// `.webm` と URL 上で衝突させない)。
+export type VideoFormat = 'mp4' | 'webm' | 'mov'
+
+const VIDEO_FORMAT_TO_MIME: Record<VideoFormat, string> = {
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+}
+
+// 中身の形式 → 保存名の拡張子。mp4/mov は形式名と同じ、webm 動画だけ `.mkv`。
+const VIDEO_FORMAT_TO_EXT: Record<VideoFormat, string> = {
+  mp4: 'mp4',
+  webm: 'mkv',
+  mov: 'mov',
+}
+
+// 配信時に「DB の mime を信じてよいか」の判定に使う (未知 mime を配らない)。
+// キーだけを見るので値は保存拡張子でよい。
+const VIDEO_MIME_TO_EXT: Record<string, string> = {
+  'video/mp4': 'mp4',
+  'video/webm': 'mkv',
+  'video/quicktime': 'mov',
+}
+
+// 保存名は画像・音声と同じ「UUID + 対応拡張子」だけ (拡張子は mp4/mkv/mov)。
+const VIDEO_NAME_PATTERN = new RegExp(
+  `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(${VIDEO_EXTENSION_ALTERNATION})$`,
+)
+
+// sniff で決めた中身の形式を、保存に使う mime / ext へ写す。
+export function videoSaveInfo(format: VideoFormat): { mime: string; ext: string } {
+  return { mime: VIDEO_FORMAT_TO_MIME[format], ext: VIDEO_FORMAT_TO_EXT[format] }
+}
+
+export function isValidVideoName(name: string): boolean {
+  return VIDEO_NAME_PATTERN.test(name)
+}
+
+// QuickTime (.mov) の major brand。iPhone のカメラロール由来の mov を mp4 と
+// 区別して mime を付けるために見る (再生自体はどちらもブラウザ任せ)。
+const QUICKTIME_BRANDS = new Set(['qt  '])
+
+// moov のトラックに映像 (vide) ハンドラがあるか。音声の hasAudioOnlyTracks の
+// 裏返しで、ブランド名に依らずトラック種別で判定する (Safari の録画が名乗る
+// iso5 系ブランドでも正しく拾える)。
+function hasVideoTrack(bytes: Uint8Array): boolean {
+  const moov = findTopLevelBox(bytes, 'moov')
+  if (!moov) {
+    return false
+  }
+  return handlerTypesIn(moov).includes('vide')
+}
+
+function sniffIsoBmffVideo(bytes: Uint8Array): VideoFormat | null {
+  const brands = readIsoBmffBrands(bytes)
+  if (!brands) {
+    return null
+  }
+  // 映像トラックを持たない ISO-BMFF (音声だけの m4a など) は動画にしない
+  if (!hasVideoTrack(bytes)) {
+    return null
+  }
+  return brands.some((b) => QUICKTIME_BRANDS.has(b)) ? 'mov' : 'mp4'
+}
+
+// EBML (webm/matroska) で、映像 CodecID を含むものを動画として受ける。
+// 音声側 (isWebmAudio) が映像 CodecID を見つけたら弾くのと同じ列挙 (裏返し)。
+function isWebmVideo(bytes: Uint8Array): boolean {
+  if (!startsWith(bytes, EBML_MAGIC)) {
+    return false
+  }
+  return containsMarker(
+    bytes,
+    WEBM_VIDEO_CODEC_IDS,
+    WEBM_VIDEO_LEADS,
+    bytes.byteLength,
+  )
+}
+
+// 先頭バイトから動画形式を判定する。判定できなければ null (=非対応)。
+// attachmentStore は音声判定より後にこれを試す (音声のみのファイルは
+// hasVideoTrack が false になり、ここでも null になるので取り違えない)。
+export function sniffVideoFormat(bytes: Uint8Array): VideoFormat | null {
+  if (isWebmVideo(bytes)) {
+    return 'webm'
+  }
+  return sniffIsoBmffVideo(bytes)
+}
+
+// クライアントが送ってきた動画サムネ (poster) が信用できるか。WebP に限り、
+// 200KB を超えないものだけを受ける。中身の検証はサーバの唯一の砦なので
+// (クライアント生成物をそのまま thumb カラムへ入れる)、ここで必ず通す。
+export const MAX_VIDEO_THUMB_BYTES = 200 * 1024
+
+export function isValidVideoThumb(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength > 0 &&
+    bytes.byteLength <= MAX_VIDEO_THUMB_BYTES &&
+    sniffImageFormat(bytes) === 'webp'
+  )
 }
 
 // --- PDF (docs/12-添付ファイル種類拡張メモ.md) ---

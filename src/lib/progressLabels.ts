@@ -49,3 +49,8 @@ export function formatElapsed(elapsedMs: number): string {
 export function recordButtonLabel(isRecording: boolean, elapsedMs: number): string {
   return isRecording ? `停止 ${formatElapsed(elapsedMs)}` : '録音'
 }
+
+// 録画ボタン。録音ボタンと同じ流儀で、録画中は経過時間つきの「停止」を出す
+export function videoRecordButtonLabel(isRecording: boolean, elapsedMs: number): string {
+  return isRecording ? `停止 ${formatElapsed(elapsedMs)}` : '録画'
+}

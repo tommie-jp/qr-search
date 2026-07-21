@@ -27,9 +27,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   let file: FormDataEntryValue | null
+  let thumbField: FormDataEntryValue | null = null
   try {
     const formData = await request.formData()
     file = formData.get('file')
+    // 動画のときだけ付く poster 用 WebP (クライアント生成)。中身の検証は
+    // attachmentStore が行うので、ここでは有無だけ拾う (docs/14 §Phase3)
+    thumbField = formData.get('thumb')
   } catch (error) {
     // 400 を返すが原因はログに残す。multipart の書き方だけでなく、途中で切れた
     // 通信や境界を書き換えるプロキシもここへ来るため (api/import と同じ理由)
@@ -55,10 +59,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     return errorResponse(quota.status, quota.error)
   }
 
+  // 動画の poster (WebP) が付いていれば読む。動画以外では無視される
+  // (attachmentStore が動画判定時のみ使い、WebP・200KB 以下だけを採用する)
+  const videoThumb =
+    thumbField instanceof File && thumbField.size > 0
+      ? new Uint8Array(await thumbField.arrayBuffer())
+      : null
+
   // ファイル名を渡すのはテキスト (txt/csv/md) の拡張子を決めるためだけ。
   // 名前そのものは保存名にならない (サーバ発番の UUID + 既知の拡張子)
   const stored = await storeAttachment(new Uint8Array(await file.arrayBuffer()), {
     fileName: file.name,
+    videoThumb,
   })
   if (!stored.ok) {
     return errorResponse(400, stored.reason)

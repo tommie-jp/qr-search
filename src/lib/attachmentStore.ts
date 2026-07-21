@@ -16,18 +16,22 @@ import { hasUtf16Bom, normalizeTextBytes } from './normalizeText'
 import {
   audioSaveInfo,
   type ImageFormat,
+  isValidVideoThumb,
   MAX_IMAGE_BYTES,
+  MAX_VIDEO_BYTES,
   PDF_EXT,
   PDF_MIME,
   sniffAudioFormat,
   sniffImageFormat,
   sniffPdf,
+  sniffVideoFormat,
   textSaveInfo,
   tooLargeMessage,
+  videoSaveInfo,
 } from './uploads'
 
 export const UNSUPPORTED_ATTACHMENT_MESSAGE =
-  '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, PDF: pdf, テキスト: txt/csv/md)'
+  '対応していない形式です (画像: png/jpg/gif/webp/avif/heic/tiff, 音声: mp3/m4a/wav/webm, 動画: mp4/webm/mov, PDF: pdf, テキスト: txt/csv/md)'
 
 export interface StoreAttachmentOptions extends SaveImageOptions {
   // 1 件あたりの上限 (既定: MAX_IMAGE_BYTES = 10MB)。
@@ -51,6 +55,13 @@ export interface StoreAttachmentOptions extends SaveImageOptions {
   // textSaveInfo)。申告をそのまま保存名にはせず、既知の 3 つへ写すだけ。
   // 無ければ txt として保存する
   fileName?: string | null
+
+  // 動画の poster に使う WebP サムネ。クライアントが先頭フレームから作って
+  // 同じ POST で送る (docs/14 §Phase3)。**動画と判定されたときだけ**使い、
+  // WebP かつ 200KB 以下でなければ捨てる (isValidVideoThumb)。無ければ
+  // poster なしで保存する (配信側が 404 を返し、ブラウザは poster を無視する)。
+  // ENEX インポートなど動画を伴わない経路では渡らない。
+  videoThumb?: Uint8Array<ArrayBuffer> | null
 }
 
 export type AttachmentResult =
@@ -74,6 +85,29 @@ export async function storeAttachment(
   bytes: Uint8Array<ArrayBuffer>,
   options: StoreAttachmentOptions = {},
 ): Promise<AttachmentResult> {
+  // 動画は他形式より上限が大きい (30MB) ので、共通の 10MB 検査より**先に**
+  // 判定する。先に maxBytes=10MB で弾くと、30MB まで許すはずの動画が入らない。
+  // 音声のみのファイルは映像トラックを持たず sniffVideoFormat が null を返すので、
+  // ここで音声を取り違えることはない (uploads.ts sniffVideoFormat のコメント)。
+  const videoFormat = sniffVideoFormat(bytes)
+  if (videoFormat) {
+    if (bytes.byteLength > MAX_VIDEO_BYTES) {
+      return { ok: false, reason: tooLargeMessage(MAX_VIDEO_BYTES) }
+    }
+    // 動画も素通し保存。mp4/mov は moov を先頭へ移す (音声の m4a と同じ理由で、
+    // 末尾 moov のままだと <video preload="metadata"> が再生を始められない)。
+    // webm は ISO-BMFF ではないので moveMoovToFront が null を返す = 素通し。
+    const { mime, ext } = videoSaveInfo(videoFormat)
+    const stored =
+      videoFormat === 'webm' ? bytes : (moveMoovToFront(bytes) ?? bytes)
+    // クライアント生成のサムネは中身を検証してから採用する (WebP かつ 200KB 以下)。
+    const thumb =
+      options.videoThumb && isValidVideoThumb(options.videoThumb)
+        ? options.videoThumb
+        : null
+    return succeed(await savePlainAttachment(stored, mime, ext, thumb), false)
+  }
+
   const maxBytes = options.maxBytes ?? MAX_IMAGE_BYTES
   if (bytes.byteLength > maxBytes) {
     return { ok: false, reason: tooLargeMessage(maxBytes) }

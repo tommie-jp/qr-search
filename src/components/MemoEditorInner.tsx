@@ -9,12 +9,16 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recordingAltText } from "@/lib/audio/audioRecorder";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
+import { recordingAltText as videoRecordingAltText } from "@/lib/video/videoRecorder";
+import { makeVideoPoster } from "@/lib/video/videoPoster";
+import { VIDEO_EXTENSION_ALTERNATION } from "@/lib/videoFormats";
 import { TEXT_EXTENSION_ALTERNATION } from "@/lib/textFormats";
 import { imageAtCursor, ocrInsertion, ocrPlaceholder } from "@/lib/ocr/ocrQuote";
 import {
   ocrButtonLabel,
   recordButtonLabel,
   uploadButtonLabel,
+  videoRecordButtonLabel,
   type UploadProgress,
 } from "@/lib/progressLabels";
 import { fenceLanguageCompletion } from "./fenceCompletion";
@@ -33,6 +37,7 @@ import {
   SECONDARY_BUTTON_CLASS,
 } from "./ui";
 import { useAudioRecording } from "./useAudioRecording";
+import { useVideoRecording } from "./useVideoRecording";
 
 // fabric 一式は重いので、お絵かきを開くまで読み込まない
 // (CodeMirror を遅延させているのと同じ流儀。MemoEditor.tsx 参照)
@@ -65,6 +70,14 @@ const ACCEPTED_IMAGE_TYPES =
 const ACCEPTED_AUDIO_TYPES =
   "audio/mpeg,audio/mp4,audio/wav,audio/x-m4a,audio/webm,.mp3,.m4a,.wav,.webm";
 
+// 動画 (docs/14-動画挿入計画.md)。mp4/webm/mov を受け付ける。iOS カメラロールは
+// .mov (QuickTime)、Android の録画は .webm。最終判定はサーバの sniffVideoFormat が
+// 中身を見て行う (映像トラックを持つものだけが動画として通る)。webm 動画は
+// 保存時に .mkv へ写す (videoFormats.ts の経緯) が、ここは**入力**の受け口なので
+// ユーザーのファイル名 (.webm) と MIME を併記する
+const ACCEPTED_VIDEO_TYPES =
+  "video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov,.mkv,.3gp";
+
 // PDF (docs/12-添付ファイル種類拡張メモ.md)。表示はブラウザ内蔵ビューアに任せ、
 // 本文にはリンクだけを出す
 const ACCEPTED_PDF_TYPES = "application/pdf,.pdf";
@@ -78,7 +91,7 @@ const ACCEPTED_PDF_TYPES = "application/pdf,.pdf";
 // サーバの拒否メッセージがちゃんと知らせるので無反応にはならない
 const ACCEPTED_TEXT_TYPES = "text/plain,text/csv,text/markdown,.txt,.csv,.md";
 
-const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${ACCEPTED_PDF_TYPES},${ACCEPTED_TEXT_TYPES}`;
+const ACCEPTED_FILE_TYPES = `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_AUDIO_TYPES},${ACCEPTED_VIDEO_TYPES},${ACCEPTED_PDF_TYPES},${ACCEPTED_TEXT_TYPES}`;
 
 // ペースト/ドロップで拾う画像の判定。MIME が image/* のもの、または
 // 対応拡張子を持つもの (MIME を空で送る HEIC 対策)。実体の検査はサーバが行う
@@ -86,6 +99,18 @@ const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|tiff?)$/i;
 
 // 音声の判定。MIME が audio/* のもの、または対応拡張子を持つもの。
 const AUDIO_EXT_RE = new RegExp(`\\.(?:${AUDIO_EXTENSION_ALTERNATION})$`, "i");
+
+// 動画の入力判定。ペースト/ドロップ/ファイル選択で拾う。MIME が video/* の
+// もの、または動画の入力拡張子。**保存名の拡張子 (VIDEO_EXTENSION_ALTERNATION =
+// mp4|mkv|mov) とは別**で、こちらはユーザーが持つファイル名 (.webm 等) を拾う。
+const VIDEO_INPUT_EXT_RE = /\.(?:mp4|m4v|webm|mov|mkv|3gp)$/i;
+
+// 保存後の URL から動画と判る拡張子 (attachmentKind / 表示の振り分け用)。
+// サーバが付ける保存名の拡張子 (mp4|mkv|mov)。
+const VIDEO_URL_EXT_RE = new RegExp(
+  `\\.(?:${VIDEO_EXTENSION_ALTERNATION})$`,
+  "i",
+);
 
 const PDF_EXT_RE = /\.pdf$/i;
 
@@ -97,6 +122,17 @@ const TEXT_EXT_RE = new RegExp(`\\.(?:${TEXT_EXTENSION_ALTERNATION})$`, "i");
 
 function isAudioFile(file: File): boolean {
   return file.type.startsWith("audio/") || AUDIO_EXT_RE.test(file.name);
+}
+
+function isVideoFile(file: File): boolean {
+  return file.type.startsWith("video/") || VIDEO_INPUT_EXT_RE.test(file.name);
+}
+
+// poster (先頭フレーム WebP) を作りに行くか。**MIME が video/* のときだけ**にする —
+// .webm は音声と拡張子を共有するので、名前だけで判ると音声 webm でも 5 秒待って
+// 空フレームを作る無駄が出る。録画・実際の動画ファイルは video/* が付く。
+function shouldMakePoster(file: File): boolean {
+  return file.type.startsWith("video/");
 }
 
 function isPdfFile(file: File): boolean {
@@ -115,7 +151,7 @@ function attachmentAltText(fileName: string, fallback: string): string {
   return cleaned.length > 0 ? cleaned : fallback;
 }
 
-type AttachmentKind = "image" | "audio" | "pdf" | "text";
+type AttachmentKind = "image" | "audio" | "video" | "pdf" | "text";
 
 // 保存された添付の種類を**保存後の URL の拡張子**から決める。
 //
@@ -126,6 +162,11 @@ type AttachmentKind = "image" | "audio" | "pdf" | "text";
 function attachmentKind(url: string): AttachmentKind {
   if (AUDIO_EXT_RE.test(url)) {
     return "audio";
+  }
+  // 保存名の拡張子 (mp4|mkv|mov)。音声の .webm とは重ならない (VideoFormat の
+  // webm 動画は .mkv で保存される)
+  if (VIDEO_URL_EXT_RE.test(url)) {
+    return "video";
   }
   if (PDF_EXT_RE.test(url)) {
     return "pdf";
@@ -176,13 +217,14 @@ function replaceToken(view: EditorView, token: string, replacement: string): voi
   });
 }
 
-// アップロード対象に拾うファイル (画像・音声・PDF・テキスト)。
+// アップロード対象に拾うファイル (画像・音声・動画・PDF・テキスト)。
 function pickFiles(list: FileList | undefined | null): File[] {
   return Array.from(list ?? []).filter(
     (f) =>
       f.type.startsWith("image/") ||
       IMAGE_EXT_RE.test(f.name) ||
       isAudioFile(f) ||
+      isVideoFile(f) ||
       isPdfFile(f) ||
       isTextFile(f),
   );
@@ -193,7 +235,7 @@ function pickFiles(list: FileList | undefined | null): File[] {
 // 更新しようとすることがあり、そのまま通すと録音ごと失うため
 function busyReason(isRecording: boolean, uploading: boolean): string {
   if (isRecording) {
-    return "録音中です。停止してから更新して下さい。";
+    return "録音・録画中です。停止してから更新して下さい。";
   }
   if (uploading) {
     return "画像のアップロード中です。完了してから更新して下さい。";
@@ -220,6 +262,9 @@ interface InsertFilesOptions {
   // 音声の画像記法に入れる alt。録音は日時を残したいので上書きする
   // (ファイル選択・ペースト由来の音声は既定の "audio" のまま)
   audioAlt?: string;
+  // 動画の alt。録画は日時を残したいので上書きする (ファイル選択・ペースト
+  // 由来の動画は既定の "video" のまま)
+  videoAlt?: string;
   // 画像の alt。お絵かきは「いつ描いたか」を残して全文検索から引けるようにする
   // (ファイル選択・ペースト由来の画像は既定の空のまま)
   imageAlt?: string;
@@ -263,6 +308,8 @@ export default function MemoEditorInner({
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // 録画中のライブプレビュー用 <video>。srcObject は属性で渡せないので ref で繋ぐ
+  const videoPreviewRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     onReady();
@@ -303,9 +350,25 @@ export default function MemoEditorInner({
     onError: setError,
   });
 
-  // アップロード / OCR / 録音の完了前に送信すると、画像リンクや OCR 結果、
-  // 録音そのものが memo に入らないため、処理中だけフォーム送信をブロックして知らせる
-  const busy = uploading || ocrCount > 0 || recording.isRecording;
+  // 編集画面からのその場録画 (docs/14-動画挿入計画.md)。録音と同じく、録れた
+  // ものはファイル選択と同じ挿入経路 (insertFiles) に流す。alt には録画日時を残す
+  const videoRecording = useVideoRecording({
+    onFinish: async (result) => {
+      const view = editorRef.current?.view;
+      if (!view) {
+        return;
+      }
+      await insertFiles(view, [result.file], {
+        videoAlt: videoRecordingAltText(result.recordedAt),
+      });
+    },
+    onError: setError,
+  });
+
+  // アップロード / OCR / 録音・録画の完了前に送信すると、画像リンクや OCR 結果、
+  // 録音・録画そのものが memo に入らないため、処理中だけフォーム送信をブロックして知らせる
+  const isRecording = recording.isRecording || videoRecording.isRecording;
+  const busy = uploading || ocrCount > 0 || isRecording;
   useEffect(() => {
     if (!busy) {
       return;
@@ -316,11 +379,22 @@ export default function MemoEditorInner({
     }
     const blockSubmit = (event: SubmitEvent) => {
       event.preventDefault();
-      setError(busyReason(recording.isRecording, uploading));
+      setError(busyReason(isRecording, uploading));
     };
     form.addEventListener("submit", blockSubmit);
     return () => form.removeEventListener("submit", blockSubmit);
-  }, [busy, uploading, recording.isRecording]);
+  }, [busy, uploading, isRecording]);
+
+  // 録画中のプレビューを <video> に繋ぐ。MediaStream は srcObject にしか渡せず、
+  // 属性では渡せないので ref 経由で設定する。停止すると previewStream は null に
+  // なり、ここで srcObject を外す (track は recorder 側が止める)
+  useEffect(() => {
+    const el = videoPreviewRef.current;
+    if (!el) {
+      return;
+    }
+    el.srcObject = videoRecording.previewStream;
+  }, [videoRecording.previewStream]);
 
   // 画像 1 枚を OCR し、指定位置へ引用ブロックを差し込む。挿入時 OCR と
   // 「後から OCR」ボタンの両方がこの 1 本を使う (docs/24-画像OCR計画.md §4)。
@@ -393,7 +467,8 @@ export default function MemoEditorInner({
     files: File[],
     options: InsertFilesOptions = {},
   ) => {
-    const { audioAlt = "audio", imageAlt = "", ocr = true } = options;
+    const { audioAlt = "audio", videoAlt = "video", imageAlt = "", ocr = true } =
+      options;
     setError(null);
     try {
       for (const [index, file] of files.entries()) {
@@ -401,23 +476,35 @@ export default function MemoEditorInner({
         insertText(view, token);
         setUpload({ current: index + 1, total: files.length, percent: 0 });
         try {
+          // 動画は先頭フレームの WebP poster をここで作り、本体と同じ POST で
+          // 送る (docs/14 §Phase3)。作れなければ null (poster 無しで続行)。
+          // 送信 % を出す前に作る — poster 生成は一瞬なので % 表示に影響しない
+          const poster = shouldMakePoster(file)
+            ? await makeVideoPoster(file)
+            : null;
           // 送信 % はボタンラベル (React state) だけに出す。本文トークンを
           // % で書き換えると undo が壊れる (ocrIntoDoc の同旨コメント参照)。
           // アップロードは直列なので、ボタンの % が常に今のファイルの %。
-          // 画像・音声とも同じ /api/images へ送る (サーバが中身で振り分ける)
-          const url = await uploadImageWithProgress(file, (percent) => {
-            setUpload({ current: index + 1, total: files.length, percent });
-          });
-          // 音声は ![audio](url)、PDF・テキストは ![ファイル名.pdf](url) で
-          // 挿入し、MarkdownView が src の拡張子を見て <audio> / ビューアを開く
-          // ボタンに振り分ける。画像は従来どおり ![](url)
+          // 画像・音声・動画とも同じ /api/images へ送る (サーバが中身で振り分ける)
+          const url = await uploadImageWithProgress(
+            file,
+            (percent) => {
+              setUpload({ current: index + 1, total: files.length, percent });
+            },
+            poster,
+          );
+          // 音声は ![audio](url)、動画は ![video](url)、PDF・テキストは
+          // ![ファイル名.pdf](url) で挿入し、MarkdownView が src の拡張子を見て
+          // <audio> / <video> / ビューアに振り分ける。画像は従来どおり ![](url)
           const kind = attachmentKind(url);
           const alt =
             kind === "audio"
               ? audioAlt
-              : kind === "image"
-                ? imageAlt
-                : attachmentAltText(file.name, KIND_FALLBACK[kind]);
+              : kind === "video"
+                ? videoAlt
+                : kind === "image"
+                  ? imageAlt
+                  : attachmentAltText(file.name, KIND_FALLBACK[kind]);
           const markup = `![${alt}](${url})`;
           replaceToken(view, token, markup);
           if (kind !== "image" || !ocr) {
@@ -649,6 +736,25 @@ export default function MemoEditorInner({
         </button>
         <button
           type="button"
+          onClick={videoRecording.toggle}
+          // 録画中だけは busy でも押せる。止められないと録画が終わらない
+          disabled={busy && !videoRecording.isRecording}
+          aria-pressed={videoRecording.isRecording}
+          className={SECONDARY_BUTTON_CLASS}
+        >
+          {videoRecording.isRecording && (
+            <span
+              aria-hidden
+              className="size-2.5 animate-pulse rounded-full bg-red-600"
+            />
+          )}
+          {videoRecordButtonLabel(
+            videoRecording.isRecording,
+            videoRecording.elapsedMs,
+          )}
+        </button>
+        <button
+          type="button"
           onClick={openDrawing}
           disabled={busy}
           className={SECONDARY_BUTTON_CLASS}
@@ -666,7 +772,7 @@ export default function MemoEditorInner({
         {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
             幅が狭いときは畳んでボタンの場所を空ける */}
         <span className="hidden text-gray-400 sm:inline">
-          画像・音声・PDF はペースト・ドラッグ&ドロップでも挿入できます
+          画像・音声・動画・PDF はペースト・ドラッグ&ドロップでも挿入できます
         </span>
         <span
           className={`ml-auto ${
@@ -688,6 +794,22 @@ export default function MemoEditorInner({
       {recording.note && (
         <p aria-live="polite" className={BUSY_NOTICE_CLASS}>
           {recording.note}
+        </p>
+      )}
+      {/* 録画中のライブプレビュー。何が写っているか見えないと撮りようがない。
+          muted playsInline はプレビューで音を鳴らさず・全画面へ行かせないため */}
+      {videoRecording.isRecording && (
+        <video
+          ref={videoPreviewRef}
+          autoPlay
+          muted
+          playsInline
+          className="w-full max-w-md rounded border border-gray-300"
+        />
+      )}
+      {videoRecording.note && (
+        <p aria-live="polite" className={BUSY_NOTICE_CLASS}>
+          {videoRecording.note}
         </p>
       )}
       {ocrNote && (

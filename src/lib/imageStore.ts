@@ -70,20 +70,25 @@ export async function saveImage(
   return `/api/images/${name}`
 }
 
-// 変換せずそのまま保存する添付 (音声・PDF) の入口 (docs/12-添付ファイル種類拡張メモ.md)。
+// 変換せずそのまま保存する添付 (音声・動画・PDF) の入口
+// (docs/12-添付ファイル種類拡張メモ.md, docs/14-動画挿入計画.md)。
 //
-// 画像と同じ images テーブルに置くが、変換もサムネも埋め込みも作らない:
-// ブラウザが直接再生・表示でき (mp3/m4a/wav/pdf)、一覧に並べる絵でも画像検索の
-// 対象でもないため、thumb / embedding は null のままにする。名前の作り方は
-// saveImage と同じ「サーバ生成 UUID + 対応拡張子」で、トラバーサル対策を
-// 1 か所に揃える。
+// 画像と同じ images テーブルに置くが、サーバ側の変換も埋め込みも作らない:
+// ブラウザが直接再生・表示でき (mp3/m4a/wav/mp4/webm/pdf)、画像検索の対象でも
+// ないため embedding は null のままにする。名前の作り方は saveImage と同じ
+// 「サーバ生成 UUID + 対応拡張子」で、トラバーサル対策を 1 か所に揃える。
+//
+// thumb は動画のときだけ渡る — クライアントが先頭フレームから作った WebP
+// (docs/14 §Phase3)。サーバに ffmpeg を持ち込まずに poster を出すための唯一の
+// 経路。音声・PDF は渡さないので従来どおり null。
 export async function savePlainAttachment(
   bytes: Uint8Array<ArrayBuffer>,
   mime: string,
   ext: string,
+  thumb?: Uint8Array<ArrayBuffer> | null,
 ): Promise<string> {
   const name = `${randomUUID()}.${ext}`
-  await prisma.image.create({ data: { name, mime, data: bytes } })
+  await prisma.image.create({ data: { name, mime, data: bytes, thumb: thumb ?? null } })
   return `/api/images/${name}`
 }
 

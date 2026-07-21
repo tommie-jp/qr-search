@@ -16,6 +16,9 @@ export function uploadImageWithProgress(
   // 送信量が分からない環境 (lengthComputable = false) では null を渡す。
   // 0% のまま張り付いて「止まって見える」より、% を出さない方がまし
   onPercent: (percent: number | null) => void,
+  // 動画のとき先頭フレームの WebP poster を同送する (docs/14 §Phase3)。
+  // サーバは動画判定時だけ使い、WebP・200KB 以下でなければ捨てる
+  thumb?: Blob | null,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -46,6 +49,9 @@ export function uploadImageWithProgress(
 
     const formData = new FormData();
     formData.set("file", file);
+    if (thumb) {
+      formData.set("thumb", thumb, "poster.webp");
+    }
     xhr.send(formData);
   });
 }

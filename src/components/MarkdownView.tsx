@@ -16,9 +16,11 @@ import { CircuitDiagram } from "./CircuitDiagram";
 import { ZoomableImage } from "./ZoomableImage";
 import { PdfLink } from "./pdf/PdfLink";
 import { AudioPlayer } from "./audio/AudioPlayer";
+import { VideoPlayer } from "./video/VideoPlayer";
 import { TextLink } from "./text/TextLink";
 import { BOX_CLASS } from "./ui";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
+import { VIDEO_EXTENSION_ALTERNATION } from "@/lib/videoFormats";
 import { TEXT_EXTENSION_ALTERNATION } from "@/lib/textFormats";
 import { CIRCUIT_LANG, MERMAID_LANG } from "@/lib/fenceLanguages";
 import type { CircuitMap } from "@/lib/circuitCache";
@@ -111,6 +113,15 @@ const AUDIO_SRC_RE = new RegExp(
   "i",
 );
 
+// 動画の配信 URL (`/api/images/<uuid>.mp4` など)。エディタは動画を画像記法
+// `![video](url)` で挿入するので (docs/14-動画挿入計画.md)、img の src が動画なら
+// <video> に振り分ける。保存名の拡張子は mp4|mkv|mov で、音声の .webm とは
+// 重ならない (webm 動画は .mkv で保存される。videoFormats.ts の経緯)。
+const VIDEO_SRC_RE = new RegExp(
+  `\\.(?:${VIDEO_EXTENSION_ALTERNATION})(?:[?#]|$)`,
+  "i",
+);
+
 // PDF も同じく画像記法 `![ファイル名.pdf](url)` で本文に入る。インライン
 // ビューアは埋め込まず、押したらブラウザ内蔵ビューアが開くリンクにする
 // (iPhone との相性がよく、本文が重くならない)
@@ -135,6 +146,10 @@ function imgWithWidth({
     // 音声プレイヤー + 共有ボタン。<audio> は iOS の長押し共有が効かないので、
     // 自前で共有の口を持つ (AudioPlayer.tsx の冒頭に経緯)
     return <AudioPlayer src={props.src} label={alt || "audio"} />;
+  }
+  if (typeof props.src === "string" && VIDEO_SRC_RE.test(props.src)) {
+    // 動画プレイヤー + 共有ボタン (VideoPlayer.tsx)。poster に ?thumb=1 を渡す
+    return <VideoPlayer src={props.src} label={alt || "video"} />;
   }
   if (typeof props.src === "string" && PDF_SRC_RE.test(props.src)) {
     // alt には挿入時のファイル名が入る (MemoEditorInner の pdfAltText)。

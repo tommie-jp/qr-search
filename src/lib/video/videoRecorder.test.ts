@@ -1,0 +1,301 @@
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { MAX_VIDEO_BYTES } from '../uploads'
+import {
+  AUDIO_BITS_PER_SECOND,
+  estimatedBytes,
+  extensionFor,
+  MAX_RECORDING_MS,
+  mapCaptureError,
+  pickMimeType,
+  recordingAltText,
+  recordingFileName,
+  SIZE_STOP_MS,
+  TOTAL_BITS_PER_SECOND,
+  VIDEO_BITS_PER_SECOND,
+  VideoCaptureError,
+  VideoRecorder,
+} from './videoRecorder'
+
+describe('pickMimeType', () => {
+  const original = globalThis.MediaRecorder
+
+  afterEach(() => {
+    globalThis.MediaRecorder = original
+  })
+
+  test('MediaRecorder が無い環境では undefined', () => {
+    // @ts-expect-error テストのため global を消す
+    delete globalThis.MediaRecorder
+    expect(pickMimeType()).toBeUndefined()
+  })
+
+  // 実ブラウザの対応状況を写したモック。Safari だけ codecs 明示の mp4 に答える
+  const supportLike = (browser: 'safari' | 'chrome' | 'firefox') => (type: string) => {
+    if (type.startsWith('video/webm')) {
+      // Safari は webm 録画に対応しないので webm 系は非対応にする
+      return browser !== 'safari'
+    }
+    if (type === 'video/mp4;codecs=avc1.42E01E,mp4a.40.2') {
+      return browser === 'safari'
+    }
+    return browser !== 'firefox'
+  }
+
+  const useMediaRecorder = (isTypeSupported: (type: string) => boolean) => {
+    globalThis.MediaRecorder = { isTypeSupported } as unknown as typeof MediaRecorder
+  }
+
+  test('Safari は mp4/H.264+AAC を選ぶ', () => {
+    useMediaRecorder(supportLike('safari'))
+    expect(pickMimeType()).toBe('video/mp4;codecs=avc1.42E01E,mp4a.40.2')
+  })
+
+  test('Chrome は webm/VP9 のまま (mp4 に流れない)', () => {
+    useMediaRecorder(supportLike('chrome'))
+    expect(pickMimeType()).toBe('video/webm;codecs=vp9,opus')
+  })
+
+  test('Firefox は webm/VP8 系を選ぶ', () => {
+    useMediaRecorder((type) => type === 'video/webm;codecs=vp8,opus' || type === 'video/webm')
+    expect(pickMimeType()).toBe('video/webm;codecs=vp8,opus')
+  })
+
+  test('webm しか出せない環境でも選べる', () => {
+    useMediaRecorder((type) => type === 'video/webm')
+    expect(pickMimeType()).toBe('video/webm')
+  })
+})
+
+test('録画 mime を拡張子に写す', () => {
+  expect(extensionFor('video/webm;codecs=vp9,opus')).toBe('webm')
+  expect(extensionFor('video/webm')).toBe('webm')
+  expect(extensionFor('video/mp4;codecs=avc1.42E01E,mp4a.40.2')).toBe('mp4')
+  expect(extensionFor('video/mp4')).toBe('mp4')
+})
+
+test('録画日時を alt とファイル名に整形する', () => {
+  const at = new Date(2026, 6, 20, 14, 3, 9) // 2026-07-20 14:03:09 (ローカル時刻)
+  expect(recordingAltText(at)).toBe('録画 2026-07-20 14:03:09')
+  expect(recordingFileName(at, 'mp4')).toBe('video-20260720-140309.mp4')
+})
+
+test('alt に画像記法を壊す文字が入らない', () => {
+  const alt = recordingAltText(new Date(2026, 0, 1, 0, 0, 0))
+  expect(alt).not.toMatch(/[[\]\r\n]/)
+})
+
+// ビットレートと自動停止 (時間・サイズ) は、アップロード上限と地続きの約束事。
+// どれか 1 つを動かしたときにここで気づけるようにする。
+test('自動停止までの録画がアップロード上限に収まる', () => {
+  const maxBytesByTime = estimatedBytes(MAX_RECORDING_MS)
+  expect(maxBytesByTime).toBeLessThan(MAX_VIDEO_BYTES)
+  // 3 分 (時間) がサイズ上限より先に来る想定 (24MB < 27MB の 9 割手前)
+  expect(MAX_RECORDING_MS).toBeLessThan(SIZE_STOP_MS)
+  // 推定は合計ビットレートで計算する
+  expect(TOTAL_BITS_PER_SECOND).toBe(VIDEO_BITS_PER_SECOND + AUDIO_BITS_PER_SECOND)
+})
+
+type MockRecorder = {
+  state: 'inactive' | 'recording'
+  mimeType: string
+  ondataavailable: ((e: { data: Blob }) => void) | null
+  onstop: (() => void) | null
+  start: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+}
+
+describe('VideoRecorder', () => {
+  const originalRecorder = globalThis.MediaRecorder
+  const originalMediaDevices = navigator.mediaDevices
+
+  let instance: MockRecorder
+  let track: { stop: ReturnType<typeof vi.fn> }
+  let constructorOptions: MediaRecorderOptions | undefined
+
+  const setMediaDevices = (getUserMedia: () => Promise<unknown>) => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: vi.fn(getUserMedia) },
+      configurable: true,
+    })
+  }
+
+  beforeEach(() => {
+    constructorOptions = undefined
+    instance = {
+      state: 'inactive',
+      mimeType: 'video/webm;codecs=vp9,opus',
+      ondataavailable: null,
+      onstop: null,
+      start: vi.fn(() => {
+        instance.state = 'recording'
+      }),
+      stop: vi.fn(() => {
+        instance.state = 'inactive'
+        instance.ondataavailable?.({
+          data: new Blob(['chunk'], { type: instance.mimeType }),
+        })
+        instance.onstop?.()
+      }),
+    }
+
+    function MediaRecorderCtor(this: unknown, _stream: unknown, options?: MediaRecorderOptions) {
+      constructorOptions = options
+      return instance
+    }
+    MediaRecorderCtor.isTypeSupported = (type: string) => type === 'video/webm;codecs=vp9,opus'
+    globalThis.MediaRecorder = MediaRecorderCtor as unknown as typeof MediaRecorder
+
+    track = { stop: vi.fn() }
+    setMediaDevices(async () => ({ getTracks: () => [track] }))
+  })
+
+  afterEach(() => {
+    globalThis.MediaRecorder = originalRecorder
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: originalMediaDevices,
+      configurable: true,
+    })
+  })
+
+  test('録画 → 停止でアップロードできる File を返す', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    expect(recorder.isRecording).toBe(true)
+    // ライブプレビュー用の stream が取れる
+    expect(recorder.stream).not.toBeNull()
+
+    const result = await recorder.stop()
+    // MemoEditorInner の isVideoFile が video/ で拾えること
+    expect(result.file.type).toBe('video/webm;codecs=vp9,opus')
+    expect(result.file.name).toMatch(/^video-\d{8}-\d{6}\.webm$/)
+    expect(result.file.size).toBeGreaterThan(0)
+    expect(result.durationMs).toBeGreaterThanOrEqual(0)
+    expect(recorder.isRecording).toBe(false)
+    expect(recorder.stream).toBeNull()
+  })
+
+  // Safari の録画は video/mp4。moov の並べ替えはサーバ側でやるので、
+  // ここでは中身に触らず .mp4 として渡すことだけを確かめる
+  test('Safari の録画は中身をそのまま .mp4 として渡す', async () => {
+    const original = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])
+    instance.mimeType = 'video/mp4'
+    instance.stop = vi.fn(() => {
+      instance.state = 'inactive'
+      instance.ondataavailable?.({
+        data: new Blob([original], { type: 'video/mp4' }),
+      })
+      instance.onstop?.()
+    })
+
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    const result = await recorder.stop()
+
+    expect(result.file.name).toMatch(/\.mp4$/)
+    expect(result.file.type).toBe('video/mp4')
+    expect(Array.from(new Uint8Array(await result.file.arrayBuffer()))).toEqual(
+      Array.from(original),
+    )
+  })
+
+  test('映像・音声のビットレートを明示して録画する', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    expect(constructorOptions?.videoBitsPerSecond).toBe(VIDEO_BITS_PER_SECOND)
+    expect(constructorOptions?.audioBitsPerSecond).toBe(AUDIO_BITS_PER_SECOND)
+    await recorder.stop()
+  })
+
+  test('停止するとカメラ・マイクを離す', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    expect(track.stop).not.toHaveBeenCalled()
+    await recorder.stop()
+    expect(track.stop).toHaveBeenCalled()
+  })
+
+  test('中断してもカメラを離す (画面離脱)', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    recorder.cancel()
+    expect(track.stop).toHaveBeenCalled()
+    expect(recorder.isRecording).toBe(false)
+  })
+
+  test('MediaRecorder の生成に失敗してもカメラを離す', async () => {
+    globalThis.MediaRecorder = Object.assign(
+      function failing() {
+        throw new Error('生成できません')
+      },
+      { isTypeSupported: () => true },
+    ) as unknown as typeof MediaRecorder
+
+    const recorder = new VideoRecorder()
+    await expect(recorder.start()).rejects.toBeInstanceOf(VideoCaptureError)
+    expect(track.stop).toHaveBeenCalled()
+  })
+
+  test('MediaRecorder.start() が投げてもカメラを離す', async () => {
+    instance.start = vi.fn(() => {
+      throw new Error('InvalidStateError')
+    })
+    const recorder = new VideoRecorder()
+    await expect(recorder.start()).rejects.toBeInstanceOf(VideoCaptureError)
+    expect(track.stop).toHaveBeenCalled()
+    expect(recorder.isRecording).toBe(false)
+  })
+
+  test('停止が失敗しても後始末して次の録画を妨げない', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    instance.stop = vi.fn(() => {
+      throw new Error('InvalidStateError')
+    })
+
+    await expect(recorder.stop()).rejects.toThrow('InvalidStateError')
+    expect(track.stop).toHaveBeenCalled()
+    expect(recorder.isRecording).toBe(false)
+
+    instance.stop = vi.fn(() => {
+      instance.state = 'inactive'
+      instance.ondataavailable?.({ data: new Blob(['x'], { type: instance.mimeType }) })
+      instance.onstop?.()
+    })
+    await expect(recorder.start()).resolves.toBeUndefined()
+  })
+
+  test('録画していないのに停止すると弾く', async () => {
+    await expect(new VideoRecorder().stop()).rejects.toThrow('録画中ではありません')
+  })
+
+  test('二重に開始すると弾く', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.start()
+    await expect(recorder.start()).rejects.toThrow('既に録画中です')
+  })
+})
+
+describe('mapCaptureError', () => {
+  test('NotAllowedError はカメラ許可の案内にする', () => {
+    const e = new Error('Permission denied')
+    e.name = 'NotAllowedError'
+    expect(mapCaptureError(e).message).toMatch(/カメラの利用が許可/)
+  })
+
+  test('NotFoundError はカメラ未検出の案内にする', () => {
+    const e = new Error('no device')
+    e.name = 'NotFoundError'
+    expect(mapCaptureError(e).message).toMatch(/カメラが見つかりません/)
+  })
+
+  test('NotReadableError は使用中の案内にする', () => {
+    const e = new Error('busy')
+    e.name = 'NotReadableError'
+    expect(mapCaptureError(e).message).toMatch(/他のアプリ/)
+  })
+
+  test('VideoCaptureError はそのまま通す', () => {
+    const original = new VideoCaptureError('original')
+    expect(mapCaptureError(original)).toBe(original)
+  })
+})

@@ -9,14 +9,21 @@ import {
   isValidAudioName,
   isValidImageName,
   isValidPdfName,
+  maxAttachmentBytes,
   MAX_IMAGE_BYTES,
   maxUploadBytes,
   PDF_MIME,
   sniffAudioFormat,
   isValidTextName,
+  isValidVideoName,
+  isValidVideoThumb,
+  MAX_VIDEO_BYTES,
+  MAX_VIDEO_THUMB_BYTES,
   sniffImageFormat,
   sniffPdf,
+  sniffVideoFormat,
   textSaveInfo,
+  videoSaveInfo,
 } from './uploads'
 
 const originalDemo = process.env.DEMO_MODE
@@ -70,12 +77,16 @@ test('サイズ上限は 10MB', () => {
 })
 
 // docs/38-デモモード計画.md §5。デモは 1 ファイルを 2MB に縮める
-test('maxUploadBytes は通常 10MB / デモは 2MB', () => {
+// maxUploadBytes はリクエストの「門」= 全種別の最大 (動画 30MB)。デモは 2MB。
+// 種別ごとの上限は maxAttachmentBytes (動画以外 10MB) が別に持つ。
+test('maxUploadBytes は通常 30MB (動画枠) / デモは 2MB', () => {
   delete process.env.DEMO_MODE
-  expect(maxUploadBytes()).toBe(MAX_IMAGE_BYTES)
+  expect(maxUploadBytes()).toBe(MAX_VIDEO_BYTES)
+  expect(maxAttachmentBytes()).toBe(MAX_IMAGE_BYTES)
 
   process.env.DEMO_MODE = '1'
   expect(maxUploadBytes()).toBe(DEMO_MAX_IMAGE_BYTES)
+  expect(maxAttachmentBytes()).toBe(DEMO_MAX_IMAGE_BYTES)
   expect(DEMO_MAX_IMAGE_BYTES).toBe(2 * 1024 * 1024)
 })
 
@@ -300,8 +311,6 @@ test('webm の保存名と配信 mime を許可する', () => {
   expect(isAllowedContentMime('audio/webm')).toBe(true)
   // 音声の webm を一覧サムネ・画像検索に混ぜない (webp と 1 文字違いなので明示)
   expect(isValidImageName(`${uuid}.webm`)).toBe(false)
-  // 動画は受け付けないので配信 mime にも無い
-  expect(isAllowedContentMime('video/webm')).toBe(false)
 })
 
 test('画像と音声の判定は互いに混ざらない', () => {
@@ -348,10 +357,13 @@ test('配信 Content-Type は既知の画像・音声・PDF mime だけ採用す
   expect(isAllowedContentMime('audio/mp4')).toBe(true)
   expect(isAllowedContentMime('audio/wav')).toBe(true)
   expect(isAllowedContentMime(PDF_MIME)).toBe(true)
+  // 動画も配信 mime として許可する (docs/14-動画挿入計画.md)
+  expect(isAllowedContentMime('video/mp4')).toBe(true)
+  expect(isAllowedContentMime('video/webm')).toBe(true)
+  expect(isAllowedContentMime('video/quicktime')).toBe(true)
   // 未知・危険な mime は採用しない (route.ts が octet-stream に落とす)
   expect(isAllowedContentMime('image/svg+xml')).toBe(false)
   expect(isAllowedContentMime('text/html')).toBe(false)
-  expect(isAllowedContentMime('video/mp4')).toBe(false)
 })
 
 // --- PDF (docs/12-添付ファイル種類拡張メモ.md) ---
@@ -382,6 +394,94 @@ test('PDF の保存名 (UUID + .pdf) を許可する', () => {
   expect(isValidPdfName(`${uuid}.png`)).toBe(false)
   expect(isValidPdfName('../../etc/passwd.pdf')).toBe(false)
   expect(isValidPdfName('a.pdf')).toBe(false) // UUID 形式でない
+})
+
+// --- 動画 (docs/14-動画挿入計画.md) ---
+
+test('webm は映像 CodecID があれば動画と判定する (音声判定の裏返し)', () => {
+  // 映像のみ・映像+音声のどちらも動画
+  expect(sniffVideoFormat(webmFile(['V_VP9']))).toBe('webm')
+  expect(sniffVideoFormat(webmFile(['V_VP9', 'A_OPUS']))).toBe('webm')
+  expect(sniffVideoFormat(webmFile(['V_VP8', 'A_OPUS']))).toBe('webm')
+  expect(sniffVideoFormat(webmFile(['V_AV1']))).toBe('webm')
+  // 音声のみ webm は動画ではない (sniffAudioFormat が拾う)
+  expect(sniffVideoFormat(webmFile(['A_OPUS']))).toBeNull()
+  // EBML マジックだけでは動画と判らない
+  expect(sniffVideoFormat(webmFile([]))).toBeNull()
+})
+
+test('mp4/mov は moov に映像トラックがあれば動画と判定する', () => {
+  // 一般的な mp4 (映像+音声)
+  expect(sniffVideoFormat(mp4WithHandlers('isom', ['vide', 'soun']))).toBe('mp4')
+  expect(sniffVideoFormat(mp4WithHandlers('mp42', ['vide']))).toBe('mp4')
+  // Safari の録画は iso5 系ブランドでも映像トラックで拾える
+  expect(sniffVideoFormat(mp4WithHandlers('iso5', ['vide', 'soun']))).toBe('mp4')
+  // QuickTime (.mov) は major brand "qt  " で mov に振り分ける
+  expect(sniffVideoFormat(mp4WithHandlers('qt  ', ['vide', 'soun']))).toBe('mov')
+})
+
+test('音声のみ・画像・空は動画として受けない', () => {
+  // 音声のみの mp4 (soun だけ) は動画ではない
+  expect(sniffVideoFormat(mp4WithHandlers('mp42', ['soun']))).toBeNull()
+  // iPhone ボイスメモ (M4A ブランド・moov 無し) も動画ではない
+  expect(sniffVideoFormat(ftypBox('M4A ', ['M4A ']))).toBeNull()
+  expect(sniffVideoFormat(PNG_HEAD)).toBeNull()
+  expect(sniffVideoFormat(new TextEncoder().encode('%PDF-1.7'))).toBeNull()
+  expect(sniffVideoFormat(new Uint8Array(0))).toBeNull()
+})
+
+test('動画と音声の判定は互いに混ざらない', () => {
+  // 音声のみは音声、映像入りは動画。両方が同じファイルを拾わない
+  const audioWebm = webmFile(['A_OPUS'])
+  expect(sniffAudioFormat(audioWebm)).toBe('webm')
+  expect(sniffVideoFormat(audioWebm)).toBeNull()
+
+  const videoWebm = webmFile(['V_VP9', 'A_OPUS'])
+  expect(sniffAudioFormat(videoWebm)).toBeNull()
+  expect(sniffVideoFormat(videoWebm)).toBe('webm')
+})
+
+// webm 動画の保存拡張子は `.mkv` (音声のみの .webm と URL 上で衝突させない。
+// videoFormats.ts の経緯)。中身の形式 'webm' → 保存 ext 'mkv' に写す。
+test('動画形式を保存用の mime / ext に写す (webm 動画は .mkv)', () => {
+  expect(videoSaveInfo('mp4')).toEqual({ mime: 'video/mp4', ext: 'mp4' })
+  expect(videoSaveInfo('webm')).toEqual({ mime: 'video/webm', ext: 'mkv' })
+  expect(videoSaveInfo('mov')).toEqual({ mime: 'video/quicktime', ext: 'mov' })
+})
+
+test('動画の保存名 (UUID + mp4/mkv/mov) を許可する', () => {
+  const uuid = '0f1e2d3c-4b5a-4678-9abc-def012345678'
+  expect(isValidVideoName(`${uuid}.mp4`)).toBe(true)
+  expect(isValidVideoName(`${uuid}.mkv`)).toBe(true)
+  expect(isValidVideoName(`${uuid}.mov`)).toBe(true)
+  // .webm は音声 (audio) の保存名。動画の保存名ではない (衝突回避)
+  expect(isValidVideoName(`${uuid}.webm`)).toBe(false)
+  expect(isValidVideoName(`${uuid}.png`)).toBe(false)
+  expect(isValidVideoName('../../etc/passwd.mp4')).toBe(false)
+  // 動画も添付名として許可する
+  expect(isValidAttachmentName(`${uuid}.mp4`)).toBe(true)
+  expect(isValidAttachmentName(`${uuid}.mkv`)).toBe(true)
+  // 動画を一覧サムネ・画像検索に混ぜない
+  expect(isValidImageName(`${uuid}.mp4`)).toBe(false)
+})
+
+test('動画のクライアントサムネは WebP かつ 200KB 以下だけ受ける', () => {
+  const webp = new TextEncoder().encode('RIFF\0\0\0\0WEBP')
+  expect(isValidVideoThumb(webp)).toBe(true)
+  // WebP でない (PNG) は拒否
+  expect(isValidVideoThumb(PNG_HEAD)).toBe(false)
+  // 空も拒否
+  expect(isValidVideoThumb(new Uint8Array(0))).toBe(false)
+  // 上限超過は拒否 (先頭は正しい WebP 署名でも大きさで弾く)
+  const huge = new Uint8Array(MAX_VIDEO_THUMB_BYTES + 1)
+  huge.set(webp, 0)
+  expect(isValidVideoThumb(huge)).toBe(false)
+})
+
+test('動画の上限は画像より大きい (docs/14: 3 分 720p を収める)', () => {
+  // 3 分・映像 1Mbps + 音声 64kbps ≈ 24MB が収まること
+  const estimatedThreeMin = ((1_000_000 + 64_000) / 8) * 180
+  expect(estimatedThreeMin).toBeLessThan(MAX_VIDEO_BYTES)
 })
 
 test('isValidImageName は PDF 名を拾わない (一覧サムネ・画像検索に混ぜない)', () => {
