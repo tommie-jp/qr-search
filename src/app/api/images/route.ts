@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server'
 import { denyUnlessLoggedIn } from '@/lib/apiAuth'
 import { storeAttachment } from '@/lib/attachmentStore'
 import { checkDemoUploadQuota } from '@/lib/demoQuota'
-import { checkUploadRequest, maxUploadBytes, tooLargeMessage } from '@/lib/uploads'
+import {
+  checkUploadRequest,
+  maxAttachmentBytes,
+  MAX_VIDEO_THUMB_BYTES,
+  maxUploadBytes,
+  tooLargeMessage,
+} from '@/lib/uploads'
 
 function errorResponse(status: number, error: string): NextResponse {
   return NextResponse.json({ success: false, data: null, error }, { status })
@@ -60,16 +66,23 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 動画の poster (WebP) が付いていれば読む。動画以外では無視される
-  // (attachmentStore が動画判定時のみ使い、WebP・200KB 以下だけを採用する)
+  // (attachmentStore が動画判定時のみ使い、WebP・200KB 以下だけを採用する)。
+  // **バッファする前に申告サイズで弾く** — 上限超過の thumb はメモリに読まず
+  // poster 無しとして扱う (本体の動画は通す)。中身の再検証は attachmentStore。
   const videoThumb =
-    thumbField instanceof File && thumbField.size > 0
+    thumbField instanceof File &&
+    thumbField.size > 0 &&
+    thumbField.size <= MAX_VIDEO_THUMB_BYTES
       ? new Uint8Array(await thumbField.arrayBuffer())
       : null
 
   // ファイル名を渡すのはテキスト (txt/csv/md) の拡張子を決めるためだけ。
-  // 名前そのものは保存名にならない (サーバ発番の UUID + 既知の拡張子)
+  // 名前そのものは保存名にならない (サーバ発番の UUID + 既知の拡張子)。
+  // maxBytes は動画以外の 1 ファイル上限 (デモでは 2MB)。動画は
+  // attachmentStore が MAX_VIDEO_BYTES で別に絞る
   const stored = await storeAttachment(new Uint8Array(await file.arrayBuffer()), {
     fileName: file.name,
+    maxBytes: maxAttachmentBytes(),
     videoThumb,
   })
   if (!stored.ok) {

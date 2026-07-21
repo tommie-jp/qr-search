@@ -12,6 +12,7 @@
 import { saveImage, type SaveImageOptions, savePlainAttachment } from './imageStore'
 import { moveMoovToFront } from './mp4Faststart'
 import { normalizeImage } from './normalizeImage'
+import { makeThumbnail } from './thumbnail'
 import { hasUtf16Bom, normalizeTextBytes } from './normalizeText'
 import {
   audioSaveInfo,
@@ -100,10 +101,14 @@ export async function storeAttachment(
     const { mime, ext } = videoSaveInfo(videoFormat)
     const stored =
       videoFormat === 'webm' ? bytes : (moveMoovToFront(bytes) ?? bytes)
-    // クライアント生成のサムネは中身を検証してから採用する (WebP かつ 200KB 以下)。
+    // クライアント生成の poster は**そのまま保存しない**。まず安い検査
+    // (WebP かつ 200KB 以下) で弾き、通ったものも sharp で作り直す — 画像の
+    // サムネと同じ経路 (makeThumbnail) に通すことで、解凍爆弾よけ
+    // (MAX_INPUT_PIXELS) を効かせ、閲覧側のブラウザを巨大 WebP で落とせない
+    // ようにする。作れなければ poster 無しで保存する (配信側が 404 を返す)。
     const thumb =
       options.videoThumb && isValidVideoThumb(options.videoThumb)
-        ? options.videoThumb
+        ? await makeThumbnail(options.videoThumb, 'video poster')
         : null
     return succeed(await savePlainAttachment(stored, mime, ext, thumb), false)
   }
