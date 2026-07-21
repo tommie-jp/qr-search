@@ -13,8 +13,15 @@
 #     (showcase) は触らない** — pending が無ければ "No pending migrations" で
 #     no-op なので、コードのみの更新でも安全に通る。
 #
-# 使い方 (doDeploy.sh と同じ引数):
-#   ./doDeployDemo.sh [patch|minor|major] [--send-compose.yml]
+# 使い方 (doDeploy.sh と同じ引数をそのまま渡す):
+#   ./doDeployDemo.sh [patch|minor|major | --no-version-up] [--send-compose.yml]
+#   ./doDeployDemo.sh -h    (doDeploy.sh の説明を表示)
+#
+# 本番と同じ版でデモを配りたいときは --no-version-up を使う:
+#   ./doDeploy.sh patch            # 本番: 版を上げて配る
+#   ./doDeployDemo.sh --no-version-up   # デモ: 同じ版を再利用して配る
+# doDeploy.sh は毎回版を上げるので、無印で続けて呼ぶと本番とデモで版がずれる。
+# --no-version-up ならレジストリの同版イメージを再利用し、ビット単位で同一になる。
 #
 # 前提: vps2 の ~/qr-demo/ が配置済み (compose 2種 + .env。docs/39 §5)。
 #
@@ -31,6 +38,14 @@ SEED_TUNNEL_PORT="${DEMO_SEED_TUNNEL_PORT:-15533}"
 
 log() { echo ""; echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+# -h/--help は doDeploy.sh の説明をそのまま見せて終える。ここで捕まえないと、
+# doDeploy.sh がヘルプを出して 0 で返った後、種同期まで走ってしまう。
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) exec ./doDeploy.sh -h ;;
+  esac
+done
 
 # 1. 本体のデプロイ (デモのポート/ディレクトリを固定して doDeploy.sh を呼ぶ)。
 #    版数up・ビルド・転送・live qr の migrate・app 再作成まではここが行う。

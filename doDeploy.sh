@@ -32,7 +32,19 @@
 # バージョンアップはイメージビルドより前に行う。
 #
 # 使い方:
-#   ./doDeploy.sh [patch|minor|major] [--send-compose.yml]   (省略時: patch)
+#   ./doDeploy.sh [patch|minor|major | --no-version-up] [--send-compose.yml]
+#                                                          (版指定の省略時: patch)
+#   ./doDeploy.sh -h                                        (この説明を表示)
+#
+#   --no-version-up  版を上げず、現行 package.json の版をそのまま配る。
+#
+#     本番→デモを同じ版で配るための経路。doDeploy.sh は毎回 doVersion.sh で版を
+#     上げるので、ラッパ (doDeployDemo.sh) をそのまま続けて呼ぶと版がずれる。
+#     デモ側を --no-version-up で呼べば、直前に本番へ配った版をそのまま載せられる。
+#     レジストリに同版のイメージがあれば **ビルドも lint/test も飛ばして再利用**する
+#     (本番と**ビット単位で同一**のイメージが載る)。無ければ版据え置きでビルドする。
+#     注意: 再利用時に配られるのは「その版を push した時点のイメージ」で、手元の
+#     未コミット変更は含まれない (同版=同一ビットを保証する仕様上の正しい挙動)。
 #
 #   --send-compose.yml  compose.yaml もリモートへ送る。
 #
@@ -59,13 +71,27 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-usage() { echo "usage: $0 [patch|minor|major] [--send-compose.yml]" >&2; exit 1; }
+usage() {
+  echo "usage: $0 [patch|minor|major | --no-version-up] [--send-compose.yml]" >&2
+  echo "       $0 -h    (詳しい説明)" >&2
+  exit 1
+}
+
+# -h: このスクリプト冒頭のコメント (先頭の #! を除く連続する # 行) をそのまま説明として出す。
+# 説明の実体をコメントと二重に持たず、ヘッダ 1 箇所に集約するため。
+help() {
+  sed -n '2,/^set -euo pipefail$/ { /^#/ s/^# \{0,1\}//p }' "$0"
+  exit 0
+}
 
 BUMP=""
+NO_VERSION_UP=0
 SEND_COMPOSE=0
 for arg in "$@"; do
   case "$arg" in
+    -h|--help) help ;;
     --send-compose.yml) SEND_COMPOSE=1 ;;
+    --no-version-up) NO_VERSION_UP=1 ;;
     patch|minor|major)
       # バージョンの上げ幅を 2 つ書かれたら、どちらの意図か決められない
       [ -z "$BUMP" ] || usage
@@ -74,6 +100,8 @@ for arg in "$@"; do
     *) usage ;;
   esac
 done
+# 版を上げない指定と、上げ幅の指定は矛盾する
+if [ "$NO_VERSION_UP" = 1 ] && [ -n "$BUMP" ]; then usage; fi
 BUMP="${BUMP:-patch}"
 
 REMOTE="${DEPLOY_REMOTE:-vps2}"
@@ -100,6 +128,17 @@ HEALTH_RETRIES=30
 log() { echo ""; echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# レジストリ (トンネル越しの 127.0.0.1:$REGISTRY_PORT) に指定タグの manifest があるか。
+# buildx は --provenance=false で OCI image manifest を push するので Accept に含める。
+registry_has_tag() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' \
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+    "http://127.0.0.1:${REGISTRY_PORT}/v2/qr-search-app/manifests/$1" 2>/dev/null || echo 000)"
+  [ "$code" = "200" ]
+}
+
 # SSH は ControlMaster で 1 本に束ね、全 ssh/scp で使い回す (毎回のハンドシェイクを省く)。
 # レジストリ転送トンネルも同じ master に載せ、終了時にまとめて閉じる。
 SSH_CTRL="$(mktemp -u "${TMPDIR:-/tmp}/qr-deploy-ssh.XXXXXX")"
@@ -123,14 +162,6 @@ if ! curl -fsS "http://127.0.0.1:${REGISTRY_PORT}/v2/" >/dev/null 2>&1; then
 fi
 echo "OK: レジストリ疎通"
 
-# host ネットワークの buildx ビルダーを用意する (無ければ作る)。
-# これが無いと push 先の 127.0.0.1 トンネルにビルダーが届かない。
-if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
-  log "buildx ビルダー ($BUILDER) を作成"
-  docker buildx create --name "$BUILDER" --driver docker-container \
-    --driver-opt network=host >/dev/null
-fi
-
 # 非本番の画面はピンク + タイトル [LOCAL] になる (src/lib/appEnv.ts)。
 # 判定は「APP_ENV=production を明示したときだけ本番」なので、リモートの .env に
 # 書き忘れると本番が LOCAL 表示のまま公開されてしまう。ビルドで時間を使う前に弾く
@@ -144,23 +175,52 @@ if [ "$REMOTE_APP_ENV" != "production" ]; then
 fi
 echo "OK: APP_ENV=production"
 
-log "2/8 lint + test"
-npm run lint
-npm test
-
-log "3/8 バージョンアップ ($BUMP)"
-./doVersion.sh "$BUMP"
-VERSION="$(node -p "require('./package.json').version")"
+# 版を先に決める。--no-version-up なら現行版を据え置き、レジストリに同版が
+# あればビルドも lint/test も飛ばして「その版そのもの」を再利用する。
+# (版決定をビルド前に置くのは、再利用時に lint/test まで飛ばせるようにするため)
+log "2/8 バージョン決定"
+REUSE=0
+if [ "$NO_VERSION_UP" = 1 ]; then
+  VERSION="$(node -p "require('./package.json').version")"
+  if registry_has_tag "v$VERSION"; then
+    REUSE=1
+    echo "OK: 版を据え置き。レジストリの v$VERSION を再利用する"
+  else
+    echo "OK: 版を据え置き (v$VERSION)。レジストリに未登録のためビルドする"
+  fi
+else
+  ./doVersion.sh "$BUMP"
+  VERSION="$(node -p "require('./package.json').version")"
+  echo "OK: v$VERSION に更新 ($BUMP)"
+fi
 log "デプロイ対象: v$VERSION"
 
-# ビルドとレジストリ push を 1 回で行う。rewrite-timestamp で全レイヤーの mtime を
-# BUILD_EPOCH に固定するため、中身が同じレイヤーは push 時に「既に存在」で飛ぶ。
-# registry.insecure=true は 127.0.0.1 の平文レジストリ (トンネル越し) を許すため。
-log "4/8 イメージビルド + レジストリ push (${REG_LOCAL}:v${VERSION})"
-SOURCE_DATE_EPOCH="$BUILD_EPOCH" docker buildx build --builder "$BUILDER" \
-  --provenance=false --sbom=false \
-  --output "type=image,name=${REG_LOCAL}:v${VERSION},push=true,rewrite-timestamp=true,registry.insecure=true" \
-  .
+if [ "$REUSE" = 1 ]; then
+  log "3/8 lint + test — スキップ (既存イメージを再利用)"
+  log "4/8 イメージビルド + push — スキップ (v$VERSION は既にレジストリにある)"
+  echo "注意: 配るのは v$VERSION を push した時点のイメージ。手元の未コミット変更は含まれない"
+else
+  log "3/8 lint + test"
+  npm run lint
+  npm test
+
+  # host ネットワークの buildx ビルダーを用意する (無ければ作る)。
+  # これが無いと push 先の 127.0.0.1 トンネルにビルダーが届かない。
+  if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+    log "buildx ビルダー ($BUILDER) を作成"
+    docker buildx create --name "$BUILDER" --driver docker-container \
+      --driver-opt network=host >/dev/null
+  fi
+
+  # ビルドとレジストリ push を 1 回で行う。rewrite-timestamp で全レイヤーの mtime を
+  # BUILD_EPOCH に固定するため、中身が同じレイヤーは push 時に「既に存在」で飛ぶ。
+  # registry.insecure=true は 127.0.0.1 の平文レジストリ (トンネル越し) を許すため。
+  log "4/8 イメージビルド + レジストリ push (${REG_LOCAL}:v${VERSION})"
+  SOURCE_DATE_EPOCH="$BUILD_EPOCH" docker buildx build --builder "$BUILDER" \
+    --provenance=false --sbom=false \
+    --output "type=image,name=${REG_LOCAL}:v${VERSION},push=true,rewrite-timestamp=true,registry.insecure=true" \
+    .
+fi
 
 # リモートは自分の localhost のレジストリからダイジェスト一致で pull し、compose が
 # 参照するタグ (qr-search-app:latest) に付け替える。compose.yaml は無変更でよい。
