@@ -9,7 +9,7 @@
 // 移せる (そのときもこの関数が正本の抽出規則として残る)。
 
 import { stripCode } from './tags'
-import { isValidImageName } from './uploads'
+import { isValidImageName, isValidVideoName } from './uploads'
 
 // Markdown の画像記法 `![alt](url)` の url を捕捉する。
 // リンク記法 `[text](url)` は先頭の `!` が無いので外れる — 貼った画像ではなく
@@ -42,6 +42,43 @@ function* iterImageNames(memo: string): Generator<string> {
 export function firstImageName(memo: string): string | null {
   for (const name of iterImageNames(memo)) {
     return name
+  }
+  return null
+}
+
+// 一覧サムネにできる添付 (画像 or 動画) を出現順に列挙する。
+// 画像はサムネを、動画は poster を **同じ thumb カラム**に持つので、どちらも
+// ?thumb=1 で縮小版を配れる (docs/14-動画挿入計画.md)。音声・PDF・テキストは
+// thumb を持たないので対象外 (一覧では文字だけ)。
+//
+// **画像検索の索引 (allImageNames) には動画を混ぜない** — あちらは画像だけを
+// 対象にする既存方針 (uploads.ts の isValidImageName のコメント)。ここは
+// 「一覧の顔になる絵」を選ぶ別用途なので、poster を持つ動画も含める。
+function* iterThumbAttachments(
+  memo: string,
+): Generator<{ name: string; isVideo: boolean }> {
+  for (const match of stripCode(memo).matchAll(IMAGE_SYNTAX)) {
+    const url = match[1]
+    if (!url.startsWith(IMAGE_PATH_PREFIX)) {
+      continue
+    }
+    const name = url.slice(IMAGE_PATH_PREFIX.length)
+    if (isValidImageName(name)) {
+      yield { name, isVideo: false }
+    } else if (isValidVideoName(name)) {
+      yield { name, isVideo: true }
+    }
+  }
+}
+
+// 本文で最初にサムネにできる添付 (画像 or 動画)。無ければ null。
+// 出現順で選ぶ (画像を優先しない) — 本文の最初の絵/動画をそのノートの顔にする。
+// 録画だけのノートでも動画の poster が一覧サムネになる。
+export function firstThumbInfo(
+  memo: string,
+): { name: string; isVideo: boolean } | null {
+  for (const info of iterThumbAttachments(memo)) {
+    return info
   }
   return null
 }

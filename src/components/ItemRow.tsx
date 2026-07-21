@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { Item } from "@/generated/prisma/client";
-import { firstImageName, thumbUrl } from "@/lib/memoImages";
+import { firstThumbInfo } from "@/lib/memoImages";
+import { RowThumb } from "./RowThumb";
 import { memoPreview } from "@/lib/memoPreview";
 import { memoSummary } from "@/lib/memoSummary";
 import { tagSearchHref } from "@/lib/tags";
@@ -45,24 +46,17 @@ export function ItemRow({
   const title = isUrl ? item.url : memoSummary(item.memo);
   // URL モードのノートには本文も貼った画像も無い (memo が空)
   const preview = isUrl ? "" : memoPreview(item.memo);
-  const imageName = isUrl ? null : firstImageName(item.memo);
+  // サムネにできる添付 (画像 or 動画 poster)。音声・PDF・テキストは thumb を
+  // 持たないので null (一覧では文字だけ)。動画は poster を出し、無ければ
+  // RowThumb がアイコンへ切り替える (docs/14 §Phase4)
+  const thumbInfo = isUrl ? null : firstThumbInfo(item.memo);
 
-  const thumb = imageName && (
-    // next/image は使えない。画像 API はログイン必須で、optimizer が
-    // サーバ側から取りに行くときに Cookie/Authorization が付かず 401 になる。
-    // 縮小は保存時に済ませてある (src/lib/thumbnail.ts) ので optimizer は不要。
-    //
-    // alt="" … 装飾。中身はすぐ左のタイトルが説明しており、読み上げに
-    // 同じものを 2 度言わせない
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={thumbUrl(imageName)}
-      alt=""
-      width={THUMB_PX[view]}
-      height={THUMB_PX[view]}
-      loading="lazy"
-      decoding="async"
-      className={`${THUMB_SIZE_CLASS[view]} shrink-0 self-center rounded bg-gray-100 object-cover`}
+  const thumb = thumbInfo && (
+    <RowThumb
+      name={thumbInfo.name}
+      isVideo={thumbInfo.isVideo}
+      sizePx={THUMB_PX[view]}
+      sizeClass={THUMB_SIZE_CLASS[view]}
     />
   );
 
