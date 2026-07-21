@@ -1,0 +1,24 @@
+# vps2 に常駐させる私設 Docker レジストリ (registry:2)。
+# doDeploy.sh 5/8 のレイヤー差分転送先。
+#
+# 127.0.0.1 だけに束ねて外部へは一切公開しない。SSH トンネル越しにだけ push/pull する
+# ので TLS も認証も要らない (Docker は 127.0.0.0/8 のレジストリを既定で insecure 許可
+# するため、両側ともデーモン設定の変更なしで通る)。
+#
+# 常駐コストは実測 ~20MB 程度。空きメモリの少ない vps2 でもビルドとは違い常時走らせられる。
+#
+# 一度きりの設置は deploy/setupRegistry.sh から。古い版の掃除は deploy/registryGc.sh。
+services:
+  registry:
+    image: registry:2
+    restart: always
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      # registryGc.sh がマニフェスト削除 → GC できるように削除を有効化する
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    volumes:
+      - registry-data:/var/lib/registry
+
+volumes:
+  registry-data:
