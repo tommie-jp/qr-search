@@ -6,6 +6,7 @@
 import 'dotenv/config'
 import { prisma } from '@/lib/db'
 import { makeThumbnail } from '@/lib/thumbnail'
+import { sniffImageFormat } from '@/lib/uploads'
 
 async function main(): Promise<void> {
   const force = process.argv.includes('--force')
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
 
   let made = 0
   let failed = 0
+  let skipped = 0
   for (const { name } of names) {
     const image = await prisma.image.findUnique({
       where: { name },
@@ -28,6 +30,15 @@ async function main(): Promise<void> {
     })
     if (!image) {
       // 走査中に消えた画像 (GC・永久削除)。競走であって異常ではない
+      continue
+    }
+
+    // images 表は音声・PDF・テキストなど画像でない添付も持つ
+    // (attachmentStore.ts の savePlainAttachment)。これらはサムネの対象外で、
+    // sharp に渡しても必ず失敗するだけなので、エラーにせず黙って飛ばす。
+    // 判定は保存経路 (storeAttachment) と同じマジックバイト sniff に揃える
+    if (!sniffImageFormat(image.data)) {
+      skipped += 1
       continue
     }
 
@@ -46,7 +57,9 @@ async function main(): Promise<void> {
     )
   }
 
-  console.log(`生成: ${made} 件 / 生成できず: ${failed} 件`)
+  console.log(
+    `生成: ${made} 件 / 生成できず: ${failed} 件 / 対象外 (画像以外): ${skipped} 件`,
+  )
   if (failed > 0) {
     // 作れなかった画像は一覧で原寸のまま配られる (絵は出るが重い)。
     console.log('生成できなかった画像は一覧で原寸のまま配信されます')
@@ -55,10 +68,9 @@ async function main(): Promise<void> {
     // 終了コードに出すのは**全件失敗のときだけ**。cron や deploy から呼んだとき、
     // 「全部失敗したのに exit 0」だと成功として素通りしてしまう。sharp ごと
     // 壊れていれば全件ここに落ちるので、その 1 回で気づける。
-    // 一部失敗は exit 0 のまま — 画像でない添付 (.pdf/.m4a/.webm など) は
-    // sharp が読めず**毎回必ず**失敗するため、1 件でも exit 1 にすると全実行が
-    // 恒久的に失敗扱いになり、呼び出し側 (doBackfillThumbs.sh の set -e) が
-    // 後続処理ごと止まってしまう
+    // 一部失敗は exit 0 のまま — 壊れた 1 枚が居座るだけで全実行が恒久的に
+    // 失敗扱いになると、呼び出し側 (doBackfillThumbs.sh の set -e) が後続処理
+    // ごと止まってしまう
     process.exitCode = 1
   }
 }
