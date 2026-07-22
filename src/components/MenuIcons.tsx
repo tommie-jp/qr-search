@@ -123,6 +123,18 @@ export function LoginIcon() {
   );
 }
 
+// クレジット: 情報の "i" 丸 (docs/46-クレジット表記計画.md)。
+// 点 (i の上) は他のアイコン (QrIcon の "M20 14v0" など) と同じく、
+// strokeLinecap="round" の 0 長パスで打つ。色は情報の中立色 (slate)
+export function InfoIcon() {
+  return (
+    <StrokeIcon className="text-slate-500">
+      <circle {...TINT} cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8v0" />
+    </StrokeIcon>
+  );
+}
+
 // GitHub だけは線画にしない。Octocat は塗りで成立している商標で、
 // 線でなぞると別物になる。公式 octicon (mark-github, MIT) の形をそのまま使う。
 // 同じ理由で色も付けない — 商標を勝手に塗り替えないため、ここだけ行の文字色に従う

@@ -13,6 +13,7 @@ import { LogoutButton } from "@/components/LogoutButton";
 import {
   GithubIcon,
   ImportIcon,
+  InfoIcon,
   KeyIcon,
   LogIcon,
 } from "@/components/MenuIcons";
@@ -137,6 +138,13 @@ export default async function RootLayout({
                 <GithubIcon />
                 GitHub
               </a>
+              {/* 外部 API のクレジット/帰属表示 (docs/46-クレジット表記計画.md)。
+                  Yahoo! は表示が義務。誰に対しても出してよい情報なので、
+                  ログイン状態・デモに依らず (!isDemo の内側に入れない) 常に出す */}
+              <Link href="/about" className={HEADER_MENU_ITEM_CLASS}>
+                <InfoIcon />
+                クレジット
+              </Link>
               {user ? (
                 <>
                   {/* デモでは設定系の導線を出さない (docs/38-デモモード計画.md §4)。
