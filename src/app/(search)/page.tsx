@@ -12,6 +12,7 @@ import { BottomActionBar } from "@/components/BottomActionBar";
 import { ItemList } from "@/components/ItemList";
 import { PageTransition } from "@/components/PageTransition";
 import { PropsTable } from "@/components/PropsTable";
+import PullToRefresh from "@/components/PullToRefresh";
 import { SearchForm } from "@/components/SearchForm";
 import { SearchNavProvider, SearchResults } from "@/components/SearchNav";
 import { SelectModeProvider } from "@/components/SelectModeProvider";
@@ -69,6 +70,9 @@ export default async function Home({ searchParams }: HomeProps) {
     // stickerHost … シールに焼かれたホストは QR_BASE_URL 固定で、
     // アプリを開いているホスト (localhost 等) とは食い違いうる
     <SearchNavProvider sort={sort}>
+      {/* 一覧の先頭で下へ引くと再読み込み (docs/47-引っ張って更新計画.md)。
+          window スクロールに対して働くので、包む必要はなく 1 つ置くだけ */}
+      <PullToRefresh />
       {/* 選択モードは下部バーの「選択」と一覧 (ItemList) で共有する
           (docs/31-下部操作バー計画.md §5-2)。両方を包める位置がここしかない */}
       <SelectModeProvider>
