@@ -20,3 +20,11 @@ test("loginHint が null でも案内を出さない", () => {
   const html = renderToStaticMarkup(<DemoBanner loginHint={null} />);
   expect(html).not.toContain("ログイン:");
 });
+
+// docs/39-デモ公開計画.md §5。書誌/JAN 取得の無効を常設でも知らせる
+// (loginHint の有無に関わらず出る)
+test("書誌・JAN 取得が無効である案内を常に出す", () => {
+  expect(renderToStaticMarkup(<DemoBanner />)).toContain(
+    "書籍・JAN 情報の自動取得はデモでは無効です",
+  );
+});

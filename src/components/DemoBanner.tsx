@@ -20,6 +20,12 @@ export function DemoBanner({ loginHint }: DemoBannerProps = {}) {
         <span className="font-bold">デモ環境です。</span>{" "}
         保存したデータは定期的にすべて削除されます。個人情報や不適切なファイルは
         アップロードしないでください。
+        {/* 外部 API キーを持たせないため書誌/JAN 取得はデモでは無効
+            (docs/39-デモ公開計画.md §5)。スキャン時の個別メッセージ
+            (MemoEditor の PrefillNotice) と対で、常設でも知らせておく */}
+        <span className="mt-1 block text-amber-800">
+          ※ 書籍・JAN 情報の自動取得はデモでは無効です。
+        </span>
         {loginHint ? (
           <span className="mt-1 block font-mono text-amber-800">{loginHint}</span>
         ) : null}
