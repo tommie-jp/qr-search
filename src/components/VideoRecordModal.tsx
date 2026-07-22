@@ -76,17 +76,10 @@ export function VideoRecordModal({ video }: VideoRecordModalProps) {
       aria-label="録画"
       className="fixed inset-0 z-50 flex flex-col overscroll-contain bg-black text-white"
     >
-      {/* 上部バー: プレビューは閉じる、録画中は経過時間 (停止は下の■) */}
+      {/* 上部バー: プレビューは閉じる。録画中の経過時間は下の●の上に出す
+          (min-h-14 は録画中も空で確保し、映像の高さを揺らさない) */}
       <div className="flex min-h-14 items-center justify-between p-3">
-        {recording ? (
-          <span className="flex items-center gap-2 font-medium tabular-nums">
-            <span
-              aria-hidden
-              className="size-2.5 animate-pulse rounded-full bg-red-600"
-            />
-            {formatElapsed(video.elapsedMs)}
-          </span>
-        ) : (
+        {!recording && (
           <button
             type="button"
             onClick={video.cancelPreview}
@@ -115,7 +108,7 @@ export function VideoRecordModal({ video }: VideoRecordModalProps) {
 
       {/* 下部バー: 左=レンズ切替 (録画中は不可) / 中央=録画・停止 /
           右=トーチ・ズーム (録画中も可)。safe-area でホームバーに潜らせない */}
-      <div className="flex items-center justify-between gap-2 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="flex items-end justify-between gap-2 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="flex flex-1 flex-wrap items-center gap-2">
           {/* 内側/外側カメラ切替。ラベルは切り替え先を示す。録画中はトラックを
               差し替えられないので不可 */}
@@ -141,19 +134,31 @@ export function VideoRecordModal({ video }: VideoRecordModalProps) {
           )}
         </div>
 
-        {/* 中央の大ボタン。プレビュー=赤●、録画中=赤■ (押せば止まると判る) */}
-        <button
-          type="button"
-          onClick={recording ? video.stop : video.startRecording}
-          aria-label={recording ? "録画を停止して保存" : "録画開始"}
-          className="flex size-16 shrink-0 items-center justify-center rounded-full border-4 border-white"
-        >
-          {recording ? (
-            <span aria-hidden className="size-6 rounded-sm bg-red-600" />
-          ) : (
-            <span aria-hidden className="size-12 rounded-full bg-red-600" />
+        {/* 中央: 経過時間を大ボタンの真上に出す。ボタンはプレビュー=赤●、
+            録画中=赤■ (押せば止まると判る) */}
+        <div className="flex shrink-0 flex-col items-center gap-1.5">
+          {recording && (
+            <span className="flex items-center gap-1.5 text-sm font-medium tabular-nums">
+              <span
+                aria-hidden
+                className="size-2 animate-pulse rounded-full bg-red-600"
+              />
+              {formatElapsed(video.elapsedMs)}
+            </span>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={recording ? video.stop : video.startRecording}
+            aria-label={recording ? "録画を停止して保存" : "録画開始"}
+            className="flex size-16 items-center justify-center rounded-full border-4 border-white"
+          >
+            {recording ? (
+              <span aria-hidden className="size-6 rounded-sm bg-red-600" />
+            ) : (
+              <span aria-hidden className="size-12 rounded-full bg-red-600" />
+            )}
+          </button>
+        </div>
 
         <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
           {/* トーチ・ズームはトラックそのままで効くので録画中も操作できる */}
