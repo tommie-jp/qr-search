@@ -35,12 +35,20 @@ export const TOTAL_BITS_PER_SECOND = VIDEO_BITS_PER_SECOND + AUDIO_BITS_PER_SECO
 
 // 720p 相当。カメラは背面 (メモ用途は手元や周囲を写すのが主)。
 // 近接時は facingMode ではなく超広角の deviceId を名指しで開く (cameraSelection の
-// 説明どおり、iOS のマクロは超広角レンズが担うため)。deviceId 指定時は facingMode
-// を付けない — 両方指定すると端末によっては OverconstrainedError になる。
+// 説明どおり、iOS のマクロは超広角レンズが担うため)。
+//
+// **iOS Safari は deviceId だけ渡すと前面カメラに化けることがある** (deviceId の
+// 解決が不安定で、背面超広角のつもりが自撮りカメラで開く)。背面に固定するため
+// `facingMode: { ideal: 'environment' }` を添える。ideal なので deviceId の exact
+// と両立でき、OverconstrainedError にはならない (背面超広角なら両制約が一致する)。
 function buildVideoConstraints(deviceId?: string): MediaTrackConstraints {
   const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
   if (deviceId) {
-    return { deviceId: { exact: deviceId }, ...size }
+    return {
+      deviceId: { exact: deviceId },
+      facingMode: { ideal: 'environment' },
+      ...size,
+    }
   }
   return { facingMode: 'environment', ...size }
 }

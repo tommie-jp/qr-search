@@ -341,8 +341,9 @@ describe('VideoRecorder', () => {
       expect(recorder.nearFocus).toBe(true)
       const video = usedConstraints?.video as MediaTrackConstraints
       expect(video.deviceId).toEqual({ exact: 'ultra' })
-      // deviceId 指定時は facingMode を付けない (両立で OverconstrainedError)
-      expect(video.facingMode).toBeUndefined()
+      // iOS で前面カメラに化けないよう facingMode: environment を ideal で添える
+      // (exact ではないので deviceId と両立でき OverconstrainedError にならない)
+      expect(video.facingMode).toEqual({ ideal: 'environment' })
     })
 
     test('超広角が無ければ通常カメラで開き nearFocus は false', async () => {
