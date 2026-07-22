@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SERVICE_LINKS } from "@/components/AttributionFooter";
 import { YahooAttribution } from "@/components/YahooAttribution";
 
 // クレジット / 帰属表示のページ (docs/46-クレジット表記計画.md)。
@@ -37,17 +38,18 @@ export default function AboutPage() {
       <section className="space-y-2">
         <h2 className="font-bold">楽天ブックス (書影)</h2>
         <p className="text-gray-600">
-          書影 (カバー画像) の取得に、楽天ブックス書籍検索 API を利用しています。
-        </p>
-        <p>
+          書影 (カバー画像) の取得に、
+          {/* 汎用トップではなく、実際に叩いている書籍検索 API のドキュメントへ
+              (URL は SERVICE_LINKS に集約。docs/48) */}
           <a
-            href="https://webservice.rakuten.co.jp/"
+            href={SERVICE_LINKS.rakutenBooks.href}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-700 underline"
           >
-            Supported by Rakuten Developers
+            {SERVICE_LINKS.rakutenBooks.label}
           </a>
+          を利用しています。
         </p>
       </section>
 
@@ -56,21 +58,21 @@ export default function AboutPage() {
         <p className="text-gray-600">
           書名・著者などの書誌情報は、
           <a
-            href="https://openbd.jp/"
+            href={SERVICE_LINKS.openBd.href}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-700 underline"
           >
-            openBD
+            {SERVICE_LINKS.openBd.label}
           </a>
           および
           <a
-            href="https://ndlsearch.ndl.go.jp/"
+            href={SERVICE_LINKS.ndlSearch.href}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-700 underline"
           >
-            国立国会図書館サーチ
+            {SERVICE_LINKS.ndlSearch.label}
           </a>
           の提供データを利用しています。
         </p>
