@@ -12,10 +12,7 @@
 //      トーチ・ズームはトラックを開き直さないので録画中でも効く。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  findUltraWideDeviceId,
-  NEAR_FOCUS_ZOOM,
-} from "@/lib/video/cameraSelection";
+import { NEAR_FOCUS_ZOOM } from "@/lib/video/cameraSelection";
 import {
   type CameraFacing,
   MAX_RECORDING_MS,
@@ -156,6 +153,7 @@ export function useVideoRecording(
     }
     setPreviewStream(recorder.stream);
     setNearFocus(recorder.nearFocus);
+    setCanNearFocus(recorder.hasUltraWide);
     setFacing(recorder.facing);
     const caps = recorder.capabilities();
     setCanTorch(caps.torch);
@@ -174,11 +172,9 @@ export function useVideoRecording(
     try {
       await recorder.open();
       setPhase("preview");
+      // 近接可否 (hasUltraWide) も含めて recorder の実状態を写す。超広角の
+      // 検出は recorder が open 時にストリームの生きているうちに済ませている
       syncCameraState();
-      // 超広角があるか (近接ボタンの出し分け)。ラベルは gUM 許可後にしか
-      // 出ないので、開いた後に調べる
-      const ultra = await findUltraWideDeviceId();
-      setCanNearFocus(ultra !== null);
     } catch (e) {
       handlersRef.current.onError(messageOf(e, "カメラを開けませんでした。"));
       recorder.cancel();

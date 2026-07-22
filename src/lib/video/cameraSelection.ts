@@ -67,6 +67,18 @@ export async function findUltraWideDeviceId(): Promise<string | null> {
   return match?.deviceId ?? null;
 }
 
+// 開けたトラックが前面 (自撮り) カメラかどうか。iOS Safari には deviceId を
+// 前面に誤解決する癖があり (docs/16)、超広角を名指しで開いた後の検証に使う。
+// getSettings の facingMode を第一に、無ければラベルで判定。どちらも取れなければ
+// 前面とは断定しない (誤検出でフォールバックを空回りさせない)。
+export function isFrontFacing(track: MediaStreamTrack): boolean {
+  const facing = track.getSettings?.().facingMode;
+  if (facing) {
+    return facing === "user";
+  }
+  return /front|前面/i.test(track.label ?? "");
+}
+
 // トラックのトーチ・ズーム対応を読む。getCapabilities 未実装なら両方なしとする。
 export function readCameraCapabilities(
   track: MediaStreamTrack,

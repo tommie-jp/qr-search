@@ -4,6 +4,7 @@ import {
   applyTorch,
   applyZoom,
   findUltraWideDeviceId,
+  isFrontFacing,
   NEAR_FOCUS_ZOOM,
   readCameraCapabilities,
 } from "./cameraSelection";
@@ -211,6 +212,35 @@ describe("applyTorch", () => {
       }),
     );
     expect(await applyTorch(track, true)).toBe(false);
+  });
+});
+
+describe("isFrontFacing", () => {
+  test("settings の facingMode: user は前面", () => {
+    const track = {
+      getSettings: () => ({ facingMode: "user" }),
+    } as unknown as MediaStreamTrack;
+    expect(isFrontFacing(track)).toBe(true);
+  });
+
+  test("settings の facingMode: environment は背面", () => {
+    const track = {
+      getSettings: () => ({ facingMode: "environment" }),
+      label: "Front Camera", // settings が勝つ (ラベルは見ない)
+    } as unknown as MediaStreamTrack;
+    expect(isFrontFacing(track)).toBe(false);
+  });
+
+  test("settings が無ければラベルで判定する (英語・日本語)", () => {
+    const byLabel = (label: string) =>
+      isFrontFacing({ label } as unknown as MediaStreamTrack);
+    expect(byLabel("Front Camera")).toBe(true);
+    expect(byLabel("前面カメラ")).toBe(true);
+    expect(byLabel("Back Ultra Wide Camera")).toBe(false);
+  });
+
+  test("何も取れなければ前面と断定しない", () => {
+    expect(isFrontFacing({} as unknown as MediaStreamTrack)).toBe(false);
   });
 });
 

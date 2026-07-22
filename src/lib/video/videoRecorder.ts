@@ -13,6 +13,7 @@ import {
   applyZoom,
   type CameraCapabilities,
   findUltraWideDeviceId,
+  isFrontFacing,
   readCameraCapabilities,
 } from './cameraSelection'
 
@@ -43,27 +44,29 @@ export const AUDIO_BITS_PER_SECOND = 64_000
 // 自動停止・推定サイズに使う合計ビットレート。
 export const TOTAL_BITS_PER_SECOND = VIDEO_BITS_PER_SECOND + AUDIO_BITS_PER_SECOND
 
-// 720p 相当。カメラは背面 (メモ用途は手元や周囲を写すのが主)。
-// 近接時は facingMode ではなく超広角の deviceId を名指しで開く (cameraSelection の
-// 説明どおり、iOS のマクロは超広角レンズが担うため)。
-//
-// **iOS Safari は deviceId だけ渡すと前面カメラに化けることがある** (deviceId の
-// 解決が不安定で、背面超広角のつもりが自撮りカメラで開く)。背面に固定するため
-// `facingMode: { ideal: 'environment' }` を添える。ideal なので deviceId の exact
-// と両立でき、OverconstrainedError にはならない (背面超広角なら両制約が一致する)。
-function buildVideoConstraints(
-  facing: CameraFacing,
-  deviceId?: string,
-): MediaTrackConstraints {
-  const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
-  if (deviceId) {
-    return {
-      deviceId: { exact: deviceId },
-      facingMode: { ideal: facing },
-      ...size,
-    }
+// 720p 相当の解像度指定 (全経路で共通)。
+const SIZE_CONSTRAINTS = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+} as const
+
+// 通常経路。カメラは背面 (メモ用途は手元や周囲を写すのが主)。facingMode は
+// plain (ideal 相当) — exact にすると背面の無い PC で開けなくなる。
+function buildVideoConstraints(facing: CameraFacing): MediaTrackConstraints {
+  return { facingMode: facing, ...SIZE_CONSTRAINTS }
+}
+
+// 近接 (超広角) 経路。deviceId 名指しに **facingMode: { exact: 'environment' } を
+// 添えて「前面では絶対に開かない」を制約で保証する** — iOS Safari には deviceId を
+// 前面カメラに誤解決する癖があり (docs/16)、ideal では抑止できなかった。exact なら
+// 誤解決時は OverconstrainedError で失敗し、呼び出し側が通常背面へフォールバック
+// する (前面で開くより近接なしの方がまし)。
+function buildUltraWideConstraints(deviceId: string): MediaTrackConstraints {
+  return {
+    deviceId: { exact: deviceId },
+    facingMode: { exact: 'environment' },
+    ...SIZE_CONSTRAINTS,
   }
-  return { facingMode: facing, ...size }
 }
 
 // 自動停止までの長さ (3 分)。TOTAL_BITS_PER_SECOND で 3 分 ≈ 24MB となり、
@@ -187,6 +190,10 @@ export class VideoRecorder {
   private startedAt = 0
   private nearFocusOn = false
   private facingMode: CameraFacing = 'environment'
+  // 背面超広角の deviceId。**ストリームが生きているうちに** open() で控える。
+  // トラックを止めた後の enumerateDevices はラベルが消えて探し直せないことが
+  // あるため、切替時はこのキャッシュを使う。誤解決が判明したら null に戻す
+  private ultraWideId: string | null = null
 
   get isRecording(): boolean {
     return this.recorder?.state === 'recording'
@@ -205,6 +212,12 @@ export class VideoRecorder {
   // いま内側 (user) / 外側 (environment) どちらで開いているか。
   get facing(): CameraFacing {
     return this.facingMode
+  }
+
+  // 近接 (超広角) へ切り替えられる端末か。open() 後に有効 (ラベルは gUM 許可後に
+  // しか出ないため)。UI の近接ボタンの出し分けに使う。
+  get hasUltraWide(): boolean {
+    return this.ultraWideId !== null
   }
 
   // ライブプレビュー用の MediaStream (<video srcObject>)。開いていなければ null。
@@ -234,6 +247,9 @@ export class VideoRecorder {
       throw new VideoCaptureError('この端末は動画録画に対応していません。')
     }
     await this.acquireStream({ facing: 'environment', nearFocus })
+    // 近接ボタンの出し分け用に、ストリームが生きている今のうちに超広角を控える
+    // (acquireStream 内で既に探していれば二重には探さない)
+    this.ultraWideId ??= await findUltraWideDeviceId()
   }
 
   // プレビュー中にレンズを切り替える (近接=超広角 ⇔ 通常)。近接は外側専用なので
@@ -320,35 +336,71 @@ export class VideoRecorder {
     }
   }
 
-  // gUM でストリームを確保し、近接 (外側専用) なら超広角の deviceId で開いて
-  // zoom を寄せる。失敗したら**何も掴んだまま残さない** (this.mediaStream に
+  // gUM でストリームを確保する。近接 (外側専用) なら超広角経路を先に試し、
+  // 開けなければ通常背面へフォールバック (近接なしで開く方が、開けない・前面で
+  // 開くよりまし)。失敗したら**何も掴んだまま残さない** (this.mediaStream に
   // まだ入っていないので、ここで離さないと誰も track.stop() を呼べず、カメラ
   // 使用中表示が残る)。
   private async acquireStream(opts: {
     facing: CameraFacing
     nearFocus: boolean
   }): Promise<void> {
-    // 近接は外側 (背面超広角) 専用。内側では超広角を探さない
-    const deviceId =
-      opts.nearFocus && opts.facing === 'environment'
-        ? ((await findUltraWideDeviceId()) ?? undefined)
-        : undefined
+    // 近接は外側 (背面超広角) 専用。内側では試さない
+    if (opts.nearFocus && opts.facing === 'environment') {
+      this.ultraWideId ??= await findUltraWideDeviceId()
+      if (this.ultraWideId && (await this.tryAcquireUltraWide(this.ultraWideId))) {
+        return
+      }
+    }
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: buildVideoConstraints(opts.facing, deviceId),
+        video: buildVideoConstraints(opts.facing),
         audio: true,
       })
     } catch (e) {
       throw mapCaptureError(e)
     }
+    this.adoptStream(stream, opts.facing, false)
+  }
+
+  // 超広角を deviceId 名指し + facingMode exact で開く。開けたら true。
+  // iOS が deviceId を前面に誤解決した場合は exact 側で OverconstrainedError に
+  // なるか、万一 exact も無視されたら開けた実トラックの検証で弾く — どちらの
+  // 経路でもキャッシュを捨てて false を返し、呼び出し側が通常背面で開き直す。
+  private async tryAcquireUltraWide(deviceId: string): Promise<boolean> {
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: buildUltraWideConstraints(deviceId),
+        audio: true,
+      })
+    } catch {
+      this.ultraWideId = null // id が古い・誤解決。次の open() で探し直す
+      return false
+    }
+    const track = stream.getVideoTracks()[0] ?? null
+    if (track && isFrontFacing(track)) {
+      stream.getTracks().forEach((t) => t.stop())
+      this.ultraWideId = null
+      return false
+    }
+    this.adoptStream(stream, 'environment', true)
+    if (track) {
+      await applyNearFocusZoom(track)
+    }
+    return true
+  }
+
+  private adoptStream(
+    stream: MediaStream,
+    facing: CameraFacing,
+    nearFocus: boolean,
+  ): void {
     this.mediaStream = stream
     this.videoTrack = stream.getVideoTracks()[0] ?? null
-    this.facingMode = opts.facing
-    this.nearFocusOn = Boolean(deviceId)
-    if (this.nearFocusOn && this.videoTrack) {
-      await applyNearFocusZoom(this.videoTrack)
-    }
+    this.facingMode = facing
+    this.nearFocusOn = nearFocus
   }
 
   async stop(): Promise<Recording> {

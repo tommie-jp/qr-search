@@ -345,9 +345,95 @@ describe('VideoRecorder', () => {
       expect(recorder.nearFocus).toBe(true)
       const video = usedConstraints?.video as MediaTrackConstraints
       expect(video.deviceId).toEqual({ exact: 'ultra' })
-      // iOS で前面カメラに化けないよう facingMode: environment を ideal で添える
-      // (exact ではないので deviceId と両立でき OverconstrainedError にならない)
-      expect(video.facingMode).toEqual({ ideal: 'environment' })
+      // iOS が deviceId を前面に誤解決しても開かせないよう exact で固定する
+      // (誤解決時は OverconstrainedError → 通常背面フォールバック)
+      expect(video.facingMode).toEqual({ exact: 'environment' })
+    })
+
+    test('超広角の gUM が拒まれたら通常背面へフォールバックする', async () => {
+      const constraints: MediaStreamConstraints[] = []
+      setMediaDevices({
+        enumerateDevices: ultraWideDevices,
+        getUserMedia: async (c) => {
+          constraints.push(c)
+          const video = c.video as MediaTrackConstraints
+          if (video.deviceId) {
+            throw new Error('OverconstrainedError') // 前面への誤解決を exact が弾いた想定
+          }
+          return { getVideoTracks: () => [], getTracks: () => [track] }
+        },
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open(true)
+      // 開けてはいるが近接ではない (ボタンは OFF 表示になる)
+      expect(recorder.isOpen).toBe(true)
+      expect(recorder.nearFocus).toBe(false)
+      const last = constraints.at(-1)?.video as MediaTrackConstraints
+      expect(last.facingMode).toBe('environment')
+      expect(last.deviceId).toBeUndefined()
+    })
+
+    test('exact も無視して前面で開いたら、捨てて通常背面で開き直す', async () => {
+      const frontTrack = {
+        stop: vi.fn(),
+        getSettings: () => ({ facingMode: 'user' }),
+      }
+      const backTrack = { stop: vi.fn() }
+      setMediaDevices({
+        enumerateDevices: ultraWideDevices,
+        getUserMedia: async (c) => {
+          const video = c.video as MediaTrackConstraints
+          if (video.deviceId) {
+            // iOS の誤解決を再現: 名指ししたのに前面カメラが返る
+            return {
+              getVideoTracks: () => [frontTrack],
+              getTracks: () => [frontTrack],
+            }
+          }
+          return {
+            getVideoTracks: () => [backTrack],
+            getTracks: () => [backTrack],
+          }
+        },
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open(true)
+      expect(frontTrack.stop).toHaveBeenCalled() // 前面ストリームは即捨てる
+      expect(recorder.isOpen).toBe(true)
+      expect(recorder.nearFocus).toBe(false)
+    })
+
+    test('切替時は open で控えた deviceId を使い、再列挙しない', async () => {
+      const enumerateDevices = vi.fn(ultraWideDevices)
+      setMediaDevices({
+        enumerateDevices,
+        getUserMedia: async () => ({
+          getVideoTracks: () => [],
+          getTracks: () => [track],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      const callsAfterOpen = enumerateDevices.mock.calls.length
+      // トラックを止めた後の enumerateDevices はラベルが消えることがあるので、
+      // 切替はキャッシュで賄う (docs/16)
+      await recorder.switchNearFocus(true)
+      expect(recorder.nearFocus).toBe(true)
+      expect(enumerateDevices.mock.calls.length).toBe(callsAfterOpen)
+    })
+
+    test('open すると hasUltraWide で近接可否が判る', async () => {
+      setMediaDevices({
+        enumerateDevices: ultraWideDevices,
+        getUserMedia: async () => ({
+          getVideoTracks: () => [],
+          getTracks: () => [track],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      expect(recorder.hasUltraWide).toBe(false) // open 前は判らない
+      await recorder.open()
+      expect(recorder.hasUltraWide).toBe(true)
     })
 
     test('超広角が無ければ通常カメラで開き nearFocus は false', async () => {
