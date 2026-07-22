@@ -8,6 +8,7 @@ import { DebugConsoleButton } from "@/components/DebugConsoleButton";
 import { DemoBanner } from "@/components/DemoBanner";
 import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
+import { HistoryNav } from "@/components/HistoryNav";
 import { LoginButton } from "@/components/LoginButton";
 import { LogoutButton } from "@/components/LogoutButton";
 import {
@@ -18,7 +19,6 @@ import {
   LogIcon,
 } from "@/components/MenuIcons";
 import { PasskeyLoginButton } from "@/components/PasskeyLoginButton";
-import { StandaloneBackButton } from "@/components/StandaloneBackButton";
 import { HEADER_MENU_ITEM_CLASS } from "@/components/ui";
 import {
   isDemoMode,
@@ -197,7 +197,7 @@ export default async function RootLayout({
                 </>
               )}
             </HeaderMenu>
-            <StandaloneBackButton />
+            <HistoryNav />
             {/* アイコンもホームリンクに含める。押せる的が広がるうえ、
                 アイコンとサイト名が別々の当たり判定に割れるのを避ける。
                 /icon.svg は app/icon.svg が規約で配信するもの (PNG より

@@ -108,10 +108,24 @@ CodeMirror の history は既定で有効なので、エディタ下のツール
 
 ## 5. Phase 5: standalone (ホーム画面起動) の作法
 
-- `@media (display-mode: standalone)` のときだけヘッダに「←戻る」を出す
-  (`history.back()`)。ブラウザで開いたときは出さない
 - ヘッダを `position: sticky; top: 0` で固定し、深くスクロールしても
   検索・ホームに戻りやすくする
+
+### 5-1. ヘッダの戻る・進むボタン (2026-07-22 変更)
+
+当初は `@media (display-mode: standalone)` のときだけヘッダに「←戻る」を出し
+(`history.back()`)、ブラウザで開いたときは出さない設計だった。その後、ハンバーガー
+メニューの右に「←戻る」「→進む」を **ブラウザ・standalone を問わず常時出す** ように
+変更した (`src/components/HistoryNav.tsx`。旧 `StandaloneBackButton.tsx` を置き換え)。
+
+- 戻る/進む先がない向きはボタンを `disabled` にして薄く見せる。可否の判定は
+  Navigation API (`navigation.canGoBack` / `navigation.canGoForward`) を使う。
+  Chrome/Edge 102+・Firefox 147+・Safari 26.2+ が対応。
+- サーバ描画とクライアント初回では可否が分からないので、購読は
+  `useSyncExternalStore` で行う。サーバ側スナップショットは常に `false` (disabled)
+  を返し、ハイドレーション後にクライアントの実値へ差し替わる。
+- 未対応ブラウザでは判定できないので両方 active に倒す (押しても行き先がなければ
+  no-op で無害)。
 
 ## 6. ヘッダーのハンバーガーメニュー (2026-07-19 追加)
 
