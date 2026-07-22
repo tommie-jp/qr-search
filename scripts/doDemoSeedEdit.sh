@@ -7,9 +7,12 @@
 # それを「編集を始める → ブラウザで直す → 確定する」の 2 コマンドに包む。
 #
 # 使い方 (詳細は -h):
-#   ./doDemoSeedEdit.sh start          # 種の状態から編集を始める (timer 停止)
+#   ./doDemoSeedEdit.sh start          # timer を止めて編集開始 (live はそのまま)
 #   ...ブラウザで qr-demo に demo/demo で入り、ノートを編集...
 #   ./doDemoSeedEdit.sh commit         # いまの live を新しい種として確定 (timer 再開)
+#
+# 既定は「live を保持」。人間の編集を消さない安全側をデフォルトにする
+# (誤操作で消えると復旧不能なため)。種の状態からやり直すときだけ start --reset。
 #
 # 環境変数:
 #   DEMO_SSH_HOST   ssh 先 (default: vps2)
@@ -41,28 +44,35 @@ live は種へ戻る。このスクリプトは「種を撮り直す」手順 (d
   ./doDemoSeedEdit.sh <サブコマンド> [オプション]
 
 サブコマンド:
-  start [--keep]  編集を始める。毎時リセット timer を止め、live を種の状態へ
-                  戻してから編集に入る (作業を種から始めるため)。
-                  --keep: live を巻き戻さない。用途は 2 つ —
-                    (1) migration 後の撮り直し。migration 適用後に既定 reseed を
-                        すると live が旧スキーマへ戻り app が壊れる。この場合は
-                        必ず --keep を付け、直後に commit する
-                    (2) 初回ブートストラップ (種がまだ無い)
+  start [--reset]  編集を始める。毎時リセット timer を止めるだけで、
+                   **既定では live をそのまま**にする (いまの状態から編集を続ける)。
+                   live と種で件数が違えば「未確定のノートが混ざっている」と警告する。
+                   --reset: live を種の状態へ戻してから始める (まっさらから作り直す)。
+                   既定を保持にする理由: 素の start が live を巻き戻すと、migration
+                   デプロイ後にうっかり叩いたとき app が旧スキーマの種で壊れる。
+                   人間の編集も毎時境界で消える。破壊的な側を明示フラグに寄せる。
 
-  commit          いまの live を新しい種 (qr_seed) として確定し、timer を戻す。
-                  app を一瞬止めて createdb -T で種を差し替える (数十秒の瞬断)。
+  commit [--stay]  いまの live を新しい種 (qr_seed) として確定する。app を一瞬
+                   止めて createdb -T で種を差し替える (数十秒の瞬断)。既定では
+                   timer を戻す。
+                   --stay: 確定後も timer を止めたまま編集を続ける。「確定 →
+                   続けて編集」の間に毎時 0 分をまたいでも消えないようにする。
 
-  abort           編集を破棄する。live を現在の種へ戻し、timer を戻す。
+  abort            編集を破棄する。live を現在の種へ戻し、timer を戻す。
 
-  status          timer の状態・live/種の items 件数・直近 reseed ログを表示。
-                  「timer 止めっぱなし」の確認にも使う。
+  status           timer の状態・live/種の items 件数・直近 reseed ログを表示。
+                   「timer 止めっぱなし」の確認にも使う。
 
-  -h, --help      このヘルプを表示する。
+  -h, --help       このヘルプを表示する。
 
 典型的な流れ:
   ./doDemoSeedEdit.sh start
   # https://qr-demo.tommie.jp に demo/demo でログインしてノートを編集
   ./doDemoSeedEdit.sh commit
+
+migration を含むデプロイをデモに当てた直後 (種を旧スキーマのままにしない):
+  ./doDemoSeedEdit.sh start      # live (新スキーマ) はそのまま、timer だけ止まる
+  ./doDemoSeedEdit.sh commit     # 新スキーマの種を撮り直す
 
 環境変数:
   DEMO_SSH_HOST   ssh 先 (default: vps2)
@@ -88,43 +98,71 @@ seed_exists() {
   ssh "$DEMO_SSH_HOST" bash -s <<EOF 2>/dev/null || true
 cd "\$HOME/$DEMO_DIR" 2>/dev/null || exit 0
 docker compose exec -T db psql -U "$DB_USER" -d postgres -tAc \
-  "SELECT 1 FROM pg_database WHERE datname='$SEED_NAME'" 2>/dev/null || true
+  "SELECT 1 FROM pg_database WHERE datname='$SEED_NAME'" </dev/null 2>/dev/null || true
 EOF
 }
 
-item_counts() {
-  ssh "$DEMO_SSH_HOST" bash -s <<EOF
-set -euo pipefail
-cd "\$HOME/$DEMO_DIR"
-for d in $DB_NAME $SEED_NAME; do
-  n=\$(docker compose exec -T db psql -U "$DB_USER" -d "\$d" -tAc \
-    "SELECT count(*) FROM items" 2>/dev/null || echo "?")
-  echo "    \$d: \$n"
-done
+# live と種の items 件数を "LIVE SEED" の 1 行で返す (取れなければ該当を ? に)。
+# 種は createdb -T 直後に PGroonga 索引が壊れており (docs/39 §6-2)、count が
+# index-only scan を選ぶと "object isn't found" で死ぬ。PGOPTIONS で接続時に
+# 索引スキャンを切り、必ず seq scan で数える。SET 文を混ぜると psql が "SET"
+# タグを出力に足して数値がずれるため、GUC は接続オプションで渡す。
+COUNT_PGOPTS="-c enable_indexscan=off -c enable_bitmapscan=off -c enable_indexonlyscan=off"
+fetch_counts() {
+  ssh "$DEMO_SSH_HOST" bash -s <<EOF 2>/dev/null || echo "? ?"
+cd "\$HOME/$DEMO_DIR" 2>/dev/null || { echo "? ?"; exit 0; }
+count_db() {
+  # </dev/null 必須: docker compose exec -T はヒアドキュメント (この bash -s の
+  # stdin) を食い尽くし、以降の行が実行されなくなる。明示的に stdin を切る。
+  docker compose exec -T -e PGOPTIONS="$COUNT_PGOPTS" db \
+    psql -U "$DB_USER" -d "\$1" -tAc "SELECT count(*) FROM items" </dev/null 2>/dev/null | tr -d '[:space:]'
+}
+live=\$(count_db "$DB_NAME")
+seed=\$(count_db "$SEED_NAME")
+echo "\${live:-?} \${seed:-?}"
 EOF
+}
+
+# live/種の件数を人に見せる。
+show_counts() {
+  local live seed
+  read -r live seed <<<"$(fetch_counts)"
+  info "live ($DB_NAME): ${live}    種 ($SEED_NAME): ${seed}"
 }
 
 cmd_start() {
-  local keep=0
+  local reset=0
   case "${1:-}" in
-    --keep) keep=1 ;;
+    --reset) reset=1 ;;
     "") ;;
-    *) die "start の未知のオプション: $1 (使えるのは --keep)" ;;
+    *) die "start の未知のオプション: $1 (使えるのは --reset)" ;;
   esac
 
   log "1/2 毎時リセット timer を止める"
   ssh "$DEMO_SSH_HOST" "$SYSTEMCTL stop $TIMER" \
     || warn "timer を止められなかった (未設置かもしれない。続行する)"
 
-  if [ "$keep" = "1" ]; then
-    log "2/2 --keep: live は巻き戻さない (いまの状態から編集を続ける)"
-  elif [ "$(seed_exists)" != "1" ]; then
-    log "2/2 種 ($SEED_NAME) がまだ無い → live を巻き戻さず初回作成に進む"
-    info "このまま編集し、最後に commit すると初回の種になる。"
+  if [ "$reset" = "1" ]; then
+    if [ "$(seed_exists)" != "1" ]; then
+      log "2/2 --reset を指定したが種 ($SEED_NAME) がまだ無い → live をそのまま使う"
+      info "このまま編集し、最後に commit すると初回の種になる。"
+    else
+      log "2/2 --reset: live を種の状態へ戻す (reseed)"
+      ssh "$DEMO_SSH_HOST" "$SYSTEMCTL start $SERVICE" \
+        || die "reseed に失敗した。ログ: doDemoSeedEdit.sh status"
+    fi
   else
-    log "2/2 live を種の状態へ戻す (reseed)"
-    ssh "$DEMO_SSH_HOST" "$SYSTEMCTL start $SERVICE" \
-      || die "reseed に失敗した。ログ: doDemoSeedEdit.sh status"
+    log "2/2 live はそのまま (既定)。timer だけ止めた"
+    local live seed
+    read -r live seed <<<"$(fetch_counts)"
+    info "live ($DB_NAME): ${live}    種 ($SEED_NAME): ${seed}"
+    if [ "$(seed_exists)" != "1" ]; then
+      info "種はまだ無い。このまま編集して commit すると初回の種になる。"
+    elif [ "$live" != "$seed" ] && [ "$live" != "?" ] && [ "$seed" != "?" ]; then
+      warn "live と種で件数が違う。live に種へ未確定のノート (guest の落書き含む)
+    が混ざっている可能性がある。まっさらから作り直すなら:
+    ./doDemoSeedEdit.sh start --reset"
+    fi
   fi
 
   echo ""
@@ -134,6 +172,13 @@ cmd_start() {
 }
 
 cmd_commit() {
+  local stay=0
+  case "${1:-}" in
+    --stay) stay=1 ;;
+    "") ;;
+    *) die "commit の未知のオプション: $1 (使えるのは --stay)" ;;
+  esac
+
   # ガード: timer が生きていると start を経ていない = 毎時境界で編集が消えた恐れ
   if [ "$(timer_state)" = "active" ] && [ "${DEMO_FORCE:-0}" != "1" ]; then
     die "timer がまだ動いている。start を経ずに commit しようとしている可能性がある。
@@ -144,35 +189,48 @@ cmd_commit() {
   log "いまの live ($DB_NAME) を新しい種 ($SEED_NAME) として確定する"
   # リモートで app 停止 → 接続切断 → 種の差し替え → app 起動。
   # trap で途中失敗でも app を必ず起こす (止めっぱなし事故の防止)。
+  #
+  # **全 docker compose 呼び出しに </dev/null 必須**。docker compose exec -T は
+  # この bash -s の stdin (ヒアドキュメント) を食い尽くし、最初の 1 本より後ろが
+  # 実行されなくなる。これを怠ると step 2 の後で stdin が尽き、dropdb/createdb が
+  # 走らず「種が更新されないのに app だけ trap で起きて成功に見える」静かな失敗に
+  # なる (実際にこれで編集が消えた)。
   remote <<EOF
 set -euo pipefail
 cd "\$HOME/$DEMO_DIR"
 [ -f compose.yaml ] || { echo "ERROR: \$PWD に compose.yaml が無い" >&2; exit 1; }
 
-restart_app() { echo "==> (trap) app を起こし直す"; docker compose start app || true; }
+restart_app() { echo "==> (trap) app を起こし直す"; docker compose start app </dev/null || true; }
 trap restart_app EXIT
 
 echo "==> 1/5 app 停止"
-docker compose stop app
+docker compose stop app </dev/null
 
 echo "==> 2/5 ${DB_NAME} への残存接続を切る"
 docker compose exec -T db psql -U "$DB_USER" -d postgres -c \
   "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-   WHERE datname='$DB_NAME' AND pid <> pg_backend_pid()" >/dev/null
+   WHERE datname='$DB_NAME' AND pid <> pg_backend_pid()" </dev/null >/dev/null
 
 echo "==> 3/5 古い種を捨てる"
-docker compose exec -T db dropdb --if-exists --force -U "$DB_USER" "$SEED_NAME"
+docker compose exec -T db dropdb --if-exists --force -U "$DB_USER" "$SEED_NAME" </dev/null
 
 echo "==> 4/5 いまの ${DB_NAME} から種を作り直す (createdb -T)"
-docker compose exec -T db createdb -U "$DB_USER" -T "$DB_NAME" "$SEED_NAME"
+docker compose exec -T db createdb -U "$DB_USER" -T "$DB_NAME" "$SEED_NAME" </dev/null
 
 echo "==> 5/5 app 起動"
-docker compose start app
+docker compose start app </dev/null
 trap - EXIT
 EOF
 
   log "検証: live と種の items 件数 (一致すること)"
-  item_counts
+  show_counts
+
+  if [ "$stay" = "1" ]; then
+    log "--stay: timer は止めたまま (編集を続ける)"
+    info "続けて編集し、終わったらまた commit する。完全に終えたら"
+    info "commit (--stay なし) か abort で timer を戻すこと。"
+    return
+  fi
 
   log "毎時リセット timer を戻す"
   ssh "$DEMO_SSH_HOST" "$SYSTEMCTL start $TIMER" \
@@ -207,7 +265,7 @@ cmd_status() {
   if [ "$(seed_exists)" != "1" ]; then
     info "種 ($SEED_NAME) はまだ無い。"
   fi
-  item_counts
+  show_counts
 
   log "直近の reseed ログ"
   ssh "$DEMO_SSH_HOST" \
@@ -219,7 +277,7 @@ main() {
   local sub="${1:-}"
   case "$sub" in
     start)   shift; cmd_start "$@" ;;
-    commit)  shift; cmd_commit ;;
+    commit)  shift; cmd_commit "$@" ;;
     abort)   shift; cmd_abort ;;
     status)  shift; cmd_status ;;
     -h|--help|help|"") usage ;;
