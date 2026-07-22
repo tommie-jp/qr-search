@@ -4,7 +4,6 @@ import {
   ocrButtonLabel,
   recordButtonLabel,
   uploadButtonLabel,
-  videoRecordButtonLabel,
 } from './progressLabels'
 
 describe('uploadButtonLabel', () => {
@@ -75,16 +74,3 @@ describe('recordButtonLabel', () => {
   })
 })
 
-describe('videoRecordButtonLabel', () => {
-  test('idle は「録画」', () => {
-    expect(videoRecordButtonLabel('idle', 0)).toBe('録画')
-  })
-
-  test('preview はプレビューを閉じる「取消」', () => {
-    expect(videoRecordButtonLabel('preview', 0)).toBe('取消')
-  })
-
-  test('recording は停止と経過時間', () => {
-    expect(videoRecordButtonLabel('recording', 12_000)).toBe('停止 0:12')
-  })
-})

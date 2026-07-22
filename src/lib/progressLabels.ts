@@ -50,17 +50,5 @@ export function recordButtonLabel(isRecording: boolean, elapsedMs: number): stri
   return isRecording ? `停止 ${formatElapsed(elapsedMs)}` : '録音'
 }
 
-// 録画ボタン (ツールバー上)。プレビューと録画開始を分けたので 3 状態を出す
-// (useVideoRecording の VideoPhase)。録画中だけ経過時間つきの「停止」。
-//   idle      … これから開く → 「録画」
-//   preview   … カメラは開いたが未録画 → 「取消」(閉じる操作)
-//   recording … 録画中 → 「停止 m:ss」
-export function videoRecordButtonLabel(
-  phase: 'idle' | 'preview' | 'recording',
-  elapsedMs: number,
-): string {
-  if (phase === 'recording') {
-    return `停止 ${formatElapsed(elapsedMs)}`
-  }
-  return phase === 'preview' ? '取消' : '録画'
-}
+// 録画は全画面モーダル (VideoRecordModal) で行うので、ツールバーのボタンは
+// 「録画」固定。経過時間はモーダル上部で formatElapsed を直接使う。

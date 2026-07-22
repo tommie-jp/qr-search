@@ -18,7 +18,6 @@ import {
   ocrButtonLabel,
   recordButtonLabel,
   uploadButtonLabel,
-  videoRecordButtonLabel,
   type UploadProgress,
 } from "@/lib/progressLabels";
 import { fenceLanguageCompletion } from "./fenceCompletion";
@@ -34,11 +33,11 @@ import { uploadImageWithProgress } from "./uploadImageXhr";
 import {
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
-  PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS,
 } from "./ui";
 import { useAudioRecording } from "./useAudioRecording";
 import { useVideoRecording } from "./useVideoRecording";
+import { VideoRecordModal } from "./VideoRecordModal";
 
 // fabric 一式は重いので、お絵かきを開くまで読み込まない
 // (CodeMirror を遅延させているのと同じ流儀。MemoEditor.tsx 参照)
@@ -309,8 +308,6 @@ export default function MemoEditorInner({
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  // 録画中のライブプレビュー用 <video>。srcObject は属性で渡せないので ref で繋ぐ
-  const videoPreviewRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     onReady();
@@ -385,17 +382,6 @@ export default function MemoEditorInner({
     form.addEventListener("submit", blockSubmit);
     return () => form.removeEventListener("submit", blockSubmit);
   }, [busy, uploading, isRecording]);
-
-  // 録画中のプレビューを <video> に繋ぐ。MediaStream は srcObject にしか渡せず、
-  // 属性では渡せないので ref 経由で設定する。停止すると previewStream は null に
-  // なり、ここで srcObject を外す (track は recorder 側が止める)
-  useEffect(() => {
-    const el = videoPreviewRef.current;
-    if (!el) {
-      return;
-    }
-    el.srcObject = videoRecording.previewStream;
-  }, [videoRecording.previewStream]);
 
   // 画像 1 枚を OCR し、指定位置へ引用ブロックを差し込む。挿入時 OCR と
   // 「後から OCR」ボタンの両方がこの 1 本を使う (docs/24-画像OCR計画.md §4)。
@@ -737,34 +723,13 @@ export default function MemoEditorInner({
         </button>
         <button
           type="button"
-          // idle → プレビューを開く / preview → 取消 / recording → 停止。
-          // 録画開始はプレビュー下の「録画開始」ボタンで行う (頭ボケ回避のため
-          // カメラを先に開いて AF を落ち着かせる: docs/16)
-          onClick={() => {
-            if (videoRecording.phase === "recording") {
-              videoRecording.stop();
-            } else if (videoRecording.phase === "preview") {
-              videoRecording.cancelPreview();
-            } else {
-              videoRecording.openPreview();
-            }
-          }}
-          // カメラを開いている間 (preview/recording) は busy でも押せる。
-          // 閉じられないとカメラが掴まれたままになる
-          disabled={busy && videoRecording.phase === "idle"}
-          aria-pressed={videoRecording.phase !== "idle"}
+          // 押すとフルスクリーンの録画モーダルを開く (VideoRecordModal)。
+          // カメラを先に開いて AF を落ち着かせてから録画を始める (docs/16)
+          onClick={videoRecording.openPreview}
+          disabled={busy}
           className={SECONDARY_BUTTON_CLASS}
         >
-          {videoRecording.isRecording && (
-            <span
-              aria-hidden
-              className="size-2.5 animate-pulse rounded-full bg-red-600"
-            />
-          )}
-          {videoRecordButtonLabel(
-            videoRecording.phase,
-            videoRecording.elapsedMs,
-          )}
+          録画
         </button>
         <button
           type="button"
@@ -809,89 +774,9 @@ export default function MemoEditorInner({
           {recording.note}
         </p>
       )}
-      {/* ライブプレビュー (プレビュー中・録画中の両方)。何が写っているか見えないと
-          撮りようがない。muted playsInline はプレビューで音を鳴らさず・全画面へ
-          行かせないため。プレビュー中はここで構図とピントを合わせてから録画を
-          始められる (docs/16 の頭ボケ回避) */}
-      {videoRecording.phase !== "idle" && (
-        <div className="flex max-w-md flex-col gap-2">
-          {/* 内側カメラは鏡像で見せる (自分の位置合わせが直感に合う)。録画
-              ファイル自体は反転しない — 標準カメラアプリと同じ (docs/16) */}
-          <video
-            ref={videoPreviewRef}
-            autoPlay
-            muted
-            playsInline
-            className={`w-full rounded border border-gray-300 ${
-              videoRecording.facing === "user" ? "-scale-x-100" : ""
-            }`}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {videoRecording.phase === "preview" && (
-              <>
-                <button
-                  type="button"
-                  onClick={videoRecording.startRecording}
-                  className={PRIMARY_BUTTON_CLASS}
-                >
-                  <span
-                    aria-hidden
-                    className="size-2.5 rounded-full bg-white"
-                  />
-                  録画開始
-                </button>
-                {/* 内側/外側カメラ切替。ラベルは切り替え先を示す */}
-                <button
-                  type="button"
-                  onClick={videoRecording.toggleFacing}
-                  className={SECONDARY_BUTTON_CLASS}
-                >
-                  {videoRecording.facing === "environment"
-                    ? "内カメラ"
-                    : "外カメラ"}
-                </button>
-                {/* 近接 = 超広角レンズへ切替 (iOS のマクロ相当)。超広角を持つ
-                    外側カメラでだけ出す。iOS Safari は手動フォーカス非対応の
-                    ためレンズ選択で近接する (docs/16) */}
-                {videoRecording.facing === "environment" &&
-                  videoRecording.canNearFocus && (
-                    <button
-                      type="button"
-                      onClick={videoRecording.toggleNearFocus}
-                      aria-pressed={videoRecording.nearFocus}
-                      className={SECONDARY_BUTTON_CLASS}
-                    >
-                      {videoRecording.nearFocus ? "近接 ON" : "近接"}
-                    </button>
-                  )}
-              </>
-            )}
-            {/* トーチ・ズームはトラックを開き直さないので録画中でも操作できる。
-                対応端末でだけ出す (docs/16) */}
-            {videoRecording.canTorch && (
-              <button
-                type="button"
-                onClick={videoRecording.toggleTorch}
-                aria-pressed={videoRecording.torchOn}
-                className={SECONDARY_BUTTON_CLASS}
-              >
-                {videoRecording.torchOn ? "ライト ON" : "ライト"}
-              </button>
-            )}
-            {videoRecording.zoomLevels.map((level) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => videoRecording.setZoom(level)}
-                aria-pressed={videoRecording.zoom === level}
-                className={SECONDARY_BUTTON_CLASS}
-              >
-                {level}x
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* 録画は全画面モーダルで行う (プレビュー・録画・カメラ操作すべて)。
+          state と操作は videoRecording が持ち、ここは開閉のきっかけだけ */}
+      <VideoRecordModal video={videoRecording} />
       {videoRecording.note && (
         <p aria-live="polite" className={BUSY_NOTICE_CLASS}>
           {videoRecording.note}
