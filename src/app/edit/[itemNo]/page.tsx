@@ -12,6 +12,7 @@ import { RecordAccess } from "@/components/RecordAccess";
 import { SubmitButton } from "@/components/SubmitButton";
 import { TrashedBanner } from "@/components/TrashedBanner";
 import { UnsavedGuard } from "@/components/UnsavedGuard";
+import { YahooAttribution } from "@/components/YahooAttribution";
 import {
   ACTION_LINK_CLASS,
   MEMO_INPUT_CLASS,
@@ -133,6 +134,13 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
             一覧へ
           </Link>
         </div>
+
+        {/* Yahoo! の規定クレジットをこの画面の下部に常設する (docs/47)。
+            JAN 商品情報 (Yahoo!ショッピング API) の結果が実際に現れるのは
+            この編集画面の事前入力だけなので、「API を使う画面の下部」を
+            ここで満たす。form の外に置くので sticky の「更新」とは重ならない。
+            JAN 由来かで出し分けず無条件で出す (デモでも。docs/47 §3-2) */}
+        <YahooAttribution />
       </div>
     </PageTransition>
   );

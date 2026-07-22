@@ -8,11 +8,10 @@ import AboutPage from "./page";
 
 const html = () => renderToStaticMarkup(<AboutPage />);
 
-// docs/46 §1-1。Yahoo! は規定 HTML の改変が禁止。リンク先・文言が一字一句
-// 規定どおりに出ることを固定する (誰かが CSS で触ったり文言を変えたら落とす)
-test("Yahoo! の規定クレジットを改変せず含む", () => {
-  const out = html();
-  expect(out).toContain(
+// Yahoo! の規定 HTML の一字一句の固定は YahooAttribution.test.tsx が持つ。
+// ここでは総覧ページにそれが載っている (コンポーネントが繋がっている) ことだけ見る
+test("Yahoo! の規定クレジットが載っている", () => {
+  expect(html()).toContain(
     '<a href="https://developer.yahoo.co.jp/sitemap/">Webサービス by Yahoo! JAPAN</a>',
   );
 });

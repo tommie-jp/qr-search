@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { YahooAttribution } from "@/components/YahooAttribution";
 
 // クレジット / 帰属表示のページ (docs/46-クレジット表記計画.md)。
 //
@@ -11,17 +12,6 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "クレジット",
 };
-
-// Yahoo! の規定クレジット (docs/46 §1-1)。
-//
-// **一字一句この HTML のまま出す。** 規約で改変 (CSS での色変更・極端な縮小・
-// リンク先や文言の変更) が禁止されているため、JSX で組み直さず規定ソースを
-// そのまま挿入する。target/rel も規定に無いので足さない。
-// 最新の規定は https://developer.yahoo.co.jp/attribution/ で確認する。
-const YAHOO_ATTRIBUTION_HTML =
-  '<!-- Begin Yahoo! JAPAN Web Services Attribution Snippet -->\n' +
-  '<span style="margin:15px 15px 15px 15px"><a href="https://developer.yahoo.co.jp/sitemap/">Webサービス by Yahoo! JAPAN</a></span>\n' +
-  "<!-- End Yahoo! JAPAN Web Services Attribution Snippet -->";
 
 // このアプリが使う Web サービスの帰属表示 (docs/46 §1)。
 export default function AboutPage() {
@@ -41,12 +31,7 @@ export default function AboutPage() {
           JAN コードからの商品名・ブランドの取得に、Yahoo!ショッピング商品検索
           API を利用しています。
         </p>
-        {/* 規定 HTML をそのまま挿入する (改変禁止のため JSX で組み直さない)。
-            静的な定数で、ユーザー入力は一切混じらない */}
-        <div
-          className="text-blue-700 underline"
-          dangerouslySetInnerHTML={{ __html: YAHOO_ATTRIBUTION_HTML }}
-        />
+        <YahooAttribution />
       </section>
 
       <section className="space-y-2">
