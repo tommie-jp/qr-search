@@ -119,7 +119,9 @@ test("本文に画像があれば縮小版をサムネとして出す", () => {
   const html = renderRow(
     makeItem({ memo: `写真\n![](/api/images/${IMAGE})` }),
   );
-  expect(html).toContain(`src="/api/images/${IMAGE}?thumb=1"`);
+  // 末尾にキャッシュバスターの版 (&v=N) が付く (memoImages.ts の thumbUrl)。
+  // HTML 属性なので & は &amp; にエスケープされる (ブラウザは & に戻す)
+  expect(html).toContain(`src="/api/images/${IMAGE}?thumb=1&amp;v=`);
 });
 
 test("サムネは遅延読み込みし、届く前から場所を取る", () => {
@@ -179,4 +181,48 @@ test("URL モードのノートは本文もサムネも持たない", () => {
   );
   expect(html).toContain("https://example.com/x");
   expect(html).not.toContain("<img");
+});
+
+// スワイプ削除 (docs/43-スワイプ削除計画.md §7)
+
+const noop = () => {};
+
+const renderSwipeRow = (item: Item, view: RowViewMode = "compact") =>
+  renderToStaticMarkup(
+    <ul>
+      <ItemRow
+        item={item}
+        view={view}
+        swipeTrashAction={noop}
+        swipeOpen={false}
+        onSwipeOpenChange={noop}
+      />
+    </ul>,
+  );
+
+test("小表示でスワイプ有効なら削除ボタンを背面に持つ", () => {
+  const html = renderSwipeRow(makeItem({ itemNo: "42" }));
+  expect(html).toContain("削除");
+  expect(html).toContain('aria-label="#42 を削除"');
+});
+
+test("スワイプ props を渡さなければ削除ボタンは出ない", () => {
+  const html = renderRow(makeItem({ itemNo: "42" }));
+  expect(html).not.toContain('aria-label="#42 を削除"');
+});
+
+test("選択モード (checkbox) ではスワイプを有効にしない", () => {
+  const html = renderToStaticMarkup(
+    <ul>
+      <ItemRow
+        item={makeItem({ itemNo: "42" })}
+        checkbox={<input type="checkbox" name="itemNo" value="42" />}
+        swipeTrashAction={noop}
+        swipeOpen={false}
+        onSwipeOpenChange={noop}
+      />
+    </ul>,
+  );
+  expect(html).not.toContain('aria-label="#42 を削除"');
+  expect(html).toContain('type="checkbox"');
 });

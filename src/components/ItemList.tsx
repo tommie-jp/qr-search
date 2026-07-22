@@ -104,6 +104,10 @@ export function ItemList({
   const { selectMode, exit } = useSelectMode();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
+  // スワイプで開いている行 (docs/43-スワイプ削除計画.md)。開くのは常に 1 行
+  // だけにするため、ここで一元管理する。小表示・非選択のときだけ効く。
+  const [openItemNo, setOpenItemNo] = useState<string | null>(null);
+
   // 選択モードを抜けたら選択を捨てる。バーから抜けることもあるので、
   // 抜ける操作それぞれに後始末を配らず、モードの変化 1 か所で受ける
   const [wasSelectMode, setWasSelectMode] = useState(selectMode);
@@ -164,10 +168,23 @@ export function ItemList({
   }
 
   if (!selectMode) {
+    // スワイプ削除は小表示のみ (カード・画像はレイアウトが別)。
+    const swipeEnabled = view === "compact";
     return (
       <ul className={listClass}>
         {items.map((item) => (
-          <ItemRow key={item.itemNo} item={item} view={rowView} />
+          <ItemRow
+            key={item.itemNo}
+            item={item}
+            view={rowView}
+            swipeTrashAction={swipeEnabled ? trashAction : undefined}
+            swipeOpen={openItemNo === item.itemNo}
+            onSwipeOpenChange={
+              swipeEnabled
+                ? (open) => setOpenItemNo(open ? item.itemNo : null)
+                : undefined
+            }
+          />
         ))}
         {emptyState(items, query, registerHref, trashedMatches, view)}
       </ul>

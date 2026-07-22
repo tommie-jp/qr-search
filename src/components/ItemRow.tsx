@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { Item } from "@/generated/prisma/client";
 import { firstThumbInfo } from "@/lib/memoImages";
 import { RowThumb } from "./RowThumb";
+import { SwipeToTrashRow } from "./SwipeToTrashRow";
 import { memoPreview } from "@/lib/memoPreview";
 import { memoSummary } from "@/lib/memoSummary";
 import { tagSearchHref } from "@/lib/tags";
@@ -18,6 +19,11 @@ interface ItemRowProps {
   checkbox?: ReactNode;
   // 表示モード (docs/23-検索結果表示モード計画.md)。既定は今までの 2 行表示。
   view?: RowViewMode;
+  // 小表示のスワイプ削除 (docs/43-スワイプ削除計画.md)。3 つ揃って初めて
+  // 有効になる。選択モード (checkbox あり) やカード表示では渡さない。
+  swipeTrashAction?: (formData: FormData) => void | Promise<void>;
+  swipeOpen?: boolean;
+  onSwipeOpenChange?: (open: boolean) => void;
 }
 
 // サムネの一辺 (px)。行の高さに合わせる: 小は 2 行分、大は 5 行分。
@@ -41,6 +47,9 @@ export function ItemRow({
   item,
   checkbox,
   view = DEFAULT_VIEW_MODE,
+  swipeTrashAction,
+  swipeOpen = false,
+  onSwipeOpenChange,
 }: ItemRowProps) {
   const isUrl = item.mode === "url";
   const title = isUrl ? item.url : memoSummary(item.memo);
@@ -133,30 +142,47 @@ export function ItemRow({
     );
   }
 
-  return (
-    <li>
-      {/* relative … タイトルの当たり判定を広げる ::after の基準にする */}
-      <div className="relative flex items-baseline gap-3 px-4 py-1.5 transition-colors hover:bg-gray-50 active:bg-gray-100">
-        {checkbox}
+  // compact の 1 行ぶんの中身 (li の中身)。スワイプ有効時は
+  // SwipeToTrashRow が li を持つので、中身だけを渡す。
+  const compactBody = (
+    // relative … タイトルの当たり判定を広げる ::after の基準にする
+    <div className="relative flex items-baseline gap-3 px-4 py-1.5 transition-colors hover:bg-gray-50 active:bg-gray-100">
+      {checkbox}
+      <Link
+        href={`/item/${item.itemNo}`}
+        transitionTypes={["nav-forward"]}
+        className="shrink-0 font-mono font-bold"
+      >
+        #{item.itemNo}
+      </Link>
+      <div className="min-w-0 flex-1">
         <Link
           href={`/item/${item.itemNo}`}
           transitionTypes={["nav-forward"]}
-          className="shrink-0 font-mono font-bold"
+          className={`block truncate text-gray-600 ${stretchedLink}`}
         >
-          #{item.itemNo}
+          {title}
         </Link>
-        <div className="min-w-0 flex-1">
-          <Link
-            href={`/item/${item.itemNo}`}
-            transitionTypes={["nav-forward"]}
-            className={`block truncate text-gray-600 ${stretchedLink}`}
-          >
-            {title}
-          </Link>
-          {tags && <div className="mt-0.5">{tags}</div>}
-        </div>
-        {thumb}
+        {tags && <div className="mt-0.5">{tags}</div>}
       </div>
-    </li>
+      {thumb}
+    </div>
   );
+
+  // スワイプ削除は小表示かつ非選択 (checkbox なし) のときだけ。3 つの prop が
+  // 揃って初めて有効にする — ItemList が条件を満たすときだけ降ろしてくる。
+  if (swipeTrashAction && onSwipeOpenChange && !checkbox) {
+    return (
+      <SwipeToTrashRow
+        itemNo={item.itemNo}
+        trashAction={swipeTrashAction}
+        isOpen={swipeOpen}
+        onOpenChange={onSwipeOpenChange}
+      >
+        {compactBody}
+      </SwipeToTrashRow>
+    );
+  }
+
+  return <li>{compactBody}</li>;
 }
