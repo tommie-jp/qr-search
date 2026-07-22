@@ -168,8 +168,9 @@ export function ItemList({
   }
 
   if (!selectMode) {
-    // スワイプ削除は小表示のみ (カード・画像はレイアウトが別)。
-    const swipeEnabled = view === "compact";
+    // スワイプ削除は小・大表示 (docs/43 §9)。画像モードは非選択時に
+    // ImageMasonry へ early return するので、ここに来る view は compact/card のみ。
+    const swipeEnabled = view === "compact" || view === "card";
     return (
       <ul className={listClass}>
         {items.map((item) => (

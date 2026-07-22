@@ -226,3 +226,34 @@ test("選択モード (checkbox) ではスワイプを有効にしない", () =>
   expect(html).not.toContain('aria-label="#42 を削除"');
   expect(html).toContain('type="checkbox"');
 });
+
+test("カード表示でもスワイプ有効なら削除ボタンを持つ", () => {
+  const html = renderSwipeRow(makeItem({ itemNo: "42" }), "card");
+  expect(html).toContain('aria-label="#42 を削除"');
+});
+
+test("カードのスワイプ行は枠 (rounded border) を残す", () => {
+  // 枠クラスは ItemRow が持って渡す。SwipeToTrashRow の li に乗る (docs/43 §9-2)
+  const html = renderSwipeRow(makeItem({ itemNo: "42" }), "card");
+  expect(html).toContain("rounded");
+  expect(html).toContain("border-gray-200");
+});
+
+test("カードでも選択モードならスワイプを有効にしない", () => {
+  const html = renderToStaticMarkup(
+    <ul>
+      <ItemRow
+        item={makeItem({ itemNo: "42" })}
+        view="card"
+        checkbox={<input type="checkbox" name="itemNo" value="42" />}
+        swipeTrashAction={noop}
+        swipeOpen={false}
+        onSwipeOpenChange={noop}
+      />
+    </ul>,
+  );
+  expect(html).not.toContain('aria-label="#42 を削除"');
+  expect(html).toContain('type="checkbox"');
+  // 枠は今までどおり残る
+  expect(html).toContain("rounded");
+});

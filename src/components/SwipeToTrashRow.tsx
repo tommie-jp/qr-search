@@ -25,11 +25,17 @@ interface SwipeToTrashRowProps {
   // この行が開いているか。「開くのは常に 1 行だけ」を親 (ItemList) が持つ。
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  // 中身は ItemRow が組み立てた小表示 1 行ぶん。
+  // 小 … 削除で高さ 0 へ潰す。大 … 高さが可変・グリッドで隣に揃うので
+  // 潰さずフェードで消す (docs/43 §9-1)。
+  view: "compact" | "card";
+  // カードの枠 (h-full rounded border bg-white) は ItemRow が持ち、li に足す
+  // クラスとして渡す。見た目の定義を 2 か所に散らさない (docs/43 §9-2)。
+  liClassName?: string;
+  // 中身は ItemRow が組み立てた 1 行 / 1 カードぶん。
   children: ReactNode;
 }
 
-// 小表示の 1 行を左スワイプで削除できるようにするラッパー
+// ノートの 1 行 / 1 カードを左スワイプで削除できるようにするラッパー
 // (docs/43-スワイプ削除計画.md)。判定ロジックは lib/swipeRow.ts の純関数に
 // 任せ、ここは pointer と DOM/React state の橋渡しに徹する。
 //
@@ -40,6 +46,8 @@ export function SwipeToTrashRow({
   trashAction,
   isOpen,
   onOpenChange,
+  view,
+  liClassName = "",
   children,
 }: SwipeToTrashRowProps) {
   // 動きの真実は ref に持つ (pointer ハンドラが前回値を同期に読めるように)。
@@ -148,17 +156,23 @@ export function SwipeToTrashRow({
   };
 
   const open = offset !== 0;
+  const isCard = view === "card";
+
+  // 削除実行後の消え方。小は高さ 0 へ潰し (一覧が詰まる)、大はフェードだけ
+  // (高さ可変・グリッドで隣に揃うので潰しても空セルが残る。docs/43 §9-1)。
+  const removingClass = isCard ? "opacity-0" : "max-h-0 opacity-0";
+  // 潰さないときの高さ上限。小だけ max-h を効かせ、大はカードの高さに任せる。
+  const restingClass = isCard ? "" : "max-h-24";
 
   return (
     <li
       // overflow-hidden … はみ出した削除ボタンと、畳むときの高さを切る。
-      // max-h … 削除実行後に高さ 0 へ潰してから消えるので、サーバ反映までの
-      // 「押したのに残っている」空白を作らない。
-      className={`relative overflow-hidden transition-all duration-200 ${
-        removing ? "max-h-0 opacity-0" : "max-h-24"
+      // liClassName … カードの枠 (h-full rounded border bg-white)。小では空。
+      className={`relative overflow-hidden transition-all duration-200 ${liClassName} ${
+        removing ? removingClass : restingClass
       }`}
     >
-      {/* 背面: 右端に固定した削除ボタン */}
+      {/* 背面: 右端に固定した削除ボタン。inset-y-0 で行 / カードの全高に伸びる */}
       <button
         type="button"
         onClick={handleDelete}
@@ -172,7 +186,7 @@ export function SwipeToTrashRow({
         {isPending ? "…" : "削除"}
       </button>
 
-      {/* 前面: 既存の行。指に追従してずらす */}
+      {/* 前面: 既存の行。指に追従してずらす。カードは h-full で枠の高さに追従 */}
       <div
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -181,7 +195,7 @@ export function SwipeToTrashRow({
         onClickCapture={handleClickCapture}
         // pan-y … 縦スクロールはブラウザに任せ、横だけこちらが取る。
         // ドラッグ中だけ transition を外して指に張り付かせる。
-        className={`relative bg-white touch-pan-y ${
+        className={`relative bg-white touch-pan-y ${isCard ? "h-full" : ""} ${
           dragging ? "" : "transition-transform duration-200"
         }`}
         style={{ transform: `translateX(${offset}px)` }}

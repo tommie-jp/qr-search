@@ -99,47 +99,69 @@ export function ItemRow({
   // うえ、選んでいる最中に枠へ触れるたびノートへ飛んでしまう
   const stretchedLink = checkbox ? "" : "after:absolute after:inset-0";
 
+  // スワイプ削除は非選択 (checkbox なし) のときだけ。3 つの prop が揃って初めて
+  // 有効にする — ItemList が小/大表示のときだけ降ろしてくる (docs/43 §9-4)。
+  const swipeEnabled = Boolean(
+    swipeTrashAction && onSwipeOpenChange && !checkbox,
+  );
+
   if (view === "card") {
-    return (
-      // 1 枚ずつが独立したカード。小表示では ul が枠を持ち区切り線で仕切るが、
-      // グリッドに並べるときは ul は器でしかないので、枠と地色は各カードが持つ。
+    // 1 枚ずつが独立したカード。小表示では ul が枠を持ち区切り線で仕切るが、
+    // グリッドに並べるときは ul は器でしかないので、枠と地色は各カードが持つ。
+    // スワイプ有効時は SwipeToTrashRow が li を持つので、枠クラスだけ渡す
+    // (見た目の定義を 2 か所に散らさない。docs/43 §9-2)。
+    const cardFrame = "h-full rounded border border-gray-200 bg-white";
+    const cardBody = (
+      // relative … タイトルの当たり判定を広げる ::after の基準にする。
       // h-full … グリッドで伸ばされた分を中身にも渡し、隣とサムネの高さを揃える
-      <li className="h-full overflow-hidden rounded border border-gray-200 bg-white">
-        {/* relative … タイトルの当たり判定を広げる ::after の基準にする */}
-        <div className="relative flex h-full gap-3 px-4 py-3 transition-colors hover:bg-gray-50 active:bg-gray-100">
-          {checkbox}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex items-baseline gap-2">
-              <Link
-                href={`/item/${item.itemNo}`}
-                transitionTypes={["nav-forward"]}
-                className="shrink-0 font-mono font-bold"
-              >
-                #{item.itemNo}
-              </Link>
-              <Link
-                href={`/item/${item.itemNo}`}
-                transitionTypes={["nav-forward"]}
-                className={`truncate text-gray-600 ${stretchedLink}`}
-              >
-                {title}
-              </Link>
-            </div>
-            {/* タグが無くても行の高さは取る。隣のカードと本文の始まる位置が
-                揃わないと、並べたときに行がガタつく */}
-            <div className="mt-0.5 min-h-4">{tags}</div>
-            {preview && (
-              // 行数は CSS で決める。Markdown 上の 1 行は折り返して 2 行にも
-              // なるため、抽出側で数えても画面の行数とは一致しない
-              <p className="mt-1 line-clamp-3 text-sm text-gray-500">
-                {preview}
-              </p>
-            )}
+      <div className="relative flex h-full gap-3 px-4 py-3 transition-colors hover:bg-gray-50 active:bg-gray-100">
+        {checkbox}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-baseline gap-2">
+            <Link
+              href={`/item/${item.itemNo}`}
+              transitionTypes={["nav-forward"]}
+              className="shrink-0 font-mono font-bold"
+            >
+              #{item.itemNo}
+            </Link>
+            <Link
+              href={`/item/${item.itemNo}`}
+              transitionTypes={["nav-forward"]}
+              className={`truncate text-gray-600 ${stretchedLink}`}
+            >
+              {title}
+            </Link>
           </div>
-          {thumb}
+          {/* タグが無くても行の高さは取る。隣のカードと本文の始まる位置が
+              揃わないと、並べたときに行がガタつく */}
+          <div className="mt-0.5 min-h-4">{tags}</div>
+          {preview && (
+            // 行数は CSS で決める。Markdown 上の 1 行は折り返して 2 行にも
+            // なるため、抽出側で数えても画面の行数とは一致しない
+            <p className="mt-1 line-clamp-3 text-sm text-gray-500">{preview}</p>
+          )}
         </div>
-      </li>
+        {thumb}
+      </div>
     );
+
+    if (swipeEnabled && swipeTrashAction && onSwipeOpenChange) {
+      return (
+        <SwipeToTrashRow
+          itemNo={item.itemNo}
+          trashAction={swipeTrashAction}
+          isOpen={swipeOpen}
+          onOpenChange={onSwipeOpenChange}
+          view="card"
+          liClassName={cardFrame}
+        >
+          {cardBody}
+        </SwipeToTrashRow>
+      );
+    }
+
+    return <li className={`overflow-hidden ${cardFrame}`}>{cardBody}</li>;
   }
 
   // compact の 1 行ぶんの中身 (li の中身)。スワイプ有効時は
@@ -169,15 +191,14 @@ export function ItemRow({
     </div>
   );
 
-  // スワイプ削除は小表示かつ非選択 (checkbox なし) のときだけ。3 つの prop が
-  // 揃って初めて有効にする — ItemList が条件を満たすときだけ降ろしてくる。
-  if (swipeTrashAction && onSwipeOpenChange && !checkbox) {
+  if (swipeEnabled && swipeTrashAction && onSwipeOpenChange) {
     return (
       <SwipeToTrashRow
         itemNo={item.itemNo}
         trashAction={swipeTrashAction}
         isOpen={swipeOpen}
         onOpenChange={onSwipeOpenChange}
+        view="compact"
       >
         {compactBody}
       </SwipeToTrashRow>
