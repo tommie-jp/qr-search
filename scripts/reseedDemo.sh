@@ -10,8 +10,11 @@
 # (DB 名まで別にする必要はない。隔離はコンテナの層で足りる)。
 #
 # --- 種 (qr_seed) の作り方 (初回・撮り直し。docs/39 §6-1) ---
-#   1. デモを立て、guest でログインしてショーケースノートを作り込む
-#   2. この dir で:
+#   手元から scripts/doDemoSeedEdit.sh を使うのが楽 (docs/48):
+#     ./doDemoSeedEdit.sh start   # 種の状態から編集を始める
+#     ...ブラウザでショーケースノートを作り込む...
+#     ./doDemoSeedEdit.sh commit  # いまの live を種として確定
+#   手で撮るなら、この dir で app を止めてから:
 #        docker compose exec -T db createdb -U qr -T qr qr_seed
 #      (撮り直すときは先に `dropdb -U qr qr_seed`)
 #
