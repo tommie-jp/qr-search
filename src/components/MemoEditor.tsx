@@ -34,6 +34,10 @@ const PREFILL_NOUN: Record<PrefillKind, string> = {
 // デモインスタンスの取得無効メッセージ (docs/39-デモ公開計画.md §5)。
 // product は取得中などの noun (「商品情報」) と違い「JAN 情報」と呼ぶ —
 // デモでは外部キーが無く、そもそも JAN で引けないことを直接伝えるため。
+//
+// **book はデモでも取れるようになった** (docs/45-デモ書誌開放計画.md) ので、
+// サーバは書籍で demoDisabled を返さず、この book の文言は通常は出ない。
+// 将来デモで書誌を再び閉じたときに正しい文言が出るよう、防御的に残す。
 const PREFILL_DEMO_MESSAGE: Record<PrefillKind, string> = {
   book: "デモ版では書籍情報を取得できません",
   product: "デモ版では JAN 情報を取得できません",

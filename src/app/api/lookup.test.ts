@@ -128,19 +128,37 @@ describe('事前入力の口の拒否系 (実 DB・外部 API 不要)', () => {
     expect((await res.json()).success).toBe(true)
   })
 
-  // デモは外部 API のキーを持たないので、取得を試みず demoDisabled を返す
-  // (docs/39-デモ公開計画.md §5)。黙って notFound にせず「デモ版では…」と明示する
-  test('デモモードでは書影の口が demoDisabled を返す (外部 API を叩かない)', async () => {
+  // 書誌はキー不要 (openBD/NDL) なので、デモでも引ける (docs/45-デモ書誌開放計画.md)。
+  // demoDisabled にはせず、書名・著者を返す。ただし書影は保存しない (§4-2) ので
+  // coverImageUrl は付かない
+  test('デモモードでも書誌の口は書名を返す (書影は保存しない)', async () => {
     vi.stubEnv('DEMO_MODE', '1')
-    const fetchSpy = vi.fn()
-    vi.stubGlobal('fetch', fetchSpy)
+    // openBD が書影 URL 付きの書誌を返しても、デモでは書影を保存しない
+    const openBdBook = [
+      {
+        summary: {
+          title: 'リーダブルコード',
+          author: '角征典',
+          publisher: 'オライリー',
+          pubdate: '20120423',
+          cover: 'https://cover.openbd.jp/9784873115658.jpg',
+        },
+      },
+    ]
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(
+        new Response(JSON.stringify(openBdBook), { status: 200 }),
+      ),
+    )
 
     const [request, ctx] = booksRequest({ 'sec-fetch-site': 'same-origin' })
     const body = await (await books(request, ctx)).json()
 
-    expect(body.demoDisabled).toBe(true)
-    expect(body.error).toContain('デモ版')
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(body.success).toBe(true)
+    expect(body.demoDisabled).toBeFalsy()
+    expect(body.data.title).toBe('リーダブルコード')
+    // 書影は保存しないので、本文に置く URL は付かない (§4-2)
+    expect(body.data.coverImageUrl).toBeUndefined()
   })
 
   test('デモモードでは商品情報の口が demoDisabled を返す (外部 API を叩かない)', async () => {

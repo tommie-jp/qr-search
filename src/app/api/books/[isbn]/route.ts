@@ -32,17 +32,11 @@ export async function GET(
     return denied
   }
 
-  // デモインスタンスでは外部 API のキーを持たせない (docs/39-デモ公開計画.md §5)。
-  // 黙って「見つかりませんでした」になるより、デモだと明示する方が親切なので、
-  // 取得を試みる前に demoDisabled を返す。表示文言はクライアント (MemoEditor) 側
-  if (isDemoMode()) {
-    return NextResponse.json({
-      success: false,
-      data: null,
-      error: 'デモ版では書籍情報を取得できません',
-      demoDisabled: true,
-    })
-  }
+  // **書誌はデモでも引く** (docs/45-デモ書誌開放計画.md)。書名・著者は
+  // openBD/NDL のキー不要 API で取れる (bookLookup.ts) ので、デモでも
+  // スキャンから事前入力まで動かせる。JAN (/api/products) は Yahoo キーが
+  // 本質的に要るので、あちらだけ demoDisabled を残す。
+  // 書影の扱いだけは下でデモを分ける (§4-2)。
 
   const { isbn } = await params
   // 外から来る値なので必ず検算する。13 桁の数字だけを外部 API の URL に
@@ -64,7 +58,13 @@ export async function GET(
           // openBD の書影 URL はサーバの中だけの中継地点。本文に置くのは
           // 保存後の /api/images/<uuid>.jpg なので、応答には載せない
           coverUrl: undefined,
-          coverImageUrl: await saveCoverImage(isbn, book.coverUrl),
+          // **デモでは書影を保存しない** (docs/45 §4-2)。openBD 書影はキー不要で
+          // 引けるが、saveCoverImage は images へ書き込む副作用があり、それが
+          // デモの容量クォータ (checkDemoUploadQuota) の外なので、書誌 (書名・
+          // 著者) だけ返す。楽天書影はそもそもデモにキーが無く出ない
+          coverImageUrl: isDemoMode()
+            ? undefined
+            : await saveCoverImage(isbn, book.coverUrl),
         }
       : null
     return NextResponse.json({ success: true, data, error: null })
