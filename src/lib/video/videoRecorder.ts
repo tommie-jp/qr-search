@@ -7,7 +7,17 @@
 
 import fixWebmDuration from 'fix-webm-duration'
 import { MAX_VIDEO_BYTES } from '../uploads'
-import { applyNearFocusZoom, findUltraWideDeviceId } from './cameraSelection'
+import {
+  applyNearFocusZoom,
+  applyTorch,
+  applyZoom,
+  type CameraCapabilities,
+  findUltraWideDeviceId,
+  readCameraCapabilities,
+} from './cameraSelection'
+
+// 内側 (自撮り) / 外側 (背面) カメラ。近接 (超広角) は外側専用。
+export type CameraFacing = 'environment' | 'user'
 
 // 試す順に並べる。音声と同じく **Safari だけを mp4/H.264+AAC に寄せ、他は
 // webm/VP9+Opus のまま**にする。振り分けは UA 判定ではなく対応状況の実測で行う
@@ -41,16 +51,19 @@ export const TOTAL_BITS_PER_SECOND = VIDEO_BITS_PER_SECOND + AUDIO_BITS_PER_SECO
 // 解決が不安定で、背面超広角のつもりが自撮りカメラで開く)。背面に固定するため
 // `facingMode: { ideal: 'environment' }` を添える。ideal なので deviceId の exact
 // と両立でき、OverconstrainedError にはならない (背面超広角なら両制約が一致する)。
-function buildVideoConstraints(deviceId?: string): MediaTrackConstraints {
+function buildVideoConstraints(
+  facing: CameraFacing,
+  deviceId?: string,
+): MediaTrackConstraints {
   const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
   if (deviceId) {
     return {
       deviceId: { exact: deviceId },
-      facingMode: { ideal: 'environment' },
+      facingMode: { ideal: facing },
       ...size,
     }
   }
-  return { facingMode: 'environment', ...size }
+  return { facingMode: facing, ...size }
 }
 
 // 自動停止までの長さ (3 分)。TOTAL_BITS_PER_SECOND で 3 分 ≈ 24MB となり、
@@ -169,9 +182,11 @@ async function prepareForUpload(
 export class VideoRecorder {
   private recorder: MediaRecorder | null = null
   private mediaStream: MediaStream | null = null
+  private videoTrack: MediaStreamTrack | null = null
   private chunks: Blob[] = []
   private startedAt = 0
   private nearFocusOn = false
+  private facingMode: CameraFacing = 'environment'
 
   get isRecording(): boolean {
     return this.recorder?.state === 'recording'
@@ -187,9 +202,21 @@ export class VideoRecorder {
     return this.nearFocusOn
   }
 
+  // いま内側 (user) / 外側 (environment) どちらで開いているか。
+  get facing(): CameraFacing {
+    return this.facingMode
+  }
+
   // ライブプレビュー用の MediaStream (<video srcObject>)。開いていなければ null。
   get stream(): MediaStream | null {
     return this.mediaStream
+  }
+
+  // いまのトラックのトーチ・ズーム対応状況。開いていなければ両方なし。
+  capabilities(): CameraCapabilities {
+    return this.videoTrack
+      ? readCameraCapabilities(this.videoTrack)
+      : { torch: false, zoom: null }
   }
 
   // プレビュー用にカメラ・マイクを開く (まだ録画しない)。AF が落ち着いてから
@@ -206,14 +233,41 @@ export class VideoRecorder {
     if (!pickMimeType()) {
       throw new VideoCaptureError('この端末は動画録画に対応していません。')
     }
-    await this.acquireStream(nearFocus)
+    await this.acquireStream({ facing: 'environment', nearFocus })
   }
 
-  // プレビュー中にレンズを切り替える (近接=超広角 ⇔ 通常)。**録画中は不可**
-  // (MediaRecorder は途中のトラック差し替えに耐えられない)。
-  // iOS は 2 カメラ同時 gUM で NotReadableError になり得るので、**旧トラックを
-  // 先に止めてから**開き直す。
+  // プレビュー中にレンズを切り替える (近接=超広角 ⇔ 通常)。近接は外側専用なので
+  // facing は environment に固定する。**録画中は不可**。
   async switchNearFocus(nearFocus: boolean): Promise<void> {
+    await this.reopen({ facing: 'environment', nearFocus })
+  }
+
+  // プレビュー中に内側/外側カメラを切り替える。内側 (user) は単眼なので近接は
+  // 自動で解除する (nearFocus=false)。**録画中は不可**。
+  async setFacing(facing: CameraFacing): Promise<void> {
+    await this.reopen({ facing, nearFocus: false })
+  }
+
+  // トーチ (ライト) を点灯/消灯し、適用できたかを返す。トラックはそのままなので
+  // **録画中でも効く** (暗いと気づいてから点けられる)。非対応端末は false。
+  async setTorch(on: boolean): Promise<boolean> {
+    return this.videoTrack ? applyTorch(this.videoTrack, on) : false
+  }
+
+  // zoom を適用し、実際に適用した値を返す。トラックはそのままなので**録画中でも
+  // 効く**。非対応端末は null。
+  async setZoom(value: number): Promise<number | null> {
+    return this.videoTrack ? applyZoom(this.videoTrack, value) : null
+  }
+
+  // プレビュー中にカメラを開き直す共通処理 (近接・内外切替)。
+  // iOS は 2 カメラ同時 gUM で NotReadableError になり得るので、**旧トラックを
+  // 先に止めてから**開き直す。録画中は MediaRecorder がトラック差し替えに
+  // 耐えないため弾く。
+  private async reopen(opts: {
+    facing: CameraFacing
+    nearFocus: boolean
+  }): Promise<void> {
     if (this.isRecording) {
       throw new VideoCaptureError('録画中はカメラを切り替えられません。')
     }
@@ -222,8 +276,9 @@ export class VideoRecorder {
     }
     this.mediaStream.getTracks().forEach((track) => track.stop())
     this.mediaStream = null
+    this.videoTrack = null
     this.nearFocusOn = false
-    await this.acquireStream(nearFocus)
+    await this.acquireStream(opts)
   }
 
   // 開いているストリームで録画を始める。open() 済みが前提。失敗したら
@@ -258,35 +313,41 @@ export class VideoRecorder {
     } catch (e) {
       stream.getTracks().forEach((track) => track.stop())
       this.mediaStream = null
+      this.videoTrack = null
       this.nearFocusOn = false
       this.chunks = []
       throw mapCaptureError(e)
     }
   }
 
-  // gUM でストリームを確保し、近接なら超広角の deviceId で開いて zoom を寄せる。
-  // 失敗したら**何も掴んだまま残さない** (this.mediaStream にまだ入っていない
-  // ので、ここで離さないと誰も track.stop() を呼べず、カメラ使用中表示が残る)。
-  private async acquireStream(nearFocus: boolean): Promise<void> {
-    const deviceId = nearFocus
-      ? ((await findUltraWideDeviceId()) ?? undefined)
-      : undefined
+  // gUM でストリームを確保し、近接 (外側専用) なら超広角の deviceId で開いて
+  // zoom を寄せる。失敗したら**何も掴んだまま残さない** (this.mediaStream に
+  // まだ入っていないので、ここで離さないと誰も track.stop() を呼べず、カメラ
+  // 使用中表示が残る)。
+  private async acquireStream(opts: {
+    facing: CameraFacing
+    nearFocus: boolean
+  }): Promise<void> {
+    // 近接は外側 (背面超広角) 専用。内側では超広角を探さない
+    const deviceId =
+      opts.nearFocus && opts.facing === 'environment'
+        ? ((await findUltraWideDeviceId()) ?? undefined)
+        : undefined
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: buildVideoConstraints(deviceId),
+        video: buildVideoConstraints(opts.facing, deviceId),
         audio: true,
       })
     } catch (e) {
       throw mapCaptureError(e)
     }
     this.mediaStream = stream
+    this.videoTrack = stream.getVideoTracks()[0] ?? null
+    this.facingMode = opts.facing
     this.nearFocusOn = Boolean(deviceId)
-    if (this.nearFocusOn) {
-      const [videoTrack] = stream.getVideoTracks()
-      if (videoTrack) {
-        await applyNearFocusZoom(videoTrack)
-      }
+    if (this.nearFocusOn && this.videoTrack) {
+      await applyNearFocusZoom(this.videoTrack)
     }
   }
 
@@ -324,6 +385,7 @@ export class VideoRecorder {
       stream.getTracks().forEach((track) => track.stop())
       this.recorder = null
       this.mediaStream = null
+      this.videoTrack = null
       this.nearFocusOn = false
       this.chunks = []
     }
@@ -347,6 +409,7 @@ export class VideoRecorder {
     this.mediaStream?.getTracks().forEach((track) => track.stop())
     this.recorder = null
     this.mediaStream = null
+    this.videoTrack = null
     this.nearFocusOn = false
     this.chunks = []
   }

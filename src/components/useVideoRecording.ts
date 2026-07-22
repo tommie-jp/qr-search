@@ -3,16 +3,21 @@
 // ここは React 側の都合 (状態遷移・経過時間の刻み・自動停止・後始末・プレビュー
 // stream の受け渡し) だけを引き受ける。
 //
-// 音声との違いは 3 つ:
+// 音声との違い:
 //   1. 自動停止を「時間」と「推定サイズ」の早い方で行う (SIZE_STOP_MS)。
 //   2. ライブプレビュー用の MediaStream を state で公開する (<video srcObject>)。
 //   3. **プレビューと録画開始を分ける** (idle → preview → recording)。カメラを
 //      先に開いて AF が落ち着いてから録画を始められるので、録画の頭がボケない。
-//      プレビュー中だけ近接 (超広角) へレンズを切り替えられる。
+//   4. カメラ操作: 近接 (超広角)・内外切替はプレビュー中のみ (トラックを開き直す)。
+//      トーチ・ズームはトラックを開き直さないので録画中でも効く。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { findUltraWideDeviceId } from "@/lib/video/cameraSelection";
 import {
+  findUltraWideDeviceId,
+  NEAR_FOCUS_ZOOM,
+} from "@/lib/video/cameraSelection";
+import {
+  type CameraFacing,
   MAX_RECORDING_MS,
   SIZE_STOP_MS,
   VideoRecorder,
@@ -31,6 +36,16 @@ const AUTO_STOP_NOTE =
     ? `録画時間の上限 (${Math.round(MAX_RECORDING_MS / 60_000)} 分) に達したため停止しました。`
     : "ファイルサイズの上限に近づいたため停止しました。";
 
+// ズームボタンの段階。対応端末の最大倍率で絞り込む (スライダーは作り込みすぎ)。
+const ZOOM_STEPS = [1, 2, 4];
+
+// 端末の最大ズームで出せる段階を返す。1 段階だけ (= ズーム非対応相当) なら
+// ボタンを出さない
+function zoomLevelsFor(maxZoom: number): number[] {
+  const levels = ZOOM_STEPS.filter((z) => z <= maxZoom);
+  return levels.length > 1 ? levels : [];
+}
+
 // idle: カメラ未使用 / preview: 開いたが未録画 / recording: 録画中
 export type VideoPhase = "idle" | "preview" | "recording";
 
@@ -47,6 +62,16 @@ export interface VideoRecordingState {
   canNearFocus: boolean;
   // いま近接 (超広角) で開いているか
   nearFocus: boolean;
+  // いま内側 (user) / 外側 (environment) どちらで開いているか
+  facing: CameraFacing;
+  // トーチ (ライト) を操作できる端末か
+  canTorch: boolean;
+  // いまトーチが点いているか
+  torchOn: boolean;
+  // 出せるズーム段階 (空ならズーム非対応)
+  zoomLevels: number[];
+  // いまのズーム倍率
+  zoom: number;
   // idle → preview。カメラを開いてプレビューを出す
   openPreview: () => void;
   // preview → recording。プレビュー中のストリームで録画を始める
@@ -57,6 +82,12 @@ export interface VideoRecordingState {
   cancelPreview: () => void;
   // プレビュー中に近接 (超広角) ⇔ 通常を切り替える
   toggleNearFocus: () => void;
+  // プレビュー中に内側/外側カメラを切り替える
+  toggleFacing: () => void;
+  // トーチを点灯/消灯する (録画中も可)
+  toggleTorch: () => void;
+  // ズーム倍率を変える (録画中も可)
+  setZoom: (value: number) => void;
 }
 
 function messageOf(e: unknown, fallback: string): string {
@@ -80,6 +111,11 @@ export function useVideoRecording(
   const [note, setNote] = useState<string | null>(null);
   const [canNearFocus, setCanNearFocus] = useState(false);
   const [nearFocus, setNearFocus] = useState(false);
+  const [facing, setFacing] = useState<CameraFacing>("environment");
+  const [canTorch, setCanTorch] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [zoomLevels, setZoomLevels] = useState<number[]>([]);
+  const [zoom, setZoomState] = useState(1);
   const recorderRef = useRef<VideoRecorder | null>(null);
 
   // start / stop を毎レンダリング作り直さずに済ませるため、呼び先だけ差し替える
@@ -103,6 +139,29 @@ export function useVideoRecording(
     setPreviewStream(null);
     setNearFocus(false);
     setCanNearFocus(false);
+    setFacing("environment");
+    setCanTorch(false);
+    setTorchOn(false);
+    setZoomLevels([]);
+    setZoomState(1);
+  }, []);
+
+  // カメラを開き直した後、recorder の実状態を state へ写す (プレビュー・近接・
+  // 内外・トーチ/ズーム対応)。トーチは新トラックでは消えているので off に、
+  // ズームは近接なら初期ズームがかかっている
+  const syncCameraState = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder) {
+      return;
+    }
+    setPreviewStream(recorder.stream);
+    setNearFocus(recorder.nearFocus);
+    setFacing(recorder.facing);
+    const caps = recorder.capabilities();
+    setCanTorch(caps.torch);
+    setTorchOn(false);
+    setZoomLevels(caps.zoom ? zoomLevelsFor(caps.zoom.max) : []);
+    setZoomState(recorder.nearFocus ? NEAR_FOCUS_ZOOM : 1);
   }, []);
 
   const openPreview = useCallback(async () => {
@@ -114,9 +173,8 @@ export function useVideoRecording(
     setNote(null);
     try {
       await recorder.open();
-      setPreviewStream(recorder.stream);
-      setNearFocus(recorder.nearFocus);
       setPhase("preview");
+      syncCameraState();
       // 超広角があるか (近接ボタンの出し分け)。ラベルは gUM 許可後にしか
       // 出ないので、開いた後に調べる
       const ultra = await findUltraWideDeviceId();
@@ -126,7 +184,7 @@ export function useVideoRecording(
       recorder.cancel();
       resetToIdle();
     }
-  }, [resetToIdle]);
+  }, [resetToIdle, syncCameraState]);
 
   const startRecording = useCallback(() => {
     const recorder = recorderRef.current;
@@ -148,26 +206,27 @@ export function useVideoRecording(
     }
   }, [resetToIdle]);
 
-  const stop = useCallback(async (reason?: string) => {
-    const recorder = recorderRef.current;
-    if (!recorder?.isRecording) {
-      return;
-    }
-    // 先に録画中を降ろす。経過時間の interval が畳まれ、二重停止も防げる。
-    // プレビューも同時に外す (track はこの後 recorder.stop() が止める)
-    setStartedAt(null);
-    setPreviewStream(null);
-    setNearFocus(false);
-    setCanNearFocus(false);
-    setPhase("idle");
-    setNote(reason ?? null);
-    try {
-      const recording = await recorder.stop();
-      await handlersRef.current.onFinish(recording);
-    } catch (e) {
-      handlersRef.current.onError(messageOf(e, "録画を保存できませんでした。"));
-    }
-  }, []);
+  const stop = useCallback(
+    async (reason?: string) => {
+      const recorder = recorderRef.current;
+      if (!recorder?.isRecording) {
+        return;
+      }
+      // 先に録画中を降ろす。経過時間の interval が畳まれ、二重停止も防げる。
+      // プレビューも同時に外す (track はこの後 recorder.stop() が止める)
+      resetToIdle();
+      setNote(reason ?? null);
+      try {
+        const recording = await recorder.stop();
+        await handlersRef.current.onFinish(recording);
+      } catch (e) {
+        handlersRef.current.onError(
+          messageOf(e, "録画を保存できませんでした。"),
+        );
+      }
+    },
+    [resetToIdle],
+  );
 
   const cancelPreview = useCallback(() => {
     const recorder = recorderRef.current;
@@ -180,27 +239,67 @@ export function useVideoRecording(
     setNote(null);
   }, [resetToIdle]);
 
-  const toggleNearFocus = useCallback(async () => {
+  // プレビュー中のカメラ開き直し (近接・内外) の共通処理。切替に失敗すると
+  // プレビューごと畳まれている (旧トラックは停止済み) ので idle に戻す
+  const reopenCamera = useCallback(
+    async (action: (recorder: VideoRecorder) => Promise<void>) => {
+      const recorder = recorderRef.current;
+      if (!recorder?.isOpen || recorder.isRecording) {
+        return;
+      }
+      setNote(null);
+      try {
+        await action(recorder);
+        syncCameraState();
+      } catch (e) {
+        handlersRef.current.onError(
+          messageOf(e, "カメラを切り替えられませんでした。"),
+        );
+        recorder.cancel();
+        resetToIdle();
+      }
+    },
+    [resetToIdle, syncCameraState],
+  );
+
+  const toggleNearFocus = useCallback(() => {
+    void reopenCamera((recorder) =>
+      recorder.switchNearFocus(!recorder.nearFocus),
+    );
+  }, [reopenCamera]);
+
+  const toggleFacing = useCallback(() => {
+    void reopenCamera((recorder) =>
+      recorder.setFacing(
+        recorder.facing === "environment" ? "user" : "environment",
+      ),
+    );
+  }, [reopenCamera]);
+
+  // トーチ・ズームはトラックを開き直さないので録画中でも効く。失敗は握りつぶす
+  // (撮影は続く)。適用できたときだけ state を進める
+  const toggleTorch = useCallback(async () => {
     const recorder = recorderRef.current;
-    if (!recorder?.isOpen || recorder.isRecording) {
+    if (!recorder?.isOpen) {
       return;
     }
-    const target = !recorder.nearFocus;
-    setNote(null);
-    try {
-      await recorder.switchNearFocus(target);
-      setPreviewStream(recorder.stream);
-      setNearFocus(recorder.nearFocus);
-    } catch (e) {
-      // 切替に失敗するとプレビューごと畳まれている (旧トラックは停止済み)。
-      // idle に戻し、カメラを掴んだままにしない
-      handlersRef.current.onError(
-        messageOf(e, "カメラを切り替えられませんでした。"),
-      );
-      recorder.cancel();
-      resetToIdle();
+    const target = !torchOn;
+    const ok = await recorder.setTorch(target);
+    if (ok) {
+      setTorchOn(target);
     }
-  }, [resetToIdle]);
+  }, [torchOn]);
+
+  const setZoom = useCallback(async (value: number) => {
+    const recorder = recorderRef.current;
+    if (!recorder?.isOpen) {
+      return;
+    }
+    const applied = await recorder.setZoom(value);
+    if (applied !== null) {
+      setZoomState(applied);
+    }
+  }, []);
 
   // 経過時間を刻み、上限 (時間・サイズの早い方) で自動停止する
   useEffect(() => {
@@ -229,10 +328,18 @@ export function useVideoRecording(
     note,
     canNearFocus,
     nearFocus,
+    facing,
+    canTorch,
+    torchOn,
+    zoomLevels,
+    zoom,
     openPreview: () => void openPreview(),
     startRecording,
     stop: () => void stop(),
     cancelPreview,
-    toggleNearFocus: () => void toggleNearFocus(),
+    toggleNearFocus,
+    toggleFacing,
+    toggleTorch: () => void toggleTorch(),
+    setZoom: (value: number) => void setZoom(value),
   };
 }

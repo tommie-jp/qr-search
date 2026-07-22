@@ -815,41 +815,81 @@ export default function MemoEditorInner({
           始められる (docs/16 の頭ボケ回避) */}
       {videoRecording.phase !== "idle" && (
         <div className="flex max-w-md flex-col gap-2">
+          {/* 内側カメラは鏡像で見せる (自分の位置合わせが直感に合う)。録画
+              ファイル自体は反転しない — 標準カメラアプリと同じ (docs/16) */}
           <video
             ref={videoPreviewRef}
             autoPlay
             muted
             playsInline
-            className="w-full rounded border border-gray-300"
+            className={`w-full rounded border border-gray-300 ${
+              videoRecording.facing === "user" ? "-scale-x-100" : ""
+            }`}
           />
-          {videoRecording.phase === "preview" && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={videoRecording.startRecording}
-                className={PRIMARY_BUTTON_CLASS}
-              >
-                <span
-                  aria-hidden
-                  className="size-2.5 rounded-full bg-white"
-                />
-                録画開始
-              </button>
-              {/* 近接 = 超広角レンズへ切替 (iOS のマクロ相当)。超広角を持つ
-                  端末でだけ出す。iOS Safari は手動フォーカス非対応のため
-                  レンズ選択で近接する (docs/16) */}
-              {videoRecording.canNearFocus && (
+          <div className="flex flex-wrap items-center gap-2">
+            {videoRecording.phase === "preview" && (
+              <>
                 <button
                   type="button"
-                  onClick={videoRecording.toggleNearFocus}
-                  aria-pressed={videoRecording.nearFocus}
+                  onClick={videoRecording.startRecording}
+                  className={PRIMARY_BUTTON_CLASS}
+                >
+                  <span
+                    aria-hidden
+                    className="size-2.5 rounded-full bg-white"
+                  />
+                  録画開始
+                </button>
+                {/* 内側/外側カメラ切替。ラベルは切り替え先を示す */}
+                <button
+                  type="button"
+                  onClick={videoRecording.toggleFacing}
                   className={SECONDARY_BUTTON_CLASS}
                 >
-                  {videoRecording.nearFocus ? "近接 ON" : "近接"}
+                  {videoRecording.facing === "environment"
+                    ? "内カメラ"
+                    : "外カメラ"}
                 </button>
-              )}
-            </div>
-          )}
+                {/* 近接 = 超広角レンズへ切替 (iOS のマクロ相当)。超広角を持つ
+                    外側カメラでだけ出す。iOS Safari は手動フォーカス非対応の
+                    ためレンズ選択で近接する (docs/16) */}
+                {videoRecording.facing === "environment" &&
+                  videoRecording.canNearFocus && (
+                    <button
+                      type="button"
+                      onClick={videoRecording.toggleNearFocus}
+                      aria-pressed={videoRecording.nearFocus}
+                      className={SECONDARY_BUTTON_CLASS}
+                    >
+                      {videoRecording.nearFocus ? "近接 ON" : "近接"}
+                    </button>
+                  )}
+              </>
+            )}
+            {/* トーチ・ズームはトラックを開き直さないので録画中でも操作できる。
+                対応端末でだけ出す (docs/16) */}
+            {videoRecording.canTorch && (
+              <button
+                type="button"
+                onClick={videoRecording.toggleTorch}
+                aria-pressed={videoRecording.torchOn}
+                className={SECONDARY_BUTTON_CLASS}
+              >
+                {videoRecording.torchOn ? "ライト ON" : "ライト"}
+              </button>
+            )}
+            {videoRecording.zoomLevels.map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => videoRecording.setZoom(level)}
+                aria-pressed={videoRecording.zoom === level}
+                className={SECONDARY_BUTTON_CLASS}
+              >
+                {level}x
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {videoRecording.note && (

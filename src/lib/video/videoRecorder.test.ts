@@ -125,7 +125,11 @@ describe('VideoRecorder', () => {
     enumerateDevices?: () => Promise<MediaDeviceInfo[]>
   }) => {
     getUserMediaMock = vi.fn(
-      options?.getUserMedia ?? (async () => ({ getTracks: () => [track] })),
+      options?.getUserMedia ??
+        (async () => ({
+          getTracks: () => [track],
+          getVideoTracks: () => [track],
+        })),
     )
     Object.defineProperty(navigator, 'mediaDevices', {
       value: {
@@ -352,7 +356,7 @@ describe('VideoRecorder', () => {
         // enumerateDevices は既定 (空配列) のまま超広角なし
         getUserMedia: async (constraints) => {
           usedConstraints = constraints
-          return { getTracks: () => [track] }
+          return { getVideoTracks: () => [track], getTracks: () => [track] }
         },
       })
       const recorder = new VideoRecorder()
@@ -396,6 +400,124 @@ describe('VideoRecorder', () => {
       await expect(recorder.switchNearFocus(true)).rejects.toThrow(
         'カメラを開いていません',
       )
+    })
+  })
+
+  // 内側 (user) / 外側 (environment) カメラの切替
+  describe('内外カメラ切替', () => {
+    test('既定は外側 (environment)', async () => {
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      expect(recorder.facing).toBe('environment')
+    })
+
+    test('内側へ切り替えると facingMode: user で開き直す', async () => {
+      const constraints: MediaStreamConstraints[] = []
+      setMediaDevices({
+        getUserMedia: async (c) => {
+          constraints.push(c)
+          return { getVideoTracks: () => [], getTracks: () => [track] }
+        },
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      await recorder.setFacing('user')
+      expect(recorder.facing).toBe('user')
+      const video = constraints.at(-1)?.video as MediaTrackConstraints
+      expect(video.facingMode).toBe('user')
+    })
+
+    test('内側へ切り替えると近接は解除される', async () => {
+      setMediaDevices({
+        enumerateDevices: async () =>
+          [
+            {
+              kind: 'videoinput',
+              label: 'Back Ultra Wide Camera',
+              deviceId: 'ultra',
+            },
+          ] as MediaDeviceInfo[],
+        getUserMedia: async () => ({
+          getVideoTracks: () => [],
+          getTracks: () => [track],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open(true)
+      expect(recorder.nearFocus).toBe(true)
+      await recorder.setFacing('user')
+      expect(recorder.nearFocus).toBe(false)
+    })
+
+    test('録画中は内外を切り替えられない', async () => {
+      const recorder = new VideoRecorder()
+      await startRecording(recorder)
+      await expect(recorder.setFacing('user')).rejects.toThrow(
+        '録画中はカメラを切り替えられません',
+      )
+    })
+  })
+
+  // トーチ・ズーム (トラックを開き直さず applyConstraints で効く。録画中も可)
+  describe('トーチ・ズーム', () => {
+    const capableTrack = () => ({
+      stop: vi.fn(),
+      getCapabilities: () => ({ torch: true, zoom: { min: 1, max: 8 } }),
+      applyConstraints: vi.fn(async () => {}),
+    })
+
+    test('capabilities で対応状況を返す', async () => {
+      const videoTrack = capableTrack()
+      setMediaDevices({
+        getUserMedia: async () => ({
+          getVideoTracks: () => [videoTrack],
+          getTracks: () => [videoTrack],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      expect(recorder.capabilities()).toEqual({
+        torch: true,
+        zoom: { min: 1, max: 8 },
+      })
+    })
+
+    test('録画中でもトーチを点けられる', async () => {
+      const videoTrack = capableTrack()
+      setMediaDevices({
+        getUserMedia: async () => ({
+          getVideoTracks: () => [videoTrack],
+          getTracks: () => [videoTrack],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      recorder.record()
+      expect(await recorder.setTorch(true)).toBe(true)
+      expect(videoTrack.applyConstraints).toHaveBeenCalledWith({
+        advanced: [{ torch: true }],
+      })
+    })
+
+    test('録画中でもズームできる', async () => {
+      const videoTrack = capableTrack()
+      setMediaDevices({
+        getUserMedia: async () => ({
+          getVideoTracks: () => [videoTrack],
+          getTracks: () => [videoTrack],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      recorder.record()
+      expect(await recorder.setZoom(4)).toBe(4)
+    })
+
+    test('開いていなければトーチもズームも空振り', async () => {
+      const recorder = new VideoRecorder()
+      expect(await recorder.setTorch(true)).toBe(false)
+      expect(await recorder.setZoom(2)).toBeNull()
+      expect(recorder.capabilities()).toEqual({ torch: false, zoom: null })
     })
   })
 })

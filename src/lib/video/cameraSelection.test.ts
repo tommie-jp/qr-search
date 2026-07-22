@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   applyNearFocusZoom,
+  applyTorch,
+  applyZoom,
   findUltraWideDeviceId,
   NEAR_FOCUS_ZOOM,
+  readCameraCapabilities,
 } from "./cameraSelection";
 
 describe("findUltraWideDeviceId", () => {
@@ -124,5 +127,114 @@ describe("applyNearFocusZoom", () => {
       }),
     );
     await expect(applyNearFocusZoom(track)).resolves.toBeUndefined();
+  });
+});
+
+describe("applyZoom", () => {
+  const makeTrack = (
+    caps: unknown,
+    applyConstraints = vi.fn(async () => {}),
+  ) =>
+    ({
+      getCapabilities: () => caps,
+      applyConstraints,
+    }) as unknown as MediaStreamTrack & {
+      applyConstraints: ReturnType<typeof vi.fn>;
+    };
+
+  test("範囲内の値をそのまま適用し、適用値を返す", async () => {
+    const track = makeTrack({ zoom: { min: 1, max: 8 } });
+    expect(await applyZoom(track, 4)).toBe(4);
+    expect(track.applyConstraints).toHaveBeenCalledWith({
+      advanced: [{ zoom: 4 }],
+    });
+  });
+
+  test("上限を超える値は最大へ丸める", async () => {
+    const track = makeTrack({ zoom: { min: 1, max: 3 } });
+    expect(await applyZoom(track, 8)).toBe(3);
+  });
+
+  test("下限を下回る値は最小へ丸める", async () => {
+    const track = makeTrack({ zoom: { min: 1.5, max: 8 } });
+    expect(await applyZoom(track, 1)).toBe(1.5);
+  });
+
+  test("zoom 非対応なら null (何もしない)", async () => {
+    const track = makeTrack({});
+    expect(await applyZoom(track, 2)).toBeNull();
+    expect(track.applyConstraints).not.toHaveBeenCalled();
+  });
+
+  test("applyConstraints が拒んだら null", async () => {
+    const track = makeTrack(
+      { zoom: { min: 1, max: 8 } },
+      vi.fn(async () => {
+        throw new Error("rejected");
+      }),
+    );
+    expect(await applyZoom(track, 2)).toBeNull();
+  });
+});
+
+describe("applyTorch", () => {
+  const makeTrack = (
+    caps: unknown,
+    applyConstraints = vi.fn(async () => {}),
+  ) =>
+    ({
+      getCapabilities: () => caps,
+      applyConstraints,
+    }) as unknown as MediaStreamTrack & {
+      applyConstraints: ReturnType<typeof vi.fn>;
+    };
+
+  test("対応端末で点灯し true を返す", async () => {
+    const track = makeTrack({ torch: true });
+    expect(await applyTorch(track, true)).toBe(true);
+    expect(track.applyConstraints).toHaveBeenCalledWith({
+      advanced: [{ torch: true }],
+    });
+  });
+
+  test("トーチ非対応なら false (何もしない)", async () => {
+    const track = makeTrack({ torch: false });
+    expect(await applyTorch(track, true)).toBe(false);
+    expect(track.applyConstraints).not.toHaveBeenCalled();
+  });
+
+  test("applyConstraints が拒んだら false", async () => {
+    const track = makeTrack(
+      { torch: true },
+      vi.fn(async () => {
+        throw new Error("rejected");
+      }),
+    );
+    expect(await applyTorch(track, true)).toBe(false);
+  });
+});
+
+describe("readCameraCapabilities", () => {
+  const makeTrack = (caps: unknown) =>
+    ({ getCapabilities: () => caps }) as unknown as MediaStreamTrack;
+
+  test("torch と zoom を読み取る", () => {
+    const track = makeTrack({ torch: true, zoom: { min: 1, max: 8 } });
+    expect(readCameraCapabilities(track)).toEqual({
+      torch: true,
+      zoom: { min: 1, max: 8 },
+    });
+  });
+
+  test("非対応なら torch=false・zoom=null", () => {
+    expect(readCameraCapabilities(makeTrack({}))).toEqual({
+      torch: false,
+      zoom: null,
+    });
+  });
+
+  test("getCapabilities 自体が無くても落ちない", () => {
+    const track = {} as MediaStreamTrack;
+    expect(readCameraCapabilities(track)).toEqual({ torch: false, zoom: null });
   });
 });
