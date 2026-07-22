@@ -16,7 +16,14 @@ import {
   saveDrawPrefs,
 } from "@/lib/draw/drawPrefs";
 import { drawingAltText, drawingFileName } from "@/lib/draw/drawingFile";
+import {
+  createLayerState,
+  type LayerId,
+  setActive,
+  toggleHidden,
+} from "@/lib/draw/layers";
 import { BUSY_NOTICE_CLASS, BUSY_SPINNER_CLASS } from "@/components/ui";
+import { DrawLayerPanel } from "./DrawLayerPanel";
 import type { DrawTool } from "./drawTools";
 import { DrawToolbar } from "./DrawToolbar";
 import { useDrawCanvas } from "./useDrawCanvas";
@@ -47,6 +54,10 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
   const [area, setArea] = useState({ width: 0, height: 0 });
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // セッション内レイヤ (docs/50)。保存で 1 枚に平坦化するので、この状態は
+  // 画面を閉じれば消える。既定はレイヤ 1 がアクティブ・全表示
+  const [layerState, setLayerState] = useState(createLayerState);
+  const [isLayerPanelOpen, setLayerPanelOpen] = useState(false);
 
   // 拡大と送り (docs/36 §4)。2 本指とホイールはどの道具でも効き、
   // 1 本指ドラッグでの送りだけ「移動」道具に限る。
@@ -69,6 +80,7 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     error: canvasError,
     canUndo,
     canRedo,
+    layerCounts,
     undo,
     redo,
     clear,
@@ -82,6 +94,7 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     availableWidth: area.width,
     availableHeight: area.height,
     zoom: gestures.zoom,
+    layerState,
     canvasElRef,
     containerRef: stageRef,
   });
@@ -159,6 +172,20 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
     }
   };
 
+  // アクティブ化・表示切り替えは純関数に委ねる (docs/50 §5)。
+  // アクティブレイヤを隠せない規則も toggleHidden の中で守られる
+  const handleSetActive = (layer: LayerId) => {
+    setLayerState((previous) => setActive(previous, layer));
+  };
+  const handleToggleHidden = (layer: LayerId) => {
+    setLayerState((previous) => toggleHidden(previous, layer));
+  };
+  // 道具を変えたらパネルは畳む (描画・別操作へ移るとき邪魔にならないよう。§4)
+  const handleTool = (next: DrawTool) => {
+    setTool(next);
+    setLayerPanelOpen(false);
+  };
+
   // 下敷きを入れ替えると器の寸法が変わり、描いた線の位置が合わなくなる。
   // 作り直す前に断る
   const toggleBackground = () => {
@@ -205,25 +232,38 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
       className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white"
     >
       <div className="flex items-center gap-2 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2">
-        <h2 className="mr-auto font-medium">お絵かき</h2>
-        {sourceImageUrl && (
+        <h2 className="font-medium">お絵かき</h2>
+        <DrawLayerPanel
+          active={layerState.active}
+          hidden={layerState.hidden}
+          layerCounts={layerCounts}
+          open={isLayerPanelOpen}
+          onToggleOpen={() => setLayerPanelOpen((previous) => !previous)}
+          onClose={() => setLayerPanelOpen(false)}
+          onSetActive={handleSetActive}
+          onToggleHidden={handleToggleHidden}
+          disabled={isBusy}
+        />
+        <div className="ml-auto flex items-center gap-2">
+          {sourceImageUrl && (
+            <button
+              type="button"
+              onClick={toggleBackground}
+              disabled={isBusy}
+              className={`${BAR_BUTTON_CLASS} bg-white/15 hover:bg-white/25`}
+            >
+              {useBackground ? "白紙にする" : "画像に描く"}
+            </button>
+          )}
           <button
             type="button"
-            onClick={toggleBackground}
-            disabled={isBusy}
+            onClick={requestClose}
+            disabled={isSaving}
             className={`${BAR_BUTTON_CLASS} bg-white/15 hover:bg-white/25`}
           >
-            {useBackground ? "白紙にする" : "画像に描く"}
+            閉じる
           </button>
-        )}
-        <button
-          type="button"
-          onClick={requestClose}
-          disabled={isSaving}
-          className={`${BAR_BUTTON_CLASS} bg-white/15 hover:bg-white/25`}
-        >
-          閉じる
-        </button>
+        </div>
       </div>
 
       <div
@@ -283,7 +323,7 @@ export function DrawModal({ sourceImageUrl, onCancel, onInsert }: DrawModalProps
 
       <DrawToolbar
         tool={tool}
-        onTool={setTool}
+        onTool={handleTool}
         color={prefs.color}
         onColor={(color) => updatePrefs({ ...prefs, color })}
         width={prefs.width}

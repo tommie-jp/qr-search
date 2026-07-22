@@ -24,6 +24,13 @@ import {
   redoHistory,
   undoHistory,
 } from "@/lib/draw/history";
+import {
+  createLayerState,
+  insertionIndex,
+  type LayerId,
+  type LayerState,
+  layerFlags,
+} from "@/lib/draw/layers";
 import type { DrawTool } from "./drawTools";
 import { buildFill, buildMosaic } from "./rasterTool";
 import { attachShapeTool, type ShapeToolHandle } from "./shapeTool";
@@ -71,8 +78,13 @@ const MIN_SHAPE_DRAG = 4;
 // toCanvasUnits で表示倍率ぶん膨らませてから渡す
 const SELECTION_COLOR = "#2563eb"; // アプリの主色 (blue-600) に揃える
 const SELECTION_BORDER_PX = 2;
-const SELECTION_CORNER_PX = 12;
-const SELECTION_TOUCH_CORNER_PX = 28;
+// ハンドル (□) は指で狙う目印なので、マウス向けの定番 (10px 前後) より
+// 大きく描く。小さいと狙いが甘くなり、当たり判定を広げても外れる
+const SELECTION_CORNER_PX = 20;
+// タッチの当たり判定は見た目よりさらに大きく取る。指は先端で 10px 以上
+// ぶれるので、Apple HIG の最小タップ領域 (44pt) に合わせる。判定だけで、
+// 描画は SELECTION_CORNER_PX のまま変わらない
+const SELECTION_TOUCH_CORNER_PX = 44;
 
 // 返り値に ref を混ぜない。ref を持つオブジェクトはレンダー中に読めない
 // ものとして扱われるため (react-hooks/refs)、canvas と枠の ref は引数で受ける
@@ -86,6 +98,8 @@ export interface DrawCanvasApi {
   canUndo: boolean;
   canRedo: boolean;
   isEmpty: boolean;
+  // レイヤごとのオブジェクト数 (パネルの「どこに何があるか」表示に使う)
+  layerCounts: Readonly<Record<LayerId, number>>;
   undo: () => void;
   redo: () => void;
   clear: () => void;
@@ -110,6 +124,9 @@ interface UseDrawCanvasParams {
   availableHeight: number;
   // 「手」道具での拡大率 (1 = 全体が収まる大きさ)。docs/36 §4
   zoom: number;
+  // セッション内レイヤの状態 (docs/50)。新しく描くものはアクティブレイヤに
+  // 載り、消しゴム・選択はアクティブレイヤ限定、非表示レイヤは書き出さない
+  layerState: LayerState;
   // fabric を載せる canvas 要素
   canvasElRef: React.RefObject<HTMLCanvasElement | null>;
   // 白紙のときの器の縦横比を決めるために測る、canvas を置く枠。
@@ -140,6 +157,7 @@ export function useDrawCanvas({
   availableWidth,
   availableHeight,
   zoom,
+  layerState,
   canvasElRef,
   containerRef,
 }: UseDrawCanvasParams): DrawCanvasApi {
@@ -180,6 +198,11 @@ export function useDrawCanvas({
   const [error, setError] = useState<string | null>(null);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [isEmpty, setIsEmpty] = useState(true);
+  const [layerCounts, setLayerCounts] = useState<Record<LayerId, number>>({
+    1: 0,
+    2: 0,
+    3: 0,
+  });
 
   // 初期化のときに 1 度だけ束ねた fabric のイベントハンドラから、
   // そのときどきの道具・色・太さを読むための控え
@@ -188,13 +211,17 @@ export function useDrawCanvas({
   const widthRef = useRef(width);
   const fitScaleRef = useRef(fitScale);
   const displayScaleRef = useRef(displayScale);
+  // 描いている最中の object:added からいまのアクティブレイヤを読むための控え。
+  // 初期化のイベントハンドラは 1 度しか束ねないので、state ではなく ref で持つ
+  const layerStateRef = useRef<LayerState>(createLayerState());
   useEffect(() => {
     toolRef.current = tool;
     colorRef.current = color;
     widthRef.current = width;
     fitScaleRef.current = fitScale;
     displayScaleRef.current = displayScale;
-  }, [tool, color, width, fitScale, displayScale]);
+    layerStateRef.current = layerState;
+  }, [tool, color, width, fitScale, displayScale, layerState]);
 
   // 消しゴムを手放す。@erase2d の dispose は効果用の裏 canvas を 0×0 にして
   // GC に返すためのもので、呼ばないと捨てたブラシのぶんだけメモリが残る
@@ -264,6 +291,51 @@ export function useDrawCanvas({
     fc.requestRenderAll();
   }, [styleForSelection]);
 
+  // 空判定とレイヤ別オブジェクト数をまとめて出し直す。オブジェクトが増減する
+  // 節目 (描いた・戻した・全消し) で呼ぶ。layer は @erase2d の erasable と同じ
+  // 拡張プロパティで、古いスナップショットや素の図形には無いので 1 に倒す
+  const refreshStats = useCallback(() => {
+    const fc = fcRef.current;
+    if (!fc) {
+      return;
+    }
+    const objects = fc.getObjects();
+    setIsEmpty(objects.length === 0);
+    const counts: Record<LayerId, number> = { 1: 0, 2: 0, 3: 0 };
+    for (const object of objects) {
+      const layer = ((object as { layer?: LayerId }).layer ?? 1) as LayerId;
+      counts[layer] += 1;
+    }
+    setLayerCounts(counts);
+  }, []);
+
+  // レイヤ状態 (アクティブ・非表示) を全オブジェクトのフラグへ落とし込む。
+  // 当て直しの口はここ 1 つに集約する (docs/50 §3-2) —— レイヤ変更時・道具の
+  // 切り替え時・履歴からの復元後の 3 箇所から呼ぶ。visible/erasable/selectable の
+  // 導出は純関数 layerFlags に委ねる
+  const applyLayerState = useCallback(() => {
+    const fc = fcRef.current;
+    if (!fc) {
+      return;
+    }
+    const state = layerStateRef.current;
+    const isSelect = toolRef.current === "select";
+    fc.forEachObject((object) => {
+      const layer = ((object as { layer?: LayerId }).layer ?? 1) as LayerId;
+      const flags = layerFlags(layer, state, isSelect);
+      object.visible = flags.visible;
+      object.set("erasable", flags.erasable);
+      object.selectable = flags.selectable;
+      object.evented = flags.selectable;
+    });
+    if (isSelect) {
+      applySelectionStyle();
+    } else {
+      fc.discardActiveObject();
+    }
+    fc.requestRenderAll();
+  }, [applySelectionStyle]);
+
   const syncHistoryState = useCallback((history: DrawHistory) => {
     historyRef.current = history;
     setHistoryState({ canUndo: historyCanUndo(history), canRedo: historyCanRedo(history) });
@@ -271,7 +343,8 @@ export function useDrawCanvas({
 
   const snapshot = useCallback((): string => {
     const fc = fcRef.current;
-    return fc ? JSON.stringify(fc.toObject(["erasable"])) : "";
+    // layer も残す。無いと戻したときに全部がレイヤ 1 へ落ちる (docs/50 §7)
+    return fc ? JSON.stringify(fc.toObject(["erasable", "layer"])) : "";
   }, []);
 
   // 変更が落ち着いたら 1 手として履歴に積む
@@ -286,9 +359,9 @@ export function useDrawCanvas({
         return;
       }
       syncHistoryState(pushHistory(historyRef.current, snapshot()));
-      setIsEmpty(fc.getObjects().length === 0);
+      refreshStats();
     }, SNAPSHOT_DEBOUNCE_MS);
-  }, [snapshot, syncHistoryState]);
+  }, [snapshot, syncHistoryState, refreshStats]);
 
   // 履歴のスナップショットを canvas へ戻す
   const applyEntry = useCallback(async (entry: string) => {
@@ -302,21 +375,16 @@ export function useDrawCanvas({
     suppressRef.current = true;
     try {
       await fc.loadFromJSON(JSON.parse(entry));
-      // 流し込んだ直後は全部が選択可能な既定に戻っているので、いまの道具に合わせ直す
-      const selectable = toolRef.current === "select";
-      fc.forEachObject((object) => {
-        object.selectable = selectable;
-        object.evented = selectable;
-      });
-      applySelectionStyle();
-      fc.requestRenderAll();
-      setIsEmpty(fc.getObjects().length === 0);
+      // 流し込んだ直後は visible/erasable/selectable が既定に戻っているので、
+      // いまのレイヤ状態と道具に合わせ直す (docs/50 §3-2 の当て直し 3 箇所目)
+      applyLayerState();
+      refreshStats();
     } catch {
       // 壊れたスナップショットは捨てる (いまの絵はそのまま残る)
     } finally {
       suppressRef.current = false;
     }
-  }, [applySelectionStyle]);
+  }, [applyLayerState, refreshStats]);
 
   // --- 初期化 (背景の有無ごとに 1 度) -------------------------------------
   useEffect(() => {
@@ -388,16 +456,29 @@ export function useDrawCanvas({
         fc.backgroundImage = image;
       }
 
-      // @erase2d は erasable が真のものしか消さない。fabric v7 の既定は未設定
-      // なので、足したものに立てて回る
+      // 新しく描いたものにアクティブレイヤを刻み、その帯の末尾へ挿し込む
+      // (docs/50 §3-1)。履歴・JSON から戻したものは自分の layer/erasable を
+      // 持っているので触らない —— layer の有無で「新規か復元か」を見分ける
       fc.on("object:added", (event) => {
         const object = event.target;
-        // erasable は @erase2d が見る拡張プロパティで fabric の型には無い。
-        // 読むときだけ広げる (書き込みは set が任意のキーを受ける)。
-        // 履歴から戻した図形は自分の erasable を持っているので上書きしない
-        if (object && (object as { erasable?: unknown }).erasable === undefined) {
+        if (!object || (object as { layer?: unknown }).layer !== undefined) {
+          return;
+        }
+        const active = layerStateRef.current.active;
+        object.set("layer", active);
+        // @erase2d が見る erasable の既定を立てる (fabric v7 の既定は未設定)。
+        // 消せる/消せないの最終判断は applyLayerState がレイヤに応じて上書きする
+        if ((object as { erasable?: unknown }).erasable === undefined) {
           object.set("erasable", true);
         }
+        // 追加直後の object は列の末尾に居るので、それを除いた並びから
+        // 帯の末尾位置を測って移す。moveObjectTo は object:added を出さない
+        // (_onStackOrderChanged は再描画要求だけ) ので、ここで再帰しない
+        const layers = fc
+          .getObjects()
+          .filter((other) => other !== object)
+          .map((other) => ((other as { layer?: LayerId }).layer ?? 1) as LayerId);
+        fc.moveObjectTo(object, insertionIndex(layers, active));
       });
       for (const name of [
         "object:added",
@@ -511,8 +592,8 @@ export function useDrawCanvas({
 
       fc.requestRenderAll();
       setSize(canvasSize);
-      syncHistoryState(createHistory(JSON.stringify(fc.toObject(["erasable"]))));
-      setIsEmpty(true);
+      syncHistoryState(createHistory(JSON.stringify(fc.toObject(["erasable", "layer"]))));
+      refreshStats();
       setIsPreparing(false);
     };
 
@@ -533,6 +614,7 @@ export function useDrawCanvas({
     backgroundUrl,
     canvasElRef,
     containerRef,
+    refreshStats,
     releaseEraser,
     scheduleSnapshot,
     syncHistoryState,
@@ -548,15 +630,9 @@ export function useDrawCanvas({
     }
     fc.isDrawingMode = tool === "pen" || tool === "marker" || tool === "eraser";
     fc.selection = tool === "select";
-    fc.forEachObject((object) => {
-      object.selectable = tool === "select";
-      object.evented = tool === "select";
-    });
-    if (tool === "select") {
-      applySelectionStyle();
-    } else {
-      fc.discardActiveObject();
-    }
+    // 選択可否・消しゴムの効き先はレイヤ状態と道具から導く (docs/50 §3-2)。
+    // 選択枠スタイルの当て直しと discardActiveObject もここに含まれる
+    applyLayerState();
 
     if (tool === "pen" || tool === "marker") {
       // マーカーは色に alpha を載せた PencilBrush。**alpha < 1 のブラシは
@@ -579,7 +655,7 @@ export function useDrawCanvas({
     fc.requestRenderAll();
 
     return releaseEraser;
-  }, [tool, isPreparing, scheduleSnapshot, applyBrushStyle, applySelectionStyle, releaseEraser]);
+  }, [tool, isPreparing, scheduleSnapshot, applyBrushStyle, applyLayerState, releaseEraser]);
 
   // --- 色・太さ・表示倍率の反映 --------------------------------------------
   useEffect(() => {
@@ -587,6 +663,16 @@ export function useDrawCanvas({
     // 拡大しながら選択しても、枠の太さが画面上で一定になるように当て直す
     applySelectionStyle();
   }, [color, width, displayScale, applyBrushStyle, applySelectionStyle]);
+
+  // --- レイヤ状態の反映 (docs/50 §3-2 の当て直し 1 箇所目) -------------------
+  // アクティブの切り替え・表示/非表示で、見え方と消しゴム・選択の効き先を
+  // 全オブジェクトへ落とし込む。layerStateRef は上の同期 effect が先に更新する
+  useEffect(() => {
+    if (isPreparing) {
+      return;
+    }
+    applyLayerState();
+  }, [layerState, isPreparing, applyLayerState]);
 
   // 2 本指ジェスチャの開始で、進行中の入力をすべて打ち切る (docs/36 §4-5)。
   // ペン・消しゴムのストローク中断に公開 API は無く、_isCurrentlyDrawing を
@@ -689,6 +775,7 @@ export function useDrawCanvas({
     canUndo: historyState.canUndo,
     canRedo: historyState.canRedo,
     isEmpty,
+    layerCounts,
     undo,
     redo,
     clear,
