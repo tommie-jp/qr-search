@@ -109,7 +109,9 @@ export async function ItemView({ itemNo, item, saved }: ItemViewProps) {
       <MemoPanel
         key={itemNo}
         defaultMode={memo ? "markdown" : "edit"}
-        markdownView={<MarkdownView markdown={memo} circuits={circuits} />}
+        markdownView={
+          <MarkdownView markdown={memo} circuits={circuits} allowRotate />
+        }
         textView={
           <pre
             className={`whitespace-pre-wrap break-words ${BOX_CLASS} font-mono text-base`}

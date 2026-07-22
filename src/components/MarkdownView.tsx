@@ -54,6 +54,10 @@ interface MarkdownViewProps {
   // 押すと「ログインが必要です」に化けるため。false でも #タグ の文字は残る
   // (本文の一部なので消さない。リンクにしないだけ)
   linkTags?: boolean;
+  // 画像の拡大表示に 90° 回転ボタンを出すか (docs/49-画像回転計画.md §2)。
+  // ノート閲覧 (ItemView) からのみ true。回転は保存を伴うので、未ログインの
+  // 公開ビュー・docs ページでは出さない (既定 false)
+  allowRotate?: boolean;
 }
 
 // react-markdown はカスタムコンポーネントに hast の node を渡してくるため、
@@ -136,36 +140,46 @@ const TEXT_SRC_RE = new RegExp(
 
 // alt 末尾の "|数字" を表示幅 (px) として解釈する (例: ![スクショ|200](/api/images/x.png))。
 // 生 HTML を無効にしたまま画像ごとに幅を指定できるようにするための独自記法。
-// 画像はクリックで拡大できるよう ZoomableImage で描画する
-function imgWithWidth({
-  node: _node,
-  alt,
-  ...props
-}: MarkdownComponentProps<"img">) {
-  if (typeof props.src === "string" && AUDIO_SRC_RE.test(props.src)) {
-    // 音声プレイヤー + 共有ボタン。<audio> は iOS の長押し共有が効かないので、
-    // 自前で共有の口を持つ (AudioPlayer.tsx の冒頭に経緯)
-    return <AudioPlayer src={props.src} label={alt || "audio"} />;
-  }
-  if (typeof props.src === "string" && VIDEO_SRC_RE.test(props.src)) {
-    // 動画プレイヤー + 共有ボタン (VideoPlayer.tsx)。poster に ?thumb=1 を渡す
-    return <VideoPlayer src={props.src} label={alt || "video"} />;
-  }
-  if (typeof props.src === "string" && PDF_SRC_RE.test(props.src)) {
-    // alt には挿入時のファイル名が入る (MemoEditorInner の pdfAltText)。
-    // 押すとページ内のモーダルで開く (画面遷移しないので standalone PWA でも
-    // 確実にノートへ戻れる。PdfLink.tsx の冒頭に経緯)
-    return <PdfLink href={props.src} label={alt || "PDF"} />;
-  }
-  if (typeof props.src === "string" && TEXT_SRC_RE.test(props.src)) {
-    // PDF と同じ扱い。中身は解釈せず、そのままの文字として見せる
-    return <TextLink href={props.src} label={alt || "テキスト"} />;
-  }
-  const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
-  if (match) {
-    return <ZoomableImage {...props} alt={match[1]} width={Number(match[2])} />;
-  }
-  return <ZoomableImage {...props} alt={alt} />;
+// 画像はクリックで拡大できるよう ZoomableImage で描画する。
+// allowRotate なら拡大表示に 90° 回転ボタンを出す (docs/49-画像回転計画.md)
+function imgRenderer(allowRotate: boolean) {
+  return function ImgWithWidth({
+    node: _node,
+    alt,
+    ...props
+  }: MarkdownComponentProps<"img">) {
+    if (typeof props.src === "string" && AUDIO_SRC_RE.test(props.src)) {
+      // 音声プレイヤー + 共有ボタン。<audio> は iOS の長押し共有が効かないので、
+      // 自前で共有の口を持つ (AudioPlayer.tsx の冒頭に経緯)
+      return <AudioPlayer src={props.src} label={alt || "audio"} />;
+    }
+    if (typeof props.src === "string" && VIDEO_SRC_RE.test(props.src)) {
+      // 動画プレイヤー + 共有ボタン (VideoPlayer.tsx)。poster に ?thumb=1 を渡す
+      return <VideoPlayer src={props.src} label={alt || "video"} />;
+    }
+    if (typeof props.src === "string" && PDF_SRC_RE.test(props.src)) {
+      // alt には挿入時のファイル名が入る (MemoEditorInner の pdfAltText)。
+      // 押すとページ内のモーダルで開く (画面遷移しないので standalone PWA でも
+      // 確実にノートへ戻れる。PdfLink.tsx の冒頭に経緯)
+      return <PdfLink href={props.src} label={alt || "PDF"} />;
+    }
+    if (typeof props.src === "string" && TEXT_SRC_RE.test(props.src)) {
+      // PDF と同じ扱い。中身は解釈せず、そのままの文字として見せる
+      return <TextLink href={props.src} label={alt || "テキスト"} />;
+    }
+    const match = /^(.*?)\|(\d+)$/.exec(alt ?? "");
+    if (match) {
+      return (
+        <ZoomableImage
+          {...props}
+          alt={match[1]}
+          width={Number(match[2])}
+          allowRotate={allowRotate}
+        />
+      );
+    }
+    return <ZoomableImage {...props} alt={alt} allowRotate={allowRotate} />;
+  };
 }
 
 // 外部サイトへのリンクだけ別タブで開く。#タグ の検索リンクやメモへの
@@ -195,6 +209,7 @@ export function MarkdownView({
   markdown,
   circuits = new Map(),
   linkTags = true,
+  allowRotate = false,
 }: MarkdownViewProps) {
   // タグをリンクにしないときはプラグインごと外す。#タグ は text ノードのまま
   // 残るので、本文の見た目は「リンクでない #タグ」になる
@@ -215,7 +230,7 @@ export function MarkdownView({
         ]}
         components={{
           pre: preOrDiagram(circuits),
-          img: imgWithWidth,
+          img: imgRenderer(allowRotate),
           a: linkWithTarget,
         }}
       >

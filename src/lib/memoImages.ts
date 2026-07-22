@@ -20,6 +20,23 @@ const IMAGE_SYNTAX = /!\[[^\]]*\]\(([^)\s]+)\)/g
 // 一覧を開くだけで外部へ 20 本の要求が飛ぶことになるので拾わない。
 const IMAGE_PATH_PREFIX = '/api/images/'
 
+// 本文中の画像参照 `/api/images/<oldName>` を新しい名前に総入れ替えする
+// (docs/49-画像回転計画.md §3)。回転は画像を新 UUID で保存し直すため、本文の
+// 旧 URL を新 URL に書き換える必要がある。
+//
+// 置換は URL の**名前部分だけ**を対象にするので、`![alt|200](...)` の幅記法や
+// alt はそのまま残る。名前は UUID で一意なので、たまたま別の文字列に埋まる
+// 心配はない (path prefix も付けて余計な一致を避ける)。
+export function replaceImageName(
+  memo: string,
+  oldName: string,
+  newName: string,
+): string {
+  return memo.split(`${IMAGE_PATH_PREFIX}${oldName}`).join(
+    `${IMAGE_PATH_PREFIX}${newName}`,
+  )
+}
+
 // 本文に貼られた自前画像の名前を出てくる順に列挙する。
 // コードフェンス・インラインコードの中は対象外 (tags.ts / props.ts と同じ流儀)。
 // firstImageName / allImageNames の共通の抽出規則。

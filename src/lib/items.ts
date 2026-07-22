@@ -4,6 +4,7 @@ import type { Item } from '@/generated/prisma/client'
 import { assertDemoItemQuota } from '@/lib/demoQuota'
 import { firstUnusedNo, MIN_ITEM_NO } from '@/lib/itemNo'
 import { memoSummary } from '@/lib/memoSummary'
+import { replaceImageName } from '@/lib/memoImages'
 import {
   extractProps,
   parseStoredProps,
@@ -159,6 +160,41 @@ export async function upsertItem(
     update: { ...data, ...derived },
     create: { itemNo, itemNoNum: itemNoToNum(itemNo), ...data, ...derived },
   })
+}
+
+// 本文に貼った画像を回転したとき、旧 URL を新 URL に書き換える
+// (docs/49-画像回転計画.md §3)。回転は画像を新 UUID で保存し直すため、その名前を
+// 参照している本文をすべて追随させる。返り値は書き換えたノート数。
+//
+// **ゴミ箱の行も含めて**全件を対象にする — deleted_at で絞らない。復元したときに
+// 旧 URL のまま画像切れになるのを避ける。1 枚の画像を複数ノートが参照していても
+// (docs/20 §1) すべて揃って新しい向きになる。
+//
+// 対象探しは `position(name IN memo) > 0`。**LIKE は使わない** — PGroonga が
+// LIKE を全文一致に乗っ取るため、部分一致は position() で見る
+// (isPublicImageName と同じ流儀)。派生列 (tags/props) も再計算に乗せる
+// (upsertMemo と同じ)。競合を避けるためトランザクションで囲む。
+export async function rewriteImageReference(
+  oldName: string,
+  newName: string,
+): Promise<number> {
+  const rows = await prisma.$queryRaw<{ item_no: string; memo: string }[]>`
+    SELECT item_no, memo FROM items
+    WHERE position(${oldName} IN memo) > 0
+  `
+  if (rows.length === 0) {
+    return 0
+  }
+  await prisma.$transaction(
+    rows.map((row) => {
+      const memo = replaceImageName(row.memo, oldName, newName)
+      return prisma.item.update({
+        where: { itemNo: row.item_no },
+        data: { memo, ...derivedFromMemo(memo) },
+      })
+    }),
+  )
+  return rows.length
 }
 
 // memo 由来の派生キャッシュ列。正本は memo なので保存のたびに丸ごと作り直す。

@@ -1,5 +1,10 @@
 import { expect, test } from 'vitest'
-import { allImageNames, firstImageName, firstThumbInfo } from './memoImages'
+import {
+  allImageNames,
+  firstImageName,
+  firstThumbInfo,
+  replaceImageName,
+} from './memoImages'
 
 const NAME = '0421547b-ee29-4613-a6d4-da0f41f94054.jpg'
 const OTHER = '11108562-47b2-4c00-846d-23dd7e804ff8.png'
@@ -116,4 +121,28 @@ test('firstThumbInfo: 音声・PDF・テキストは thumb を持たないので
   expect(firstThumbInfo(`![audio](/api/images/${AUDIO})`)).toBeNull()
   expect(firstThumbInfo('メモだけ')).toBeNull()
   expect(firstThumbInfo('')).toBeNull()
+})
+
+test('replaceImageName: 本文の画像 URL を新しい名前へ差し替える', () => {
+  expect(
+    replaceImageName(`![](/api/images/${NAME})`, NAME, OTHER),
+  ).toBe(`![](/api/images/${OTHER})`)
+})
+
+test('replaceImageName: 同じ画像が複数箇所にあれば全部差し替える', () => {
+  const memo = `![](/api/images/${NAME})\n本文\n![別](/api/images/${NAME})`
+  expect(replaceImageName(memo, NAME, OTHER)).toBe(
+    `![](/api/images/${OTHER})\n本文\n![別](/api/images/${OTHER})`,
+  )
+})
+
+test('replaceImageName: 幅記法や alt はそのまま残る (URL の名前部分だけ替える)', () => {
+  expect(
+    replaceImageName(`![スクショ|200](/api/images/${NAME})`, NAME, OTHER),
+  ).toBe(`![スクショ|200](/api/images/${OTHER})`)
+})
+
+test('replaceImageName: 対象でない画像はそのまま', () => {
+  const memo = `![](/api/images/${OTHER})`
+  expect(replaceImageName(memo, NAME, VIDEO_MP4)).toBe(memo)
 })
