@@ -111,10 +111,28 @@ describe('VideoRecorder', () => {
   let instance: MockRecorder
   let track: { stop: ReturnType<typeof vi.fn> }
   let constructorOptions: MediaRecorderOptions | undefined
+  let getUserMediaMock: ReturnType<typeof vi.fn>
 
-  const setMediaDevices = (getUserMedia: () => Promise<unknown>) => {
+  // open() → record() をまとめて呼ぶ (旧 start() 相当。プレビューを挟まない経路)
+  const startRecording = async (recorder: VideoRecorder) => {
+    await recorder.open()
+    recorder.record()
+  }
+
+  // getUserMedia は制約を控えるようにし、既定は超広角を持たない端末 (通常カメラ)
+  const setMediaDevices = (options?: {
+    getUserMedia?: (constraints: MediaStreamConstraints) => Promise<unknown>
+    enumerateDevices?: () => Promise<MediaDeviceInfo[]>
+  }) => {
+    getUserMediaMock = vi.fn(
+      options?.getUserMedia ?? (async () => ({ getTracks: () => [track] })),
+    )
     Object.defineProperty(navigator, 'mediaDevices', {
-      value: { getUserMedia: vi.fn(getUserMedia) },
+      value: {
+        getUserMedia: getUserMediaMock,
+        enumerateDevices:
+          options?.enumerateDevices ?? (async () => [] as MediaDeviceInfo[]),
+      },
       configurable: true,
     })
   }
@@ -146,7 +164,7 @@ describe('VideoRecorder', () => {
     globalThis.MediaRecorder = MediaRecorderCtor as unknown as typeof MediaRecorder
 
     track = { stop: vi.fn() }
-    setMediaDevices(async () => ({ getTracks: () => [track] }))
+    setMediaDevices()
   })
 
   afterEach(() => {
@@ -157,9 +175,19 @@ describe('VideoRecorder', () => {
     })
   })
 
+  test('open はプレビューを出すが録画はしない', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.open()
+    expect(recorder.isOpen).toBe(true)
+    expect(recorder.isRecording).toBe(false)
+    expect(recorder.stream).not.toBeNull()
+    // まだ録画していないので MediaRecorder は生成されていない
+    expect(constructorOptions).toBeUndefined()
+  })
+
   test('録画 → 停止でアップロードできる File を返す', async () => {
     const recorder = new VideoRecorder()
-    await recorder.start()
+    await startRecording(recorder)
     expect(recorder.isRecording).toBe(true)
     // ライブプレビュー用の stream が取れる
     expect(recorder.stream).not.toBeNull()
@@ -188,7 +216,7 @@ describe('VideoRecorder', () => {
     })
 
     const recorder = new VideoRecorder()
-    await recorder.start()
+    await startRecording(recorder)
     const result = await recorder.stop()
 
     expect(result.file.name).toMatch(/\.mp4$/)
@@ -200,7 +228,7 @@ describe('VideoRecorder', () => {
 
   test('映像・音声のビットレートを明示して録画する', async () => {
     const recorder = new VideoRecorder()
-    await recorder.start()
+    await startRecording(recorder)
     expect(constructorOptions?.videoBitsPerSecond).toBe(VIDEO_BITS_PER_SECOND)
     expect(constructorOptions?.audioBitsPerSecond).toBe(AUDIO_BITS_PER_SECOND)
     await recorder.stop()
@@ -208,15 +236,24 @@ describe('VideoRecorder', () => {
 
   test('停止するとカメラ・マイクを離す', async () => {
     const recorder = new VideoRecorder()
-    await recorder.start()
+    await startRecording(recorder)
     expect(track.stop).not.toHaveBeenCalled()
     await recorder.stop()
     expect(track.stop).toHaveBeenCalled()
   })
 
+  test('プレビューを取り消すとカメラを離す (録画前)', async () => {
+    const recorder = new VideoRecorder()
+    await recorder.open()
+    expect(recorder.isOpen).toBe(true)
+    recorder.cancel()
+    expect(track.stop).toHaveBeenCalled()
+    expect(recorder.isOpen).toBe(false)
+  })
+
   test('中断してもカメラを離す (画面離脱)', async () => {
     const recorder = new VideoRecorder()
-    await recorder.start()
+    await startRecording(recorder)
     recorder.cancel()
     expect(track.stop).toHaveBeenCalled()
     expect(recorder.isRecording).toBe(false)
@@ -231,8 +268,10 @@ describe('VideoRecorder', () => {
     ) as unknown as typeof MediaRecorder
 
     const recorder = new VideoRecorder()
-    await expect(recorder.start()).rejects.toBeInstanceOf(VideoCaptureError)
+    await recorder.open()
+    expect(() => recorder.record()).toThrow(VideoCaptureError)
     expect(track.stop).toHaveBeenCalled()
+    expect(recorder.isOpen).toBe(false)
   })
 
   test('MediaRecorder.start() が投げてもカメラを離す', async () => {
@@ -240,14 +279,15 @@ describe('VideoRecorder', () => {
       throw new Error('InvalidStateError')
     })
     const recorder = new VideoRecorder()
-    await expect(recorder.start()).rejects.toBeInstanceOf(VideoCaptureError)
+    await recorder.open()
+    expect(() => recorder.record()).toThrow(VideoCaptureError)
     expect(track.stop).toHaveBeenCalled()
     expect(recorder.isRecording).toBe(false)
   })
 
   test('停止が失敗しても後始末して次の録画を妨げない', async () => {
     const recorder = new VideoRecorder()
-    await recorder.start()
+    await startRecording(recorder)
     instance.stop = vi.fn(() => {
       throw new Error('InvalidStateError')
     })
@@ -255,23 +295,107 @@ describe('VideoRecorder', () => {
     await expect(recorder.stop()).rejects.toThrow('InvalidStateError')
     expect(track.stop).toHaveBeenCalled()
     expect(recorder.isRecording).toBe(false)
+    expect(recorder.isOpen).toBe(false)
 
     instance.stop = vi.fn(() => {
       instance.state = 'inactive'
       instance.ondataavailable?.({ data: new Blob(['x'], { type: instance.mimeType }) })
       instance.onstop?.()
     })
-    await expect(recorder.start()).resolves.toBeUndefined()
+    await expect(startRecording(recorder)).resolves.toBeUndefined()
   })
 
   test('録画していないのに停止すると弾く', async () => {
     await expect(new VideoRecorder().stop()).rejects.toThrow('録画中ではありません')
   })
 
-  test('二重に開始すると弾く', async () => {
+  test('カメラを開かずに record すると弾く', () => {
+    expect(() => new VideoRecorder().record()).toThrow('カメラを開いていません')
+  })
+
+  test('カメラを二重に開くと弾く', async () => {
     const recorder = new VideoRecorder()
-    await recorder.start()
-    await expect(recorder.start()).rejects.toThrow('既に録画中です')
+    await recorder.open()
+    await expect(recorder.open()).rejects.toThrow('既にカメラを開いています')
+  })
+
+  // 近接 (超広角) 選択。iOS の enumerateDevices に背面超広角がある想定
+  describe('近接フォーカス (超広角)', () => {
+    const ultraWideDevices = async () =>
+      [
+        { kind: 'videoinput', label: 'Back Camera', deviceId: 'wide' },
+        { kind: 'videoinput', label: 'Back Ultra Wide Camera', deviceId: 'ultra' },
+      ] as MediaDeviceInfo[]
+
+    test('近接で開くと超広角 deviceId を名指しで gUM する', async () => {
+      let usedConstraints: MediaStreamConstraints | undefined
+      setMediaDevices({
+        enumerateDevices: ultraWideDevices,
+        getUserMedia: async (constraints) => {
+          usedConstraints = constraints
+          return { getVideoTracks: () => [], getTracks: () => [track] }
+        },
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open(true)
+      expect(recorder.nearFocus).toBe(true)
+      const video = usedConstraints?.video as MediaTrackConstraints
+      expect(video.deviceId).toEqual({ exact: 'ultra' })
+      // deviceId 指定時は facingMode を付けない (両立で OverconstrainedError)
+      expect(video.facingMode).toBeUndefined()
+    })
+
+    test('超広角が無ければ通常カメラで開き nearFocus は false', async () => {
+      let usedConstraints: MediaStreamConstraints | undefined
+      setMediaDevices({
+        // enumerateDevices は既定 (空配列) のまま超広角なし
+        getUserMedia: async (constraints) => {
+          usedConstraints = constraints
+          return { getTracks: () => [track] }
+        },
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open(true)
+      expect(recorder.nearFocus).toBe(false)
+      const video = usedConstraints?.video as MediaTrackConstraints
+      expect(video.facingMode).toBe('environment')
+      expect(video.deviceId).toBeUndefined()
+    })
+
+    test('プレビュー中は近接へ切り替えられる (旧トラックを先に止める)', async () => {
+      const firstTrack = { stop: vi.fn() }
+      const secondTrack = { stop: vi.fn() }
+      let call = 0
+      setMediaDevices({
+        enumerateDevices: ultraWideDevices,
+        getUserMedia: async () => ({
+          getVideoTracks: () => [],
+          getTracks: () => [call++ === 0 ? firstTrack : secondTrack],
+        }),
+      })
+      const recorder = new VideoRecorder()
+      await recorder.open()
+      expect(recorder.nearFocus).toBe(false)
+      await recorder.switchNearFocus(true)
+      expect(firstTrack.stop).toHaveBeenCalled() // 先に旧カメラを離した
+      expect(recorder.nearFocus).toBe(true)
+    })
+
+    test('録画中は切り替えを弾く', async () => {
+      setMediaDevices({ enumerateDevices: ultraWideDevices })
+      const recorder = new VideoRecorder()
+      await startRecording(recorder)
+      await expect(recorder.switchNearFocus(true)).rejects.toThrow(
+        '録画中はカメラを切り替えられません',
+      )
+    })
+
+    test('開いていないのに切り替えると弾く', async () => {
+      const recorder = new VideoRecorder()
+      await expect(recorder.switchNearFocus(true)).rejects.toThrow(
+        'カメラを開いていません',
+      )
+    })
   })
 })
 

@@ -7,6 +7,7 @@
 
 import fixWebmDuration from 'fix-webm-duration'
 import { MAX_VIDEO_BYTES } from '../uploads'
+import { applyNearFocusZoom, findUltraWideDeviceId } from './cameraSelection'
 
 // 試す順に並べる。音声と同じく **Safari だけを mp4/H.264+AAC に寄せ、他は
 // webm/VP9+Opus のまま**にする。振り分けは UA 判定ではなく対応状況の実測で行う
@@ -33,10 +34,15 @@ export const AUDIO_BITS_PER_SECOND = 64_000
 export const TOTAL_BITS_PER_SECOND = VIDEO_BITS_PER_SECOND + AUDIO_BITS_PER_SECOND
 
 // 720p 相当。カメラは背面 (メモ用途は手元や周囲を写すのが主)。
-const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  facingMode: 'environment',
-  width: { ideal: 1280 },
-  height: { ideal: 720 },
+// 近接時は facingMode ではなく超広角の deviceId を名指しで開く (cameraSelection の
+// 説明どおり、iOS のマクロは超広角レンズが担うため)。deviceId 指定時は facingMode
+// を付けない — 両方指定すると端末によっては OverconstrainedError になる。
+function buildVideoConstraints(deviceId?: string): MediaTrackConstraints {
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
+  if (deviceId) {
+    return { deviceId: { exact: deviceId }, ...size }
+  }
+  return { facingMode: 'environment', ...size }
 }
 
 // 自動停止までの長さ (3 分)。TOTAL_BITS_PER_SECOND で 3 分 ≈ 24MB となり、
@@ -157,17 +163,67 @@ export class VideoRecorder {
   private mediaStream: MediaStream | null = null
   private chunks: Blob[] = []
   private startedAt = 0
+  private nearFocusOn = false
 
   get isRecording(): boolean {
     return this.recorder?.state === 'recording'
   }
 
-  // ライブプレビュー用の MediaStream (<video srcObject>)。録画していなければ null。
+  // カメラを開いているか (プレビュー中も録画中も true)。
+  get isOpen(): boolean {
+    return this.mediaStream !== null
+  }
+
+  // 近接 (超広角) で開いているか。UI のトグル表示に使う。
+  get nearFocus(): boolean {
+    return this.nearFocusOn
+  }
+
+  // ライブプレビュー用の MediaStream (<video srcObject>)。開いていなければ null。
   get stream(): MediaStream | null {
     return this.mediaStream
   }
 
-  async start(): Promise<void> {
+  // プレビュー用にカメラ・マイクを開く (まだ録画しない)。AF が落ち着いてから
+  // record() を呼べるので、「録画の頭がボケる」問題を避けられる。録画できない
+  // 端末はここで弾く (プレビューだけ出て録れない、を防ぐ)。
+  //
+  // nearFocus=true でも超広角が見つからなければ通常カメラで開く (結果は
+  // this.nearFocus で判る)。マイクも同時に開く — 録画開始時に開き直すと、その
+  // 瞬間に AF とレンズ選択がやり直され、近接の狙いが崩れるため。
+  async open(nearFocus = false): Promise<void> {
+    if (this.mediaStream) {
+      throw new VideoCaptureError('既にカメラを開いています。')
+    }
+    if (!pickMimeType()) {
+      throw new VideoCaptureError('この端末は動画録画に対応していません。')
+    }
+    await this.acquireStream(nearFocus)
+  }
+
+  // プレビュー中にレンズを切り替える (近接=超広角 ⇔ 通常)。**録画中は不可**
+  // (MediaRecorder は途中のトラック差し替えに耐えられない)。
+  // iOS は 2 カメラ同時 gUM で NotReadableError になり得るので、**旧トラックを
+  // 先に止めてから**開き直す。
+  async switchNearFocus(nearFocus: boolean): Promise<void> {
+    if (this.isRecording) {
+      throw new VideoCaptureError('録画中はカメラを切り替えられません。')
+    }
+    if (!this.mediaStream) {
+      throw new VideoCaptureError('カメラを開いていません。')
+    }
+    this.mediaStream.getTracks().forEach((track) => track.stop())
+    this.mediaStream = null
+    this.nearFocusOn = false
+    await this.acquireStream(nearFocus)
+  }
+
+  // 開いているストリームで録画を始める。open() 済みが前提。失敗したら
+  // カメラ・マイクを離してプレビューごと畳む (半端に開いたまま残さない)。
+  record(): void {
+    if (!this.mediaStream) {
+      throw new VideoCaptureError('カメラを開いていません。')
+    }
     if (this.recorder) {
       throw new VideoCaptureError('既に録画中です。')
     }
@@ -175,20 +231,7 @@ export class VideoRecorder {
     if (!mimeType) {
       throw new VideoCaptureError('この端末は動画録画に対応していません。')
     }
-
-    let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: VIDEO_CONSTRAINTS,
-        audio: true,
-      })
-    } catch (e) {
-      throw mapCaptureError(e)
-    }
-
-    // getUserMedia の後は**何で失敗してもカメラ・マイクを離す** (audioRecorder と
-    // 同じ理由。this.mediaStream にまだ入っていないので、ここで離さないと
-    // 誰も track.stop() を呼べなくなり、カメラ使用中表示が残り続ける)。
+    const stream = this.mediaStream
     try {
       const recorder = new MediaRecorder(stream, {
         mimeType,
@@ -203,12 +246,39 @@ export class VideoRecorder {
       }
       recorder.start()
       this.recorder = recorder
-      this.mediaStream = stream
       this.startedAt = Date.now()
     } catch (e) {
       stream.getTracks().forEach((track) => track.stop())
+      this.mediaStream = null
+      this.nearFocusOn = false
       this.chunks = []
       throw mapCaptureError(e)
+    }
+  }
+
+  // gUM でストリームを確保し、近接なら超広角の deviceId で開いて zoom を寄せる。
+  // 失敗したら**何も掴んだまま残さない** (this.mediaStream にまだ入っていない
+  // ので、ここで離さないと誰も track.stop() を呼べず、カメラ使用中表示が残る)。
+  private async acquireStream(nearFocus: boolean): Promise<void> {
+    const deviceId = nearFocus
+      ? ((await findUltraWideDeviceId()) ?? undefined)
+      : undefined
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: buildVideoConstraints(deviceId),
+        audio: true,
+      })
+    } catch (e) {
+      throw mapCaptureError(e)
+    }
+    this.mediaStream = stream
+    this.nearFocusOn = Boolean(deviceId)
+    if (this.nearFocusOn) {
+      const [videoTrack] = stream.getVideoTracks()
+      if (videoTrack) {
+        await applyNearFocusZoom(videoTrack)
+      }
     }
   }
 
@@ -246,6 +316,7 @@ export class VideoRecorder {
       stream.getTracks().forEach((track) => track.stop())
       this.recorder = null
       this.mediaStream = null
+      this.nearFocusOn = false
       this.chunks = []
     }
 
@@ -258,7 +329,8 @@ export class VideoRecorder {
     }
   }
 
-  // 中断 (画面離脱・エラー時)。結果は捨てるが、カメラ・マイクは必ず離す。
+  // 中断 (画面離脱・プレビュー取消・エラー時)。結果は捨てるが、カメラ・マイクは
+  // 必ず離す。プレビュー中 (recorder 未生成) でも mediaStream を確実に止める。
   cancel(): void {
     if (this.recorder && this.recorder.state !== 'inactive') {
       this.recorder.onstop = null
@@ -267,6 +339,7 @@ export class VideoRecorder {
     this.mediaStream?.getTracks().forEach((track) => track.stop())
     this.recorder = null
     this.mediaStream = null
+    this.nearFocusOn = false
     this.chunks = []
   }
 }

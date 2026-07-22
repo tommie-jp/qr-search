@@ -34,6 +34,7 @@ import { uploadImageWithProgress } from "./uploadImageXhr";
 import {
   BUSY_NOTICE_CLASS,
   BUSY_SPINNER_CLASS,
+  PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS,
 } from "./ui";
 import { useAudioRecording } from "./useAudioRecording";
@@ -736,10 +737,22 @@ export default function MemoEditorInner({
         </button>
         <button
           type="button"
-          onClick={videoRecording.toggle}
-          // 録画中だけは busy でも押せる。止められないと録画が終わらない
-          disabled={busy && !videoRecording.isRecording}
-          aria-pressed={videoRecording.isRecording}
+          // idle → プレビューを開く / preview → 取消 / recording → 停止。
+          // 録画開始はプレビュー下の「録画開始」ボタンで行う (頭ボケ回避のため
+          // カメラを先に開いて AF を落ち着かせる: docs/16)
+          onClick={() => {
+            if (videoRecording.phase === "recording") {
+              videoRecording.stop();
+            } else if (videoRecording.phase === "preview") {
+              videoRecording.cancelPreview();
+            } else {
+              videoRecording.openPreview();
+            }
+          }}
+          // カメラを開いている間 (preview/recording) は busy でも押せる。
+          // 閉じられないとカメラが掴まれたままになる
+          disabled={busy && videoRecording.phase === "idle"}
+          aria-pressed={videoRecording.phase !== "idle"}
           className={SECONDARY_BUTTON_CLASS}
         >
           {videoRecording.isRecording && (
@@ -749,7 +762,7 @@ export default function MemoEditorInner({
             />
           )}
           {videoRecordButtonLabel(
-            videoRecording.isRecording,
+            videoRecording.phase,
             videoRecording.elapsedMs,
           )}
         </button>
@@ -796,16 +809,48 @@ export default function MemoEditorInner({
           {recording.note}
         </p>
       )}
-      {/* 録画中のライブプレビュー。何が写っているか見えないと撮りようがない。
-          muted playsInline はプレビューで音を鳴らさず・全画面へ行かせないため */}
-      {videoRecording.isRecording && (
-        <video
-          ref={videoPreviewRef}
-          autoPlay
-          muted
-          playsInline
-          className="w-full max-w-md rounded border border-gray-300"
-        />
+      {/* ライブプレビュー (プレビュー中・録画中の両方)。何が写っているか見えないと
+          撮りようがない。muted playsInline はプレビューで音を鳴らさず・全画面へ
+          行かせないため。プレビュー中はここで構図とピントを合わせてから録画を
+          始められる (docs/16 の頭ボケ回避) */}
+      {videoRecording.phase !== "idle" && (
+        <div className="flex max-w-md flex-col gap-2">
+          <video
+            ref={videoPreviewRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full rounded border border-gray-300"
+          />
+          {videoRecording.phase === "preview" && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={videoRecording.startRecording}
+                className={PRIMARY_BUTTON_CLASS}
+              >
+                <span
+                  aria-hidden
+                  className="size-2.5 rounded-full bg-white"
+                />
+                録画開始
+              </button>
+              {/* 近接 = 超広角レンズへ切替 (iOS のマクロ相当)。超広角を持つ
+                  端末でだけ出す。iOS Safari は手動フォーカス非対応のため
+                  レンズ選択で近接する (docs/16) */}
+              {videoRecording.canNearFocus && (
+                <button
+                  type="button"
+                  onClick={videoRecording.toggleNearFocus}
+                  aria-pressed={videoRecording.nearFocus}
+                  className={SECONDARY_BUTTON_CLASS}
+                >
+                  {videoRecording.nearFocus ? "近接 ON" : "近接"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
       {videoRecording.note && (
         <p aria-live="polite" className={BUSY_NOTICE_CLASS}>
