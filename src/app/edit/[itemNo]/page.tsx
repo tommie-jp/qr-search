@@ -10,14 +10,9 @@ import { ItemTimestamps } from "@/components/ItemTimestamps";
 import { MemoEditor } from "@/components/MemoEditor";
 import { PageTransition } from "@/components/PageTransition";
 import { RecordAccess } from "@/components/RecordAccess";
-import { SubmitButton } from "@/components/SubmitButton";
 import { TrashedBanner } from "@/components/TrashedBanner";
 import { UnsavedGuard } from "@/components/UnsavedGuard";
-import {
-  ACTION_LINK_CLASS,
-  MEMO_INPUT_CLASS,
-  STICKY_ACTIONS_CLASS,
-} from "@/components/ui";
+import { ACTION_LINK_CLASS, MEMO_INPUT_CLASS } from "@/components/ui";
 import { getItem } from "@/lib/items";
 import { isIsbn, isJan, isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
 import { isValidItemNo } from "@/lib/validation";
@@ -114,10 +109,8 @@ export default async function EditPage({ params, searchParams }: EditPageProps) 
             placeholder="URLを入力して下さい。"
             className={MEMO_INPUT_CLASS}
           />
-          {/* 長い本文でも下までスクロールせずに保存できるよう画面下に貼り付ける */}
-          <div className={STICKY_ACTIONS_CLASS}>
-            <SubmitButton>更新</SubmitButton>
-          </div>
+          {/* 「更新」は画面下部の操作バーへ移した (MemoEditorInner が portal で
+              差し込む)。この form の子孫のまま送信されるので mode/url も一緒に届く */}
         </form>
 
         <ItemTimestamps item={item} />

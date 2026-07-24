@@ -6,7 +6,24 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { useBottomBar } from "@/components/BottomBarContext";
+import { EditToolbar } from "@/components/EditToolbar";
+import { PanelActiveContext } from "@/components/PanelActiveContext";
+import {
+  DemoDisabledError,
+  fetchPrefillSummary,
+  prefillTargetFromCode,
+} from "@/lib/prefillSummary";
+import { isTaggableCode, scanRegisterMemo } from "@/lib/scanRegister";
 import { recordingAltText } from "@/lib/audio/audioRecorder";
 import { AUDIO_EXTENSION_ALTERNATION } from "@/lib/audioFormats";
 import { recordingAltText as videoRecordingAltText } from "@/lib/video/videoRecorder";
@@ -30,11 +47,7 @@ import {
   subscribeModelProgress,
 } from "./ocr/ocrService";
 import { uploadImageWithProgress } from "./uploadImageXhr";
-import {
-  BUSY_NOTICE_CLASS,
-  BUSY_SPINNER_CLASS,
-  SECONDARY_BUTTON_CLASS,
-} from "./ui";
+import { BUSY_NOTICE_CLASS, BUSY_SPINNER_CLASS } from "./ui";
 import { useAudioRecording } from "./useAudioRecording";
 import { useVideoRecording } from "./useVideoRecording";
 import { VideoRecordModal } from "./VideoRecordModal";
@@ -45,6 +58,13 @@ const DrawModal = dynamic(() => import("./draw/DrawModal"), {
   ssr: false,
   loading: () => null,
 });
+
+// スキャナ (カメラ + zxing wasm) も重いので、スキャンを押すまで読み込まない。
+// 検索画面 (BottomActionBar) と同じ部品を、挿入モード (onResult) で使う
+const ScannerModal = dynamic(
+  () => import("./ScannerModal").then((m) => m.ScannerModal),
+  { ssr: false, loading: () => null },
+);
 
 export interface MemoEditorInnerProps {
   value: string;
@@ -233,12 +253,19 @@ function pickFiles(list: FileList | undefined | null): File[] {
 // 処理中にフォーム送信を止めたときに出す理由。**録音を先に見る** —
 // アップロードや OCR は画面に進捗が出ているが、録音は押しっぱなしのまま
 // 更新しようとすることがあり、そのまま通すと録音ごと失うため
-function busyReason(isRecording: boolean, uploading: boolean): string {
+function busyReason(
+  isRecording: boolean,
+  uploading: boolean,
+  scanBusy: boolean,
+): string {
   if (isRecording) {
     return "録音・録画中です。停止してから更新して下さい。";
   }
   if (uploading) {
     return "画像のアップロード中です。完了してから更新して下さい。";
+  }
+  if (scanBusy) {
+    return "コード情報の取得中です。完了してから更新して下さい。";
   }
   return "OCR 処理中です。完了してから更新して下さい。";
 }
@@ -305,9 +332,25 @@ export default function MemoEditorInner({
   const [drawing, setDrawing] = useState<{ sourceImageUrl: string | null } | null>(
     null,
   );
+  // 編集中スキャン (docs/13/14 の書誌・商品情報を挿入する導線)。
+  // scanning … カメラのモーダルを開いているか。scanBusy … 読み取り後の取得中
+  // (フォーム送信を止める)。scanNote … 取得中・結果の知らせ (OCR と同じ赤バナー)
+  const [scanning, setScanning] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // 編集ボタンは下部バー (PageBottomBar) の差し込み口へ portal する。
+  // portal は React ツリーの親子を保つので、囲みの <form> の子孫のまま —
+  // useFormStatus (更新ボタン) が効き、onClick から下の state/ref も触れる
+  const { hostEl } = useBottomBar();
+  // タブパネル (MemoPanel) が hidden で保持する構成では、非表示タブでも
+  // このコンポーネントはマウントされたまま。portal は hidden の枠を抜けて
+  // 下部バーに残るので、表向きのタブのときだけ portal する (既定 true =
+  // MemoPanel を通らない /edit ページでは常に表示扱い)
+  const panelActive = useContext(PanelActiveContext);
 
   useEffect(() => {
     onReady();
@@ -366,7 +409,7 @@ export default function MemoEditorInner({
   // アップロード / OCR / 録音・録画の完了前に送信すると、画像リンクや OCR 結果、
   // 録音・録画そのものが memo に入らないため、処理中だけフォーム送信をブロックして知らせる
   const isRecording = recording.isRecording || videoRecording.isRecording;
-  const busy = uploading || ocrCount > 0 || isRecording;
+  const busy = uploading || ocrCount > 0 || isRecording || scanBusy;
   useEffect(() => {
     if (!busy) {
       return;
@@ -377,11 +420,11 @@ export default function MemoEditorInner({
     }
     const blockSubmit = (event: SubmitEvent) => {
       event.preventDefault();
-      setError(busyReason(isRecording, uploading));
+      setError(busyReason(isRecording, uploading, scanBusy));
     };
     form.addEventListener("submit", blockSubmit);
     return () => form.removeEventListener("submit", blockSubmit);
-  }, [busy, uploading, isRecording]);
+  }, [busy, uploading, isRecording, scanBusy]);
 
   // 画像 1 枚を OCR し、指定位置へ引用ブロックを差し込む。挿入時 OCR と
   // 「後から OCR」ボタンの両方がこの 1 本を使う (docs/24-画像OCR計画.md §4)。
@@ -665,6 +708,66 @@ export default function MemoEditorInner({
     }
   };
 
+  // 「更新」は下部バーへ portal されており、DOM は form の外に出る。native の
+  // submit ボタンの関連付けは効かないので、囲みの form を明示的に送信する。
+  // form は編集エリア (wrapperRef) から辿る — こちらは form の DOM 内にある
+  const submitForm = () => {
+    wrapperRef.current?.closest("form")?.requestSubmit();
+  };
+
+  // カーソル位置へ 1 ブロックとして差し込む。前が改行でなければ改行で始め、
+  // 末尾にも改行を足して、周りの本文と行が混ざらないようにする
+  const insertBlock = (view: EditorView, text: string) => {
+    const { from } = view.state.selection.main;
+    const prevChar = from > 0 ? view.state.doc.sliceString(from - 1, from) : "\n";
+    const prefix = prevChar === "\n" ? "" : "\n";
+    insertText(view, `${prefix}${text}\n`);
+  };
+
+  // 編集中スキャン: バーコードを読んで書籍・商品情報をカーソル位置へ挿入する
+  // (検索・遷移はしない。ユーザー要望)。ISBN→書誌、JAN→商品情報を引き、
+  // 取れれば scanRegisterMemo で見出し+タグを、取れなくてもタグだけを挿す。
+  // 書籍・商品コードでなければ、タグにできれば #コード、無理なら生値を入れる。
+  const runScanInsert = async (rawValue: string) => {
+    const view = editorRef.current?.view;
+    if (!view) {
+      return;
+    }
+    const code = rawValue.trim();
+    setError(null);
+    setScanNote(null);
+    view.focus();
+
+    const target = prefillTargetFromCode(code);
+    if (!target) {
+      // 書籍・商品として引けないコード。タグにできれば #コード、それ以外は生値
+      insertBlock(view, isTaggableCode(code) ? scanRegisterMemo(code).trim() : code);
+      return;
+    }
+
+    const noun = target.kind === "book" ? "書籍情報" : "商品情報";
+    setScanBusy(true);
+    setScanNote(`${noun}を取得中…`);
+    try {
+      const summary = await fetchPrefillSummary(target);
+      // 取れても取れなくてもコード自体は入れる (見つからなくても手掛かりが残る)
+      insertBlock(view, scanRegisterMemo(code, summary).trim());
+      setScanNote(
+        summary ? null : `${noun}が見つかりませんでした。コードだけ挿入しました。`,
+      );
+    } catch (e) {
+      // 取得に失敗してもコード (タグ) だけは入れておく
+      insertBlock(view, scanRegisterMemo(code).trim());
+      setScanNote(
+        e instanceof DemoDisabledError
+          ? `デモ版では${noun}を取得できません。コードだけ挿入しました。`
+          : `${noun}の取得に失敗しました。コードだけ挿入しました。`,
+      );
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
   return (
     <div ref={wrapperRef} className="space-y-2">
       <div className="overflow-hidden rounded border border-gray-300 bg-white">
@@ -680,75 +783,12 @@ export default function MemoEditorInner({
           onUpdate={handleUpdate}
         />
       </div>
+      {/* 操作ボタンは下部バーへ portal した (EditToolbar)。エディタ直下には
+          文字数と補足だけを残す — バナー類 (エラー・録音/録画/OCR の知らせ) も
+          打鍵中に見える本文の近くに置く */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        <button
-          type="button"
-          onClick={() => runHistoryCommand(undo)}
-          disabled={!history.canUndo}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          元に戻す
-        </button>
-        <button
-          type="button"
-          onClick={() => runHistoryCommand(redo)}
-          disabled={!history.canRedo}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          やり直す
-        </button>
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          {uploadButtonLabel(upload)}
-        </button>
-        <button
-          type="button"
-          onClick={recording.toggle}
-          // 録音中だけは busy でも押せる。止められないと録音が終わらない
-          disabled={busy && !recording.isRecording}
-          aria-pressed={recording.isRecording}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          {recording.isRecording && (
-            <span
-              aria-hidden
-              className="size-2.5 animate-pulse rounded-full bg-red-600"
-            />
-          )}
-          {recordButtonLabel(recording.isRecording, recording.elapsedMs)}
-        </button>
-        <button
-          type="button"
-          // 押すとフルスクリーンの録画モーダルを開く (VideoRecordModal)。
-          // カメラを先に開いて AF を落ち着かせてから録画を始める (docs/16)
-          onClick={videoRecording.openPreview}
-          disabled={busy}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          録画
-        </button>
-        <button
-          type="button"
-          onClick={openDrawing}
-          disabled={busy}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          お絵かき
-        </button>
-        <button
-          type="button"
-          onClick={() => void runOcrAtCursor()}
-          disabled={busy}
-          className={SECONDARY_BUTTON_CLASS}
-        >
-          {ocrButtonLabel(ocrCount)}
-        </button>
         {/* ペースト・ドラッグ&ドロップは実質デスクトップの操作なので、
-            幅が狭いときは畳んでボタンの場所を空ける */}
+            幅が狭いときは畳む */}
         <span className="hidden text-gray-400 sm:inline">
           画像・音声・動画・PDF はペースト・ドラッグ&ドロップでも挿入できます
         </span>
@@ -794,6 +834,17 @@ export default function MemoEditorInner({
           {modelPercent !== null && <span aria-hidden> {modelPercent}%</span>}
         </p>
       )}
+      {/* 編集中スキャンの取得中・結果 (OCR と同じ赤バナー) */}
+      {scanNote && (
+        <p
+          aria-live="polite"
+          aria-busy={scanBusy}
+          className={`${BUSY_NOTICE_CLASS} flex items-center gap-2`}
+        >
+          {scanBusy && <span aria-hidden className={BUSY_SPINNER_CLASS} />}
+          {scanNote}
+        </p>
+      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -809,6 +860,48 @@ export default function MemoEditorInner({
           onInsert={insertDrawing}
         />
       )}
+      {/* 編集中スキャン: 読み取った生値を runScanInsert へ渡すだけ (検索しない) */}
+      {scanning && (
+        <ScannerModal
+          title="書籍・商品バーコードをかざす"
+          onClose={() => setScanning(false)}
+          onResult={(rawValue) => void runScanInsert(rawValue)}
+        />
+      )}
+      {/* 操作ボタンを下部バーの差し込み口へ portal する。差し込み口が出来る
+          (hostEl) まで、かつ表向きのタブ (panelActive) のときだけ。portal は
+          React ツリーの親子を保つので、更新ボタンの useFormStatus は囲みの form を
+          拾い、各ハンドラは上の state/ref を触れる */}
+      {panelActive &&
+        hostEl &&
+        createPortal(
+          <EditToolbar
+            onSubmit={submitForm}
+            canUndo={history.canUndo}
+            canRedo={history.canRedo}
+            onUndo={() => runHistoryCommand(undo)}
+            onRedo={() => runHistoryCommand(redo)}
+            uploadLabel={uploadButtonLabel(upload)}
+            uploading={uploading}
+            onInsertFile={() => fileInputRef.current?.click()}
+            scanLabel={scanBusy ? "取得中" : "スキャン"}
+            onScan={() => setScanning(true)}
+            recordLabel={recordButtonLabel(
+              recording.isRecording,
+              recording.elapsedMs,
+            )}
+            isRecording={recording.isRecording}
+            // 録音中だけは busy でも押せる。止められないと録音が終わらない
+            recordDisabled={busy && !recording.isRecording}
+            onToggleRecord={recording.toggle}
+            onRecordVideo={videoRecording.openPreview}
+            onDraw={openDrawing}
+            ocrLabel={ocrButtonLabel(ocrCount)}
+            onOcr={() => void runOcrAtCursor()}
+            busy={busy}
+          />,
+          hostEl,
+        )}
     </div>
   );
 }

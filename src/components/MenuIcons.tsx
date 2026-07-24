@@ -258,3 +258,90 @@ export function SelectIcon() {
     </StrokeIconLarge>
   );
 }
+
+// 以下、ノート編集の下部バー用アイコン (docs/31 と同じ StrokeIconLarge 24px)。
+// 色は使用側 (EditToolbar) から与える。隣に必ず同じ意味の文字ラベルがある。
+
+// 更新 (保存): フロッピー。主ボタンなので他と混ざらない普遍的な保存の絵にする
+export function SaveIcon() {
+  return (
+    <StrokeIconLarge>
+      <path
+        {...TINT}
+        d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"
+      />
+      <path d="M8 4v5h7V4M8 21v-6h8v6" />
+    </StrokeIconLarge>
+  );
+}
+
+// 元に戻す (undo): 左へ回り込む矢印
+export function UndoIcon() {
+  return (
+    <StrokeIconLarge>
+      <path d="M9 7L4 12l5 5M4 12h10a6 6 0 0 1 6 6v1" />
+    </StrokeIconLarge>
+  );
+}
+
+// やり直す (redo): undo の左右反転
+export function RedoIcon() {
+  return (
+    <StrokeIconLarge>
+      <path d="M15 7l5 5-5 5M20 12H10a6 6 0 0 0-6 6v1" />
+    </StrokeIconLarge>
+  );
+}
+
+// 画像を挿入: 写真フレーム + 「+」。画像検索 (フレーム+虫眼鏡) と絵で見分ける
+export function ImageInsertIcon() {
+  return (
+    <StrokeIconLarge>
+      <rect {...TINT} x="3" y="4" width="13" height="13" rx="1" />
+      <circle cx="7.5" cy="8.5" r="1.5" />
+      <path d="M3 14l3.5-3.5L11 15" />
+      <path d="M18 15v6M15 18h6" />
+    </StrokeIconLarge>
+  );
+}
+
+// 録音: マイク
+export function MicIcon() {
+  return (
+    <StrokeIconLarge>
+      <rect {...TINT} x="9" y="2" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
+    </StrokeIconLarge>
+  );
+}
+
+// 録画: ビデオカメラ (本体 + 三角の突き出し)
+export function VideoIcon() {
+  return (
+    <StrokeIconLarge>
+      <rect {...TINT} x="3" y="6" width="12" height="12" rx="2" />
+      <path d="M15 10l6-3v10l-6-3z" />
+    </StrokeIconLarge>
+  );
+}
+
+// お絵かき: 鉛筆
+export function DrawIcon() {
+  return (
+    <StrokeIconLarge>
+      <path {...TINT} d="M4 20l1-4L16 5l3 3L8 19l-4 1z" />
+      <path d="M14 7l3 3" />
+    </StrokeIconLarge>
+  );
+}
+
+// 画像を OCR: 画像フレーム + 文字を読み取る線。OCR は「画像から文字」なので
+// フレームの中に文章の線を入れる
+export function OcrIcon() {
+  return (
+    <StrokeIconLarge>
+      <rect {...TINT} x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9h10M7 12h10M7 15h6" />
+    </StrokeIconLarge>
+  );
+}

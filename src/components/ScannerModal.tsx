@@ -45,18 +45,31 @@ const ERROR_MESSAGES: Record<ScannerErrorKind, string> = {
 };
 
 interface ScannerModalProps {
-  // QR シールに焼かれている URL のホスト (QR_BASE_URL 由来)
-  stickerHost: string;
+  // QR シールに焼かれている URL のホスト (QR_BASE_URL 由来)。
+  // 検索モード (onResult なし) のときだけ使う
+  stickerHost?: string;
   onClose: () => void;
+  // 挿入モード: 読み取った生値をこのコールバックへ渡す。**検索・遷移しない**
+  // (docs/13/14 の書誌・商品情報を編集中のエディタへ挿入する導線)。
+  // 渡されたときは resolveScanPath / router.push を通らない
+  onResult?: (rawValue: string) => void;
+  // 見出し (既定「QR・バーコードをかざす」)。挿入モードでは用途を変えたい
+  title?: string;
 }
 
-// 全画面のカメラビュー。QR / バーコードを 1 つ読んだら閉じて遷移する。
-// 遷移先の判定は lib/scanResult.ts の純関数に置く (ここは配線だけ)。
-export function ScannerModal({ stickerHost, onClose }: ScannerModalProps) {
+// 全画面のカメラビュー。QR / バーコードを 1 つ読んだら閉じる。
+// 既定 (検索モード) は遷移先を lib/scanResult.ts の純関数で決めて router.push。
+// onResult を渡すと挿入モードになり、読み取った生値を呼び出し側へ返すだけ。
+export function ScannerModal({
+  stickerHost,
+  onClose,
+  onResult,
+  title = "QR・バーコードをかざす",
+}: ScannerModalProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   // 読み取り成功から unmount までの間に onScan が再び発火しても
-  // 二重に push しないようにする
+  // 二重に処理しないようにする
   const isHandled = useRef(false);
 
   useEffect(() => {
@@ -74,9 +87,26 @@ export function ScannerModal({ stickerHost, onClose }: ScannerModalProps) {
       return;
     }
     const rawValue = codes[0]?.rawValue ?? "";
+
+    // 挿入モード: 遷移せず生値を返すだけ (書籍・商品情報の取得は呼び出し側)
+    if (onResult) {
+      const value = rawValue.trim();
+      if (!value) {
+        return; // 空の読み取り。カメラは開けたままにして読み直させる
+      }
+      isHandled.current = true;
+      navigator.vibrate?.(50);
+      onClose();
+      onResult(value);
+      return;
+    }
+
     // シールのホストと、いま開いているホストの両方を部品 URL と認める。
     // 実機確認では localhost や LAN の IP で開きつつ本番シールを読むため
-    const path = resolveScanPath(rawValue, [stickerHost, window.location.hostname]);
+    const path = resolveScanPath(
+      rawValue,
+      [stickerHost, window.location.hostname].filter((h): h is string => !!h),
+    );
     if (!path) {
       return; // 空の読み取り。カメラは開けたままにして読み直させる
     }
@@ -94,7 +124,7 @@ export function ScannerModal({ stickerHost, onClose }: ScannerModalProps) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-black/90">
       <div className="flex items-center justify-between p-3 text-white">
-        <span>QR・バーコードをかざす</span>
+        <span>{title}</span>
         <button
           type="button"
           onClick={onClose}

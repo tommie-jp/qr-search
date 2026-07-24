@@ -14,14 +14,9 @@ import { MemoEditor } from "@/components/MemoEditor";
 import { PendingLink } from "@/components/PendingLink";
 import { PublicToggle } from "@/components/PublicToggle";
 import { SavedToast } from "@/components/SavedToast";
-import { SubmitButton } from "@/components/SubmitButton";
 import { TrashedBanner } from "@/components/TrashedBanner";
 import { UnsavedGuard } from "@/components/UnsavedGuard";
-import {
-  ACTION_LINK_CLASS,
-  BOX_CLASS,
-  STICKY_ACTIONS_CLASS,
-} from "@/components/ui";
+import { ACTION_LINK_CLASS, BOX_CLASS } from "@/components/ui";
 import { isDemoMode } from "@/lib/appEnv";
 import { renderCircuits } from "@/lib/circuitCache";
 
@@ -128,9 +123,8 @@ export async function ItemView({ itemNo, item, saved }: ItemViewProps) {
               minHeight="18rem"
               autoFocus={memo === ""}
             />
-            <div className={STICKY_ACTIONS_CLASS}>
-              <SubmitButton>更新</SubmitButton>
-            </div>
+            {/* 「更新」は画面下部の操作バーへ移した (MemoEditorInner が portal で
+                差し込む)。この form の子孫のまま送信される */}
           </form>
         }
       />

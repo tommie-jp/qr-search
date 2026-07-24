@@ -8,7 +8,8 @@ import { DebugConsoleButton } from "@/components/DebugConsoleButton";
 import { DemoBanner } from "@/components/DemoBanner";
 import { HeaderMenu } from "@/components/HeaderMenu";
 import { HeaderQrButton } from "@/components/HeaderQrButton";
-import { HistoryNav } from "@/components/HistoryNav";
+import { BottomBarProvider } from "@/components/BottomBarContext";
+import { PageBottomBar } from "@/components/HistoryNav";
 import { LoginButton } from "@/components/LoginButton";
 import { LogoutButton } from "@/components/LogoutButton";
 import {
@@ -101,6 +102,9 @@ export default async function RootLayout({
       <body
         className={`min-h-full text-gray-900 ${isProd ? "bg-gray-50" : "bg-pink-50"}`}
       >
+        {/* 下部バー (PageBottomBar) と、その中へ編集ボタンを portal する側
+            (MemoEditorInner) をつなぐ context。両方を内側に含めるため body 直下で包む */}
+        <BottomBarProvider>
         {/* 深くスクロールしても検索・ホームに戻れるよう貼り付ける (docs/11 §5)。
             pt-safe … standalone はステータスバーの下に潜り込む (viewport-fit=cover)。
             ブラウザで開いているときは inset が 0 で従来と同じ余白になる。
@@ -197,7 +201,9 @@ export default async function RootLayout({
                 </>
               )}
             </HeaderMenu>
-            <HistoryNav />
+            {/* ← → (戻る/進む) はヘッダーから下部バーの左端へ移した
+                (HistoryNav.tsx)。片手持ちの親指が届く下端に寄せる。
+                本体は main の後ろの <HistoryNavBar /> と BottomActionBar が持つ */}
             {/* アイコンもホームリンクに含める。押せる的が広がるうえ、
                 アイコンとサイト名が別々の当たり判定に割れるのを避ける。
                 /icon.svg は app/icon.svg が規約で配信するもの (PNG より
@@ -261,6 +267,11 @@ export default async function RootLayout({
         <main className="mx-auto max-w-2xl px-safe pt-6 pb-safe landscape-phone:max-w-4xl">
           {children}
         </main>
+        {/* 下部バー。左端の ← → は BottomActionBar を持つホーム ("/") 以外の
+            全ページに敷き、戻る/進むの導線を残す (PageBottomBar が "/" では
+            自身を描かない)。standalone 起動はブラウザの戻るが無いため要る。
+            ノート編集中はここへ編集ボタンが portal で入る */}
+        <PageBottomBar isProd={isProd} />
         {/* どちらも何も描かない (docs/30-ブラウザログ計画.md)。
             転送はログイン中だけ仕掛ける — 受け口は 401 を返すので、
             未ログインで拾っても運べず、無駄な要求になる。
@@ -270,6 +281,7 @@ export default async function RootLayout({
             (受け口も 403 を返す) */}
         {user && !isDemo && <ClientLogCapture />}
         <DebugConsole />
+        </BottomBarProvider>
       </body>
     </html>
   );

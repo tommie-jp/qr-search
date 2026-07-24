@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { PanelActiveContext } from "@/components/PanelActiveContext";
 
 type MemoMode = "markdown" | "text" | "edit";
 
@@ -78,7 +79,12 @@ export function MemoPanel({
         ({ key, content }) =>
           visited.has(key) && (
             <div key={key} hidden={mode !== key}>
-              {content}
+              {/* いま表向きのタブかを中身へ伝える。編集タブの操作ボタンは下部バーへ
+                  portal され hidden の枠を抜けるので、非表示タブでは portal を
+                  止める必要がある (MemoEditorInner が参照する) */}
+              <PanelActiveContext.Provider value={mode === key}>
+                {content}
+              </PanelActiveContext.Provider>
             </div>
           ),
       )}

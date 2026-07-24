@@ -134,10 +134,3 @@ export const BOTTOM_BAR_SLOT_CLASS =
 // landscape-phone はスロットが min-h-9 (36px) + 下余白 4px ≒ 2.5rem
 export const BOTTOM_BAR_SPACER_CLASS =
   "h-[calc(3.25rem+env(safe-area-inset-bottom))] print:hidden landscape-phone:h-[calc(2.5rem+env(safe-area-inset-bottom))]";
-
-// 編集フォームの下端に貼り付くボタン行 (docs/11-アプリ的UIUX計画.md §2-1)。
-// 長い本文でも一番下までスクロールせずに保存できる。
-// bottom-0 は画面の下端なので、ホームバーに潜らないよう自前で余白を持つ
-// (main の pb-safe は sticky には効かない)。bg は body と同じ gray-50
-export const STICKY_ACTIONS_CLASS =
-  "sticky bottom-0 z-10 flex items-center gap-3 bg-gray-50/95 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur";

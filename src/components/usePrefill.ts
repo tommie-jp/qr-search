@@ -1,52 +1,17 @@
 "use client";
 
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
-import type { BookSummary } from "@/lib/book";
-import type { ProductSummary } from "@/lib/product";
+import {
+  DemoDisabledError,
+  fetchPrefillSummary,
+  type PrefillKind,
+  type PrefillTarget,
+} from "@/lib/prefillSummary";
 import { scanRegisterMemo } from "@/lib/scanRegister";
 
-// 事前入力の対象。ISBN なら書誌 (docs/13-書誌自動取得計画.md)、
-// JAN なら商品情報 (docs/14-JAN商品情報取得計画.md)。
-// 取得の流れは全く同じで、違うのは引く API ルートと文言だけなので、
-// フックは 1 本にして種別で分ける。
-export type PrefillKind = "book" | "product";
-
-export interface PrefillTarget {
-  kind: PrefillKind;
-  code: string;
-}
-
-const API_PATH: Record<PrefillKind, string> = {
-  book: "/api/books",
-  product: "/api/products",
-};
-
-// デモインスタンスは外部 API のキーを持たないため、取得の口が demoDisabled を
-// 返す (docs/39-デモ公開計画.md §5)。通常の失敗 (error) とは分けて、専用の
-// 文言を出したいので、独立した例外にして catch で見分ける。
-class DemoDisabledError extends Error {}
-
-// 自分のサーバの /api/books/<isbn> か /api/products/<jan> を引く。
-// 外部 API を直接叩かない理由は各ルート (route.ts) に書いてある
-// (books は NDL の CORS、products はキーの秘匿)。
-// 取得ごとの上限もサーバ側が持つ (sourceTimeout.ts)。
-async function fetchSummary(
-  { kind, code }: PrefillTarget,
-  signal: AbortSignal,
-): Promise<BookSummary | ProductSummary | null> {
-  const res = await fetch(`${API_PATH[kind]}/${encodeURIComponent(code)}`, {
-    signal,
-  });
-  const body = await res.json().catch(() => null);
-  // デモは「失敗」ではなく「無効」。専用文言を出すため先に見分ける
-  if (body?.demoDisabled) {
-    throw new DemoDisabledError();
-  }
-  if (!res.ok || !body?.success) {
-    throw new Error(body?.error ?? `取得に失敗しました (HTTP ${res.status})`);
-  }
-  return body.data;
-}
+// 型は取得ロジックと同じ場所 (prefillSummary) に置いた。従来ここから import して
+// いた箇所 (MemoEditor) のために再輸出する
+export type { PrefillKind, PrefillTarget };
 
 // 取得の途中経過。文言は呼び出し側 (MemoEditor) が決める。
 //   idle     … 取得対象ではない (取得しない)
@@ -109,7 +74,7 @@ export function usePrefill({
       return;
     }
     const abort = new AbortController();
-    fetchSummary({ kind, code }, abort.signal)
+    fetchPrefillSummary({ kind, code }, abort.signal)
       .then((summary) => {
         if (!summary) {
           // どの API にも無かった。事前入力のままにして手で書いてもらう

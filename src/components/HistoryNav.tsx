@@ -1,9 +1,21 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useSyncExternalStore } from "react";
+import { useBottomBar } from "@/components/BottomBarContext";
+import {
+  BOTTOM_BAR_CLASS,
+  BOTTOM_BAR_INNER_CLASS,
+  BOTTOM_BAR_SPACER_CLASS,
+} from "@/components/ui";
 
-// ヘッダーのハンバーガーの右に置く「戻る (←)」「進む (→)」ボタン
-// (docs/11-アプリ的UIUX計画.md §5)。
+// 画面下部の操作バーの左端に置く「戻る (←)」「進む (→)」ボタン
+// (docs/11-アプリ的UIUX計画.md §5)。もとはヘッダーのハンバーガーの右に
+// 置いていたが、下部バーの左へ移した — 片手持ちの親指は上端より下端に届く。
+//
+// 検索 (ホーム) 画面では BottomActionBar が中身に <HistoryNav /> を並べる。
+// それ以外のページには BottomActionBar が無いので、下部バー (PageBottomBar)
+// をレイアウトから全ページに敷き、その左端に ← → を置いて導線を保つ。
 //
 // もとは standalone (ホーム画面起動) のときだけ出す ← 一本だった。standalone は
 // ブラウザの戻るがなく iOS では画面端スワイプ頼み (しかも初回は効かない) なため。
@@ -55,9 +67,11 @@ function useCanGo(direction: "back" | "forward"): boolean {
   );
 }
 
-// -mb-3 + min-h-11 の意図は HeaderMenu のボタンと同じ (帯を低く見せつつ 44px を保つ)。
+// 下部バーの左端に置く。他スロット (BOTTOM_BAR_SLOT_CLASS) は flex-1 で
+// 等幅に伸びるが、← → は幅を占めず矢印だけの正方形に近い的にする。
+// 親 (BOTTOM_BAR_INNER_CLASS) が items-stretch なので高さは帯に追従する。
 const BUTTON_CLASS =
-  "inline-flex -mb-3 min-h-11 items-center rounded px-1.5 text-lg text-gray-500 transition-colors active:bg-gray-100 disabled:text-gray-300 disabled:active:bg-transparent";
+  "flex min-h-11 items-center justify-center rounded px-2.5 text-xl text-gray-500 transition-colors active:bg-gray-200/70 disabled:text-gray-300 disabled:active:bg-transparent";
 
 export function HistoryNav() {
   const canGoBack = useCanGo("back");
@@ -83,6 +97,47 @@ export function HistoryNav() {
       >
         →
       </button>
+    </>
+  );
+}
+
+// BottomActionBar (検索画面) 以外の全ページに敷く下部バー。
+//
+// 左端は常に ← → (戻る/進む) で導線を残す。その右に「差し込み口」を置き、
+// ノート編集中は MemoEditorInner が編集ボタン (更新・元に戻す…) をここへ
+// portal する (docs/31 の続き)。編集していないページでは差し込み口は空なので
+// ← → だけの最小バーになる。
+//
+// ホーム (検索画面, パス "/") は BottomActionBar が自前で ← → を持つので、
+// ここでは描かない (二重帯を避ける)。判定はクライアントの usePathname で行う —
+// レイアウトはサーバコンポーネントで現在パスを知らない。
+export function PageBottomBar({ isProd }: { isProd: boolean }) {
+  const pathname = usePathname();
+  // 差し込み口の DOM を context に登録する。編集側 (MemoEditorInner) はこれを
+  // 読んで portal する。callback ref を使うと、口が出来た瞬間に購読側へ伝わる
+  const { setHostEl } = useBottomBar();
+  if (pathname === "/") return null;
+
+  return (
+    <>
+      {/* バーぶんの余白。これがないとページ末尾がバーに隠れる
+          (BottomActionBar と同じ理由)。編集帯もツールスロットが min-h-11 で
+          高さは同じなので、余白は 1 種類で足りる */}
+      <div aria-hidden className={BOTTOM_BAR_SPACER_CLASS} />
+
+      <nav
+        aria-label="ページ移動"
+        className={`${BOTTOM_BAR_CLASS} ${
+          isProd ? "border-gray-200 bg-white/95" : "border-pink-300 bg-pink-100/95"
+        }`}
+      >
+        <div className={BOTTOM_BAR_INNER_CLASS}>
+          <HistoryNav />
+          {/* 編集ボタンの差し込み口。編集中でなければ空 (幅だけ確保して
+              ← → を左に寄せる)。min-w-0 で中の横スクロール帯が縮められる */}
+          <div ref={setHostEl} className="flex min-w-0 flex-1 items-stretch" />
+        </div>
+      </nav>
     </>
   );
 }
